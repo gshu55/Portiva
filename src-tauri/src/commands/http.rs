@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, State};
+
+use crate::services::http_request_service::HttpRequestService;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,17 +38,56 @@ pub struct HttpSendResponse {
     url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpStreamChunk {
+    body_kind: HttpResponseBodyKind,
+    chunk: String,
+    request_id: String,
+    size_bytes: usize,
+}
+
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum HttpResponseBodyKind {
     Binary,
     Empty,
+    Image,
     Json,
     Text,
 }
 
 #[tauri::command]
 pub async fn http_send(request: HttpSendRequest) -> Result<HttpSendResponse, String> {
+    send_http_request(None, None, request).await
+}
+
+#[tauri::command]
+pub async fn http_send_stream(
+    app_handle: AppHandle,
+    request_service: State<'_, HttpRequestService>,
+    request_id: String,
+    request: HttpSendRequest,
+) -> Result<HttpSendResponse, String> {
+    let cancel_token = request_service.begin(&request_id)?;
+    let result = send_http_request(Some((&app_handle, &request_id)), Some(cancel_token), request).await;
+    request_service.finish(&request_id);
+    result
+}
+
+#[tauri::command]
+pub fn http_cancel(
+    request_service: State<'_, HttpRequestService>,
+    request_id: String,
+) -> Result<(), String> {
+    request_service.cancel(&request_id)
+}
+
+async fn send_http_request(
+    stream_target: Option<(&AppHandle, &str)>,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
+    request: HttpSendRequest,
+) -> Result<HttpSendResponse, String> {
     let method = request.method.trim().to_uppercase();
     let method = reqwest::Method::from_bytes(method.as_bytes())
         .map_err(|_| "HTTP 方法无效。".to_string())?;
@@ -82,10 +127,13 @@ pub async fn http_send(request: HttpSendRequest) -> Result<HttpSendResponse, Str
     }
 
     let started_at = Instant::now();
-    let response = builder
-        .send()
-        .await
-        .map_err(|error| format!("请求发送失败：{error}"))?;
+    let response = await_cancelable(
+        builder.send(),
+        cancel_token.clone(),
+        "请求已取消。",
+    )
+    .await
+    .map_err(|error| format!("请求发送失败：{error}"))?;
     let duration_ms = started_at.elapsed().as_millis();
     let status = response.status();
     let final_url = response.url().to_string();
@@ -108,10 +156,7 @@ pub async fn http_send(request: HttpSendRequest) -> Result<HttpSendResponse, Str
     }
 
     let content_type = headers.get("content-type").map(String::as_str);
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| format!("响应读取失败：{error}"))?;
+    let bytes = read_response_bytes(response, stream_target, cancel_token, content_type).await?;
     let size_bytes = bytes.len();
     let (body, body_kind) = decode_response_body(&bytes, content_type);
 
@@ -127,6 +172,99 @@ pub async fn http_send(request: HttpSendRequest) -> Result<HttpSendResponse, Str
     })
 }
 
+async fn read_response_bytes(
+    mut response: reqwest::Response,
+    stream_target: Option<(&AppHandle, &str)>,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
+    content_type: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    let stream_text = content_type
+        .map(is_textual_content_type)
+        .unwrap_or(false);
+
+    loop {
+        if is_cancelled(cancel_token.as_ref()) {
+            return Err("请求已取消。".to_string());
+        }
+
+        let chunk = await_cancelable(
+            response.chunk(),
+            cancel_token.clone(),
+            "请求已取消。",
+        )
+        .await
+        .map_err(|error| format!("响应读取失败：{error}"))?;
+
+        let Some(chunk) = chunk else {
+            break;
+        };
+
+        if stream_text {
+            if let Some((app_handle, request_id)) = stream_target {
+                let body_kind = if content_type.unwrap_or_default().to_ascii_lowercase().contains("json") {
+                    HttpResponseBodyKind::Json
+                } else {
+                    HttpResponseBodyKind::Text
+                };
+                let _ = app_handle.emit(
+                    "http-stream-chunk",
+                    HttpStreamChunk {
+                        body_kind,
+                        chunk: String::from_utf8_lossy(&chunk).to_string(),
+                        request_id: request_id.to_string(),
+                        size_bytes: bytes.len() + chunk.len(),
+                    },
+                );
+            }
+        }
+
+        bytes.extend_from_slice(&chunk);
+    }
+
+    Ok(bytes)
+}
+
+async fn await_cancelable<F, T, E>(
+    future: F,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
+    cancel_message: &str,
+) -> Result<T, String>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut future = Box::pin(future);
+
+    loop {
+        if is_cancelled(cancel_token.as_ref()) {
+            return Err(cancel_message.to_string());
+        }
+
+        match tokio::time::timeout(Duration::from_millis(80), &mut future).await {
+            Ok(result) => return result.map_err(|error| error.to_string()),
+            Err(_) => continue,
+        }
+    }
+}
+
+fn is_cancelled(cancel_token: Option<&Arc<std::sync::atomic::AtomicBool>>) -> bool {
+    cancel_token
+        .map(|token| token.load(Ordering::Relaxed))
+        .unwrap_or(false)
+}
+
+fn is_textual_content_type(content_type: &str) -> bool {
+    let content_type = content_type.to_ascii_lowercase();
+    content_type.is_empty()
+        || content_type.starts_with("text/")
+        || content_type.contains("json")
+        || content_type.contains("xml")
+        || content_type.contains("html")
+        || content_type.contains("javascript")
+        || content_type.contains("x-www-form-urlencoded")
+}
+
 fn decode_response_body(
     bytes: &[u8],
     content_type: Option<&str>,
@@ -136,13 +274,18 @@ fn decode_response_body(
     }
 
     let content_type = content_type.unwrap_or_default().to_ascii_lowercase();
-    let looks_textual = content_type.is_empty()
-        || content_type.starts_with("text/")
-        || content_type.contains("json")
-        || content_type.contains("xml")
-        || content_type.contains("html")
-        || content_type.contains("javascript")
-        || content_type.contains("x-www-form-urlencoded");
+    let looks_textual = is_textual_content_type(&content_type);
+
+    if content_type.starts_with("image/") {
+        return (
+            format!(
+                "data:{};base64,{}",
+                content_type,
+                encode_base64(bytes)
+            ),
+            HttpResponseBodyKind::Image,
+        );
+    }
 
     if looks_textual {
         if content_type.contains("json") {
@@ -162,4 +305,32 @@ fn decode_response_body(
         format!("Binary response ({} bytes).", bytes.len()),
         HttpResponseBodyKind::Binary,
     )
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(((bytes.len() + 2) / 3) * 4);
+
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | b2 as u32;
+
+        output.push(TABLE[((n >> 18) & 0x3f) as usize] as char);
+        output.push(TABLE[((n >> 12) & 0x3f) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[((n >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(n & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+
+    output
 }

@@ -95,6 +95,8 @@ export const commandNames = {
   logRecordPlaceholder: "log_record_placeholder",
   localShellOpen: "local_shell_open",
   httpSend: "http_send",
+  httpSendStream: "http_send_stream",
+  httpCancel: "http_cancel",
   httpWorkspacesGet: "http_workspaces_get",
   httpWorkspacesSave: "http_workspaces_save",
 } as const;
@@ -149,7 +151,7 @@ export interface HttpSendRequest {
 
 export interface HttpSendResponse {
   body: string;
-  bodyKind: "binary" | "empty" | "json" | "text";
+  bodyKind: "binary" | "empty" | "image" | "json" | "text";
   durationMs: number;
   headers: Record<string, string>;
   sizeBytes: number;
@@ -460,6 +462,14 @@ export function serialTerminalReconfigure(terminalId: string, profile: Connectio
 
 export function httpSend(request: HttpSendRequest) {
   return invoke<HttpSendResponse>(commandNames.httpSend, { request });
+}
+
+export function httpSendStream(requestId: string, request: HttpSendRequest) {
+  return invoke<HttpSendResponse>(commandNames.httpSendStream, { requestId, request });
+}
+
+export function httpCancel(requestId: string) {
+  return invoke<void>(commandNames.httpCancel, { requestId });
 }
 
 export function httpWorkspacesGet<T>() {

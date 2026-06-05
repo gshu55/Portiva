@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -15,6 +15,44 @@ type Size = "sm" | "md" | "lg";
 
 function cx(...classes: Array<false | null | undefined | string>) {
   return classes.filter(Boolean).join(" ");
+}
+
+const portalThemeVariables = [
+  "--accent",
+  "--accent-bg",
+  "--app-bg",
+  "--border-faint",
+  "--border-panel",
+  "--border-subtle",
+  "--button-bg",
+  "--button-muted-bg",
+  "--danger",
+  "--danger-bg",
+  "--field-bg",
+  "--panel-bg",
+  "--panel-solid-bg",
+  "--text-main",
+  "--text-muted",
+  "--text-strong",
+];
+
+function getPortalThemeStyle(): CSSProperties {
+  if (typeof document === "undefined") {
+    return {};
+  }
+
+  const source = document.querySelector<HTMLElement>(".app-shell") ?? document.documentElement;
+  const computed = window.getComputedStyle(source);
+  const style: CSSProperties & Record<string, string> = {};
+
+  portalThemeVariables.forEach((name) => {
+    const value = computed.getPropertyValue(name);
+    if (value) {
+      style[name] = value;
+    }
+  });
+
+  return style;
 }
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -73,9 +111,12 @@ export interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
   mono?: boolean;
 }
 
-export function TextInput({ className, fieldSize = "md", leadingIcon, mono = false, ...props }: TextInputProps) {
+export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function TextInput(
+  { className, fieldSize = "md", leadingIcon, mono = false, ...props },
+  ref,
+) {
   const input = (
-    <input className={cx("ui-field", `ui-field-${fieldSize}`, mono && "ui-field-mono", className)} {...props} />
+    <input className={cx("ui-field", `ui-field-${fieldSize}`, mono && "ui-field-mono", className)} ref={ref} {...props} />
   );
 
   if (!leadingIcon) {
@@ -88,7 +129,7 @@ export function TextInput({ className, fieldSize = "md", leadingIcon, mono = fal
       {input}
     </span>
   );
-}
+});
 
 export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   fieldSize?: Size;
@@ -108,6 +149,7 @@ export interface SelectOption<T extends string | number> {
 export interface SelectProps<T extends string | number> extends Omit<HTMLAttributes<HTMLDivElement>, "onChange"> {
   disabled?: boolean;
   fieldSize?: Size;
+  menuClassName?: string;
   menuWidth?: number;
   options: Array<SelectOption<T>>;
   placeholder?: ReactNode;
@@ -119,6 +161,7 @@ export function Select<T extends string | number>({
   className,
   disabled = false,
   fieldSize = "md",
+  menuClassName,
   menuWidth,
   onChange,
   options,
@@ -203,7 +246,7 @@ export function Select<T extends string | number>({
   }, [menuWidth, open]);
 
   const menu = open ? (
-    <div className={cx("ui-select-menu", "ui-select-menu-floating")} ref={menuRef} role="listbox" style={menuStyle}>
+    <div className={cx("ui-select-menu", "ui-select-menu-floating", menuClassName)} ref={menuRef} role="listbox" style={menuStyle}>
       {options.map((option) => (
         <button
           aria-selected={option.value === value}
@@ -244,6 +287,79 @@ export function Select<T extends string | number>({
       </Button>
       {menu && typeof document !== "undefined" ? createPortal(menu, document.body) : null}
     </div>
+  );
+}
+
+export interface ConfirmDialogProps {
+  cancelLabel?: ReactNode;
+  confirmLabel?: ReactNode;
+  description?: ReactNode;
+  open: boolean;
+  title: ReactNode;
+  tone?: "default" | "danger";
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+export function ConfirmDialog({
+  cancelLabel = "取消",
+  confirmLabel = "确认",
+  description,
+  open,
+  title,
+  tone = "default",
+  onCancel,
+  onConfirm,
+}: ConfirmDialogProps) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onCancel();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onCancel, open]);
+
+  if (!open || typeof document === "undefined") {
+    return null;
+  }
+
+  const themeStyle = getPortalThemeStyle();
+
+  return createPortal(
+    <div className="modal-backdrop ui-confirm-backdrop" onPointerDown={onCancel} role="presentation" style={themeStyle}>
+      <section
+        aria-modal="true"
+        className="ui-confirm-dialog"
+        onPointerDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="ui-confirm-content">
+          <h2>{title}</h2>
+          {description ? <p>{description}</p> : null}
+        </div>
+        <div className="ui-confirm-actions">
+          <Button onClick={onCancel} tone="muted">
+            {cancelLabel}
+          </Button>
+          <Button
+            className={tone === "danger" ? "danger-action" : undefined}
+            icon={tone === "danger" ? "trash" : undefined}
+            onClick={onConfirm}
+            tone={tone}
+          >
+            {confirmLabel}
+          </Button>
+        </div>
+      </section>
+    </div>,
+    document.body,
   );
 }
 
