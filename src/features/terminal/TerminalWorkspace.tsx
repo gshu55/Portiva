@@ -48,7 +48,8 @@ interface TerminalWorkspaceProps {
   onOpenSessionWindow: (connectionId: string) => void;
   onCloseSerialTerminal: (terminalId: string) => Promise<void> | void;
   onOpenSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
-  onRefreshSerialPorts?: () => Promise<void> | void;
+  onReconfigureSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
+  onRefreshSerialPorts?: () => Promise<SerialPortInfo[]> | Promise<void> | SerialPortInfo[] | void;
   onReconnectSessionTab: (connectionId: string) => void;
   onReorderSessionTabs: (sourceConnectionId: string, targetConnectionId: string) => void;
   onSessionDragStateChange?: (isDragging: boolean, tabId: string) => void;
@@ -114,6 +115,7 @@ export function TerminalWorkspace({
   onOpenSessionWindow,
   onCloseSerialTerminal,
   onOpenSerialTerminal,
+  onReconfigureSerialTerminal,
   onRefreshSerialPorts,
   onReconnectSessionTab,
   onReorderSessionTabs,
@@ -427,9 +429,10 @@ export function TerminalWorkspace({
           terminalCopyRichText={terminalCopyRichText}
           terminalRightClickBehavior={terminalRightClickBehavior}
           terminalTheme={terminalTheme}
-          onCloseSerialTerminal={onCloseSerialTerminal}
-          onOpenSerialTerminal={onOpenSerialTerminal}
-          onRefreshSerialPorts={onRefreshSerialPorts}
+	          onCloseSerialTerminal={onCloseSerialTerminal}
+	          onOpenSerialTerminal={onOpenSerialTerminal}
+	          onReconfigureSerialTerminal={onReconfigureSerialTerminal}
+	          onRefreshSerialPorts={onRefreshSerialPorts}
           onResizeTerminal={onResizeTerminal}
           onSendBytes={onSendTerminalBytes}
           onSendData={onSendTerminalData}

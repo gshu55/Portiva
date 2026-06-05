@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use encoding_rs::{BIG5, EUC_KR, GBK, SHIFT_JIS, UTF_16BE, UTF_16LE};
 use serial2::{CharSize, FlowControl, Parity, SerialPort, Settings, StopBits};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -66,7 +67,14 @@ enum SerialLineEnding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SerialEncoding {
+    Ascii,
     Utf8,
+    Gbk,
+    Big5,
+    ShiftJis,
+    EucKr,
+    Utf16Le,
+    Utf16Be,
     Latin1,
 }
 
@@ -497,10 +505,30 @@ fn serial_line_ending(input: Option<&str>) -> Result<SerialLineEnding, String> {
 
 fn serial_encoding(input: Option<&str>) -> Result<SerialEncoding, String> {
     match input.unwrap_or("utf-8") {
+        "ascii" => Ok(SerialEncoding::Ascii),
         "utf-8" => Ok(SerialEncoding::Utf8),
+        "gbk" => Ok(SerialEncoding::Gbk),
+        "big5" => Ok(SerialEncoding::Big5),
+        "shift-jis" => Ok(SerialEncoding::ShiftJis),
+        "euc-kr" => Ok(SerialEncoding::EucKr),
+        "utf-16le" => Ok(SerialEncoding::Utf16Le),
+        "utf-16be" => Ok(SerialEncoding::Utf16Be),
         "latin1" => Ok(SerialEncoding::Latin1),
-        "gbk" => Err("GBK serial encoding is not implemented yet".to_string()),
         unexpected => Err(format!("unsupported serial encoding: {unexpected}")),
+    }
+}
+
+fn serial_encoding_label(encoding: SerialEncoding) -> &'static str {
+    match encoding {
+        SerialEncoding::Ascii => "ASCII",
+        SerialEncoding::Utf8 => "UTF-8",
+        SerialEncoding::Gbk => "GBK",
+        SerialEncoding::Big5 => "Big5",
+        SerialEncoding::ShiftJis => "Shift_JIS",
+        SerialEncoding::EucKr => "EUC-KR",
+        SerialEncoding::Utf16Le => "UTF-16LE",
+        SerialEncoding::Utf16Be => "UTF-16BE",
+        SerialEncoding::Latin1 => "Latin-1",
     }
 }
 
@@ -516,6 +544,19 @@ fn encode_terminal_input(
     };
 
     match encoding {
+        SerialEncoding::Ascii => normalized
+            .chars()
+            .map(|ch| {
+                if (ch as u32) <= 0x7f {
+                    Ok(ch as u8)
+                } else {
+                    Err(format!(
+                        "character U+{:04X} cannot be encoded as ASCII",
+                        ch as u32
+                    ))
+                }
+            })
+            .collect(),
         SerialEncoding::Utf8 => Ok(normalized.into_bytes()),
         SerialEncoding::Latin1 => normalized
             .chars()
@@ -530,6 +571,30 @@ fn encode_terminal_input(
                 }
             })
             .collect(),
+        SerialEncoding::Gbk
+        | SerialEncoding::Big5
+        | SerialEncoding::ShiftJis
+        | SerialEncoding::EucKr
+        | SerialEncoding::Utf16Le
+        | SerialEncoding::Utf16Be => {
+            let encoding_impl = match encoding {
+                SerialEncoding::Gbk => GBK,
+                SerialEncoding::Big5 => BIG5,
+                SerialEncoding::ShiftJis => SHIFT_JIS,
+                SerialEncoding::EucKr => EUC_KR,
+                SerialEncoding::Utf16Le => UTF_16LE,
+                SerialEncoding::Utf16Be => UTF_16BE,
+                _ => unreachable!("handled above"),
+            };
+            let (encoded, _, had_errors) = encoding_impl.encode(&normalized);
+            if had_errors {
+                return Err(format!(
+                    "input contains characters that cannot be encoded as {}",
+                    serial_encoding_label(encoding)
+                ));
+            }
+            Ok(encoded.into_owned())
+        }
     }
 }
 
@@ -555,8 +620,36 @@ fn normalize_line_endings(input: &str, replacement: &str) -> String {
 
 fn decode_serial_output(bytes: &[u8], encoding: SerialEncoding) -> String {
     match encoding {
+        SerialEncoding::Ascii => bytes
+            .iter()
+            .map(|byte| {
+                if *byte <= 0x7f {
+                    char::from(*byte)
+                } else {
+                    '\u{FFFD}'
+                }
+            })
+            .collect(),
         SerialEncoding::Utf8 => String::from_utf8_lossy(bytes).to_string(),
         SerialEncoding::Latin1 => bytes.iter().map(|byte| char::from(*byte)).collect(),
+        SerialEncoding::Gbk
+        | SerialEncoding::Big5
+        | SerialEncoding::ShiftJis
+        | SerialEncoding::EucKr
+        | SerialEncoding::Utf16Le
+        | SerialEncoding::Utf16Be => {
+            let encoding_impl = match encoding {
+                SerialEncoding::Gbk => GBK,
+                SerialEncoding::Big5 => BIG5,
+                SerialEncoding::ShiftJis => SHIFT_JIS,
+                SerialEncoding::EucKr => EUC_KR,
+                SerialEncoding::Utf16Le => UTF_16LE,
+                SerialEncoding::Utf16Be => UTF_16BE,
+                _ => unreachable!("handled above"),
+            };
+            let (decoded, _, _) = encoding_impl.decode(bytes);
+            decoded.into_owned()
+        }
     }
 }
 
@@ -571,7 +664,6 @@ fn spawn_serial_reader(
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         let mut pending_bytes = Vec::new();
-        let mut pending_output = String::new();
         let mut last_flush = Instant::now();
         let mut rx_seq = 0_u64;
         let mut disconnect_reason = format!("串口 {port_name} 已关闭");
@@ -582,15 +674,14 @@ fn spawn_serial_reader(
                 Ok(0) => continue,
                 Ok(byte_count) => {
                     pending_bytes.extend_from_slice(&buffer[..byte_count]);
-                    pending_output.push_str(&decode_serial_output(&buffer[..byte_count], encoding));
-                    if pending_output.len() >= SERIAL_OUTPUT_MAX_CHUNK_BYTES
+                    if pending_bytes.len() >= SERIAL_OUTPUT_MAX_CHUNK_BYTES
                         || last_flush.elapsed() >= SERIAL_OUTPUT_FLUSH_INTERVAL
                     {
                         flush_serial_output(
                             &app_handle,
                             &terminal_id,
                             &mut pending_bytes,
-                            &mut pending_output,
+                            encoding,
                             &mut last_flush,
                             &mut rx_seq,
                         );
@@ -599,23 +690,23 @@ fn spawn_serial_reader(
                 Err(error) if error.kind() == ErrorKind::TimedOut => {
                     flush_serial_output(
                         &app_handle,
-                            &terminal_id,
-                            &mut pending_bytes,
-                            &mut pending_output,
-                            &mut last_flush,
-                            &mut rx_seq,
-                        );
-                    }
+                        &terminal_id,
+                        &mut pending_bytes,
+                        encoding,
+                        &mut last_flush,
+                        &mut rx_seq,
+                    );
+                }
                 Err(error) if error.kind() == ErrorKind::Interrupted => continue,
                 Err(error) => {
                     flush_serial_output(
                         &app_handle,
-                            &terminal_id,
-                            &mut pending_bytes,
-                            &mut pending_output,
-                            &mut last_flush,
-                            &mut rx_seq,
-                        );
+                        &terminal_id,
+                        &mut pending_bytes,
+                        encoding,
+                        &mut last_flush,
+                        &mut rx_seq,
+                    );
                     disconnect_reason = format!("读取串口 {port_name} 失败：{error}");
                     break;
                 }
@@ -625,7 +716,7 @@ fn spawn_serial_reader(
             &app_handle,
             &terminal_id,
             &mut pending_bytes,
-            &mut pending_output,
+            encoding,
             &mut last_flush,
             &mut rx_seq,
         );
@@ -642,17 +733,16 @@ fn flush_serial_output(
     app_handle: &AppHandle,
     terminal_id: &str,
     pending_bytes: &mut Vec<u8>,
-    pending_output: &mut String,
+    encoding: SerialEncoding,
     last_flush: &mut Instant,
     rx_seq: &mut u64,
 ) {
-    if pending_output.is_empty() {
-        pending_bytes.clear();
+    if pending_bytes.is_empty() {
         return;
     }
 
     let bytes = std::mem::take(pending_bytes);
-    let output = std::mem::take(pending_output);
+    let output = decode_serial_output(&bytes, encoding);
     *last_flush = Instant::now();
     emit_serial_rx(app_handle, terminal_id, *rx_seq, bytes, output.clone());
     *rx_seq = rx_seq.saturating_add(1);

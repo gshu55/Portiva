@@ -108,7 +108,7 @@ export function ProfileDialogHost({
         onDialogChange(null);
         onReconnectTabChange(null);
       }}
-      onRefreshSerialPorts={workspace.refreshWorkspace}
+      onRefreshSerialPorts={workspace.refreshSerialPorts}
       onSave={async (profile, input) => {
         const saved = await workspace.saveProfile(profile, input);
         if (!saved) {

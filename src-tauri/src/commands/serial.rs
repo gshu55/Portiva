@@ -67,7 +67,9 @@ pub fn serial_terminal_open(
 ) -> Result<(), String> {
     let terminal = terminal_service.session(&terminal_id)?;
     serial_service.register_profile(&terminal.connection_id, profile)?;
-    serial_service.open_terminal(&terminal.connection_id, &terminal_id, app_handle)
+    serial_service.open_terminal(&terminal.connection_id, &terminal_id, app_handle)?;
+    let _ = terminal_service.mark_attached(&terminal_id)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -81,5 +83,7 @@ pub fn serial_terminal_reconfigure(
     let terminal = terminal_service.session(&terminal_id)?;
     let _ = serial_service.close_terminal(&terminal.connection_id, &terminal_id)?;
     serial_service.register_profile(&terminal.connection_id, profile)?;
-    serial_service.open_terminal(&terminal.connection_id, &terminal_id, app_handle)
+    serial_service.open_terminal(&terminal.connection_id, &terminal_id, app_handle)?;
+    let _ = terminal_service.mark_attached(&terminal_id)?;
+    Ok(())
 }

@@ -5,6 +5,7 @@ import type {
   SerialPortInfo,
   SerialProfile,
   TelnetProfile,
+  TextEncoding,
 } from "../../shared/types";
 import { protocolLabel } from "../../shared/labels";
 import { Icon, type IconName } from "../../shared/Icon";
@@ -31,7 +32,7 @@ interface ConnectionProfileDialogProps {
   onClose: () => void;
   onConnect: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<ConnectionActionResult>;
   onDelete: (profileId: string) => void;
-  onRefreshSerialPorts?: () => Promise<void> | void;
+  onRefreshSerialPorts?: () => Promise<SerialPortInfo[]> | Promise<void> | SerialPortInfo[] | void;
   onSave: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<ConnectionActionResult>;
   onTest: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<TestConnectionResult>;
 }
@@ -342,7 +343,7 @@ function SerialFields({
   profile,
 }: {
   onChange: (profile: SerialProfile) => void;
-  onRefreshPorts?: () => Promise<void> | void;
+  onRefreshPorts?: () => Promise<SerialPortInfo[]> | Promise<void> | SerialPortInfo[] | void;
   ports: SerialPortInfo[];
   profile: SerialProfile;
 }) {
@@ -458,41 +459,43 @@ function SerialFields({
           </span>
         </label>
       </div>
-      <EncodingFields
-        encoding={profile.encoding}
-        includeGbk={false}
-        lineEnding={profile.lineEnding}
-        onChange={(patch) => update(patch)}
-      />
+      <EncodingFields encoding={profile.encoding} lineEnding={profile.lineEnding} onChange={(patch) => update(patch)} />
       <p className="todo-note">串口端口来自系统检测结果，设备重插后可点击刷新重新检测。</p>
     </div>
   );
 }
 
+const textEncodingOptions: Array<{ label: string; value: TextEncoding }> = [
+  { label: "ASCII", value: "ascii" },
+  { label: "UTF-8", value: "utf-8" },
+  { label: "GBK", value: "gbk" },
+  { label: "Big5", value: "big5" },
+  { label: "Shift_JIS", value: "shift-jis" },
+  { label: "EUC-KR", value: "euc-kr" },
+  { label: "UTF-16 LE", value: "utf-16le" },
+  { label: "UTF-16 BE", value: "utf-16be" },
+  { label: "Latin-1", value: "latin1" },
+];
+
 function EncodingFields({
   encoding,
-  includeGbk = true,
   lineEnding,
   onChange,
 }: {
-  encoding: "utf-8" | "gbk" | "latin1";
-  includeGbk?: boolean;
+  encoding: TextEncoding;
   lineEnding: "crlf" | "cr" | "lf";
-  onChange: (patch: { encoding?: "utf-8" | "gbk" | "latin1"; lineEnding?: "crlf" | "cr" | "lf" }) => void;
+  onChange: (patch: { encoding?: TextEncoding; lineEnding?: "crlf" | "cr" | "lf" }) => void;
 }) {
   return (
     <>
       <label>
         编码
-        <select value={encoding} onChange={(event) => onChange({ encoding: event.currentTarget.value as "utf-8" | "gbk" | "latin1" })}>
-          {!includeGbk && encoding === "gbk" ? (
-            <option disabled value="gbk">
-              GBK（暂不支持）
+        <select value={encoding} onChange={(event) => onChange({ encoding: event.currentTarget.value as TextEncoding })}>
+          {textEncodingOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
-          ) : null}
-          <option value="utf-8">UTF-8</option>
-          {includeGbk ? <option value="gbk">GBK</option> : null}
-          <option value="latin1">Latin-1</option>
+          ))}
         </select>
       </label>
       <label>
@@ -538,7 +541,6 @@ function isUnsupportedSerialParity(parity: SerialProfile["parity"]) {
 function isSupportedSerialConfiguration(profile: SerialProfile) {
   return (
     !isUnsupportedSerialParity(profile.parity) &&
-    profile.stopBits !== 1.5 &&
-    profile.encoding !== "gbk"
+    profile.stopBits !== 1.5
   );
 }

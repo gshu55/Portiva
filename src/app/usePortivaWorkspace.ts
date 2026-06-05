@@ -154,6 +154,8 @@ const defaultSettings: AppSettings = {
   keymap: {
     commandPalette: "Ctrl+Shift+P",
     newProfile: "Ctrl+N",
+    openLocalTerminal: "Ctrl+Alt+T",
+    openSerialTerminal: "Ctrl+Alt+S",
     closeTab: "Ctrl+W",
   },
   security: {
@@ -285,6 +287,8 @@ export function usePortivaWorkspace() {
   const [activeTerminal, setActiveTerminal] = useState<TerminalSession | null>(null);
   const activeTerminalIdRef = useRef<string | null>(null);
   const closingTerminalIdsRef = useRef<Set<string>>(new Set());
+  const lastDetectedSerialPortNamesRef = useRef<Set<string>>(new Set(sampleSerialPorts.map((port) => port.portName)));
+  const sessionTabsRef = useRef<WorkspaceSessionTab[]>([]);
   const [terminalSnapshotState, setTerminalSnapshotState] = useState<TerminalSnapshot | null>(null);
   const [remotePath, setRemotePathState] = useState(remoteRootPath);
   const [localPath, setLocalPathState] = useState("");
@@ -711,6 +715,7 @@ export function usePortivaWorkspace() {
       setSecrets(nextSecrets);
       setSettings(nextSettings);
       setKnownHosts(nextKnownHosts);
+      lastDetectedSerialPortNamesRef.current = new Set(nextSerialPorts.map((port) => port.portName));
       setSerialPorts(nextSerialPorts);
       setTunnels(nextTunnels);
       setActiveProfileId((current) =>
@@ -744,6 +749,10 @@ export function usePortivaWorkspace() {
   useEffect(() => {
     activeTerminalIdRef.current = activeTerminal?.id ?? null;
   }, [activeTerminal?.id]);
+
+  useEffect(() => {
+    sessionTabsRef.current = sessionTabs;
+  }, [sessionTabs]);
 
   useEffect(() => {
     if (dataSource !== "tauri") {
@@ -1135,6 +1144,92 @@ export function usePortivaWorkspace() {
   const reportWorkspaceMessage = useCallback((message: string) => {
     setWorkspaceMessage(message);
   }, []);
+
+  const markSerialTerminalDisconnected = useCallback((terminalId: string) => {
+    setSessionTabs((current) =>
+      current.map((tab) =>
+        tab.terminal?.id === terminalId && tab.connection.transport?.kind === "serial"
+          ? {
+              ...tab,
+              connection: {
+                ...tab.connection,
+                status: "disconnected",
+                title: serialTabTitle,
+                transport: tab.connection.transport
+                  ? {
+                      ...tab.connection.transport,
+                      terminalChannelReady: false,
+                    }
+                  : tab.connection.transport,
+              },
+            }
+          : tab,
+      ),
+    );
+    setActiveConnection((current) =>
+      current?.transport?.kind === "serial" &&
+      sessionTabsRef.current.some((tab) => tab.terminal?.id === terminalId && tab.connection.id === current.id)
+        ? {
+            ...current,
+            status: "disconnected",
+            title: serialTabTitle,
+            transport: current.transport
+              ? {
+                  ...current.transport,
+                  terminalChannelReady: false,
+                }
+              : current.transport,
+          }
+        : current,
+    );
+  }, []);
+
+  const refreshSerialPorts = useCallback(async () => {
+    if (dataSource === "mock") {
+      return sampleSerialPorts;
+    }
+
+    const nextSerialPorts = await serialListPorts();
+    const nextPortNames = new Set(nextSerialPorts.map((port) => port.portName));
+    const previousPortNames = lastDetectedSerialPortNamesRef.current;
+    lastDetectedSerialPortNamesRef.current = nextPortNames;
+    setSerialPorts(nextSerialPorts);
+    const disconnectedTabs = sessionTabsRef.current.filter((tab) => {
+      const portName = tab.connection.transport?.kind === "serial" ? tab.connection.transport.host : "";
+      return (
+        tab.terminal &&
+        tab.connection.transport?.kind === "serial" &&
+        tab.connection.status !== "disconnected" &&
+        tab.connection.status !== "failed" &&
+        Boolean(portName) &&
+        previousPortNames.has(portName) &&
+        !nextPortNames.has(portName)
+      );
+    });
+
+    for (const tab of disconnectedTabs) {
+      if (!tab.terminal) {
+        continue;
+      }
+
+      void serialTerminalClose(tab.terminal.id).catch(() => undefined);
+      markSerialTerminalDisconnected(tab.terminal.id);
+    }
+
+    return nextSerialPorts;
+  }, [dataSource, markSerialTerminalDisconnected]);
+
+  useEffect(() => {
+    if (dataSource !== "tauri" || !sessionTabs.some((tab) => tab.connection.transport?.kind === "serial")) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshSerialPorts().catch(() => undefined);
+    }, 2000);
+
+    return () => window.clearInterval(intervalId);
+  }, [dataSource, refreshSerialPorts, sessionTabs]);
 
   const reconnectSessionTab = useCallback(async (
     tabId: string,
@@ -1754,42 +1849,7 @@ export function usePortivaWorkspace() {
     async (terminalId: string) => {
       try {
         await serialTerminalClose(terminalId);
-        setSessionTabs((current) =>
-          current.map((tab) =>
-            tab.terminal?.id === terminalId && tab.connection.transport?.kind === "serial"
-              ? {
-                  ...tab,
-                  connection: {
-                    ...tab.connection,
-                    status: "disconnected",
-                    title: serialTabTitle,
-                    transport: tab.connection.transport
-                      ? {
-                          ...tab.connection.transport,
-                          terminalChannelReady: false,
-                        }
-                      : tab.connection.transport,
-                  },
-                }
-              : tab,
-          ),
-        );
-        setActiveConnection((current) =>
-          current?.transport?.kind === "serial" &&
-          sessionTabs.some((tab) => tab.terminal?.id === terminalId && tab.connection.id === current.id)
-            ? {
-                ...current,
-                status: "disconnected",
-                title: serialTabTitle,
-                transport: current.transport
-                  ? {
-                      ...current.transport,
-                      terminalChannelReady: false,
-                    }
-                  : current.transport,
-              }
-            : current,
-        );
+        markSerialTerminalDisconnected(terminalId);
         setWorkspaceMessage("串口已关闭。");
         await refreshWorkspace();
       } catch (error) {
@@ -1797,7 +1857,7 @@ export function usePortivaWorkspace() {
         throw error;
       }
     },
-    [refreshWorkspace, sessionTabs],
+    [markSerialTerminalDisconnected, refreshWorkspace],
   );
 
   const openSerialTerminal = useCallback(
@@ -1812,10 +1872,10 @@ export function usePortivaWorkspace() {
             tab.terminal?.id === terminalId && tab.connection.transport?.kind === "serial"
               ? {
                   ...tab,
-                  connection: {
-                    ...tab.connection,
-                    status: "connected",
-                    title: serialTitle,
+	                  connection: {
+	                    ...tab.connection,
+	                    status: "connected",
+	                    title: serialTitle,
                     transport: tab.connection.transport
                       ? {
                           ...tab.connection.transport,
@@ -1823,11 +1883,17 @@ export function usePortivaWorkspace() {
                           serverIdentification: serialIdentification,
                           terminalChannelReady: true,
                         }
-                      : tab.connection.transport,
-                  },
-                }
-              : tab,
-          ),
+	                      : tab.connection.transport,
+	                  },
+	                  terminal: tab.terminal
+	                    ? {
+	                        ...tab.terminal,
+	                        status: "attached",
+	                      }
+	                    : tab.terminal,
+	                }
+	              : tab,
+	          ),
         );
         setActiveConnection((current) =>
           current?.transport?.kind === "serial" &&
@@ -1861,6 +1927,19 @@ export function usePortivaWorkspace() {
     async (terminalId: string, profile: ConnectionProfile) => {
       try {
         await serialTerminalReconfigure(terminalId, profile);
+        setSessionTabs((current) =>
+          current.map((tab) =>
+            tab.terminal?.id === terminalId && tab.connection.transport?.kind === "serial"
+              ? {
+                  ...tab,
+                  terminal: {
+                    ...tab.terminal,
+                    status: "attached",
+                  },
+                }
+              : tab,
+          ),
+        );
         setWorkspaceMessage("串口参数已应用并重新打开。");
         await refreshWorkspace();
       } catch (error) {
@@ -3030,8 +3109,9 @@ export function usePortivaWorkspace() {
     refreshLocalFiles,
     removeLocalEntry,
     removeRemoteEntry,
-    refreshRemoteFiles,
-    refreshWorkspace,
+	    refreshRemoteFiles,
+	    refreshSerialPorts,
+	    refreshWorkspace,
     refreshTerminalSnapshot,
     reconnectSessionTab,
     reconfigureSerialTerminal,

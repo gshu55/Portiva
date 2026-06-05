@@ -337,8 +337,8 @@ fn validate_profile(profile: &ConnectionProfile) -> Result<(), String> {
             }
 
             match profile.encoding.as_deref().unwrap_or("utf-8") {
-                "utf-8" | "latin1" => {}
-                "gbk" => return Err("GBK serial encoding is not supported yet".to_string()),
+                "ascii" | "utf-8" | "gbk" | "big5" | "shift-jis" | "euc-kr" | "utf-16le"
+                | "utf-16be" | "latin1" => {}
                 _ => return Err("unsupported serial encoding".to_string()),
             }
 
@@ -486,10 +486,10 @@ mod tests {
         );
 
         profile.stop_bits = Some(1.0);
-        profile.encoding = Some("gbk".to_string());
+        profile.encoding = Some("unknown".to_string());
         assert_eq!(
             store.upsert(profile).unwrap_err(),
-            "GBK serial encoding is not supported yet"
+            "unsupported serial encoding"
         );
     }
 

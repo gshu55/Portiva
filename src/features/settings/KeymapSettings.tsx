@@ -8,6 +8,8 @@ interface KeymapSettingsProps {
 
 const shortcutFields: Array<[keyof AppSettings["keymap"], string]> = [
   ["newProfile", "新建连接"],
+  ["openLocalTerminal", "打开本地终端"],
+  ["openSerialTerminal", "打开串口终端"],
   ["closeTab", "关闭标签"],
 ];
 
@@ -22,7 +24,7 @@ export function KeymapSettings({ onSaveSettings, settings }: KeymapSettingsProps
         {shortcutFields.map(([key, label]) => (
           <label className="shortcut-row" key={key}>
             <span>{label}</span>
-            <input value={settings.keymap[key]} onChange={(event) => updateKeymap(key, event.currentTarget.value)} />
+            <input value={settings.keymap[key] ?? ""} onChange={(event) => updateKeymap(key, event.currentTarget.value)} />
           </label>
         ))}
       </div>

@@ -154,8 +154,10 @@ pub async fn terminal_write(
         if let Err(error) =
             serial_service.write_terminal(&terminal.connection_id, &terminal_id, &data)
         {
-            let _ = terminal_service
-                .append_disconnect_notice(&terminal_id, &format!("串口写入失败：{error}"));
+            if serial_write_error_closes_terminal(&error) {
+                let _ = terminal_service
+                    .append_disconnect_notice(&terminal_id, &format!("串口写入失败：{error}"));
+            }
             return Err(error);
         }
         return Ok(());
@@ -189,6 +191,10 @@ pub async fn terminal_write_bytes(
     }
 
     Ok(())
+}
+
+fn serial_write_error_closes_terminal(error: &str) -> bool {
+    !error.contains("cannot be encoded")
 }
 
 #[tauri::command]

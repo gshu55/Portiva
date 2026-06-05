@@ -6,9 +6,9 @@ import type {
   TerminalColorPalette,
   TerminalRightClickBehavior,
   TerminalSize,
+  TextEncoding,
   WorkspaceSessionTab,
 } from "../../shared/types";
-import { writeClipboardText } from "../../shared/clipboard";
 import { Icon } from "../../shared/Icon";
 
 interface SerialTerminalPanelProps {
@@ -23,7 +23,8 @@ interface SerialTerminalPanelProps {
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
   onCloseSerialTerminal: (terminalId: string) => Promise<void> | void;
   onOpenSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
-  onRefreshSerialPorts?: () => Promise<void> | void;
+  onReconfigureSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
+  onRefreshSerialPorts?: () => Promise<SerialPortInfo[]> | Promise<void> | SerialPortInfo[] | void;
   onSendBytes: (bytes: number[], terminalId: string) => Promise<void> | void;
   onSendData: (data: string, terminalId: string) => Promise<void> | void;
   serialPorts?: SerialPortInfo[];
@@ -64,6 +65,17 @@ const defaultTimedSendIntervalMs = 1000;
 const minTimedSendIntervalMs = 50;
 const maxTimedSendIntervalMs = 600000;
 const defaultSendSlotCount = 6;
+const serialEncodingOptions: Array<{ label: string; value: TextEncoding }> = [
+  { label: "ASCII", value: "ascii" },
+  { label: "UTF-8", value: "utf-8" },
+  { label: "GBK", value: "gbk" },
+  { label: "Big5", value: "big5" },
+  { label: "Shift_JIS", value: "shift-jis" },
+  { label: "EUC-KR", value: "euc-kr" },
+  { label: "UTF-16 LE", value: "utf-16le" },
+  { label: "UTF-16 BE", value: "utf-16be" },
+  { label: "Latin-1", value: "latin1" },
+];
 const commonSerialBaudRates = [
   110,
   300,
@@ -203,6 +215,22 @@ function parseSerialHexDraft(input: string) {
   return { bytes };
 }
 
+function detectSerialRxMode(bytes: number[], text: string): SerialSendMode {
+  if (!bytes.length) {
+    return "text";
+  }
+
+  for (const char of text) {
+    if (char === "\uFFFD" || /\p{C}/u.test(char) || /\p{Co}/u.test(char)) {
+      continue;
+    }
+
+    return "text";
+  }
+
+  return "hex";
+}
+
 function clampTimedSendInterval(value: number) {
   if (!Number.isFinite(value)) {
     return defaultTimedSendIntervalMs;
@@ -224,13 +252,18 @@ function formatExchangeTime(timestampUs: number) {
   return `${hours}:${minutes}:${seconds}.${milliseconds}`;
 }
 
-function serialLogText(entries: SerialExchangeEntry[]) {
-  return entries
-    .map((entry) => {
-      const mode = entry.mode ? ` ${entry.mode.toUpperCase()}` : "";
-      return `[${formatExchangeTime(entry.timestampUs)}] ${entry.direction.toUpperCase()}${mode} ${entry.byteCount}B ${entry.content}`;
-    })
-    .join("\n");
+function formatByteSize(byteCount: number) {
+  if (byteCount < 1024) {
+    return `${byteCount}B`;
+  }
+
+  const kilobytes = byteCount / 1024;
+  if (kilobytes < 1024) {
+    return `${kilobytes >= 10 ? kilobytes.toFixed(0) : kilobytes.toFixed(1)}K`;
+  }
+
+  const megabytes = kilobytes / 1024;
+  return `${megabytes >= 10 ? megabytes.toFixed(0) : megabytes.toFixed(1)}M`;
 }
 
 function findTrafficVirtualIndex(offsets: number[], target: number) {
@@ -258,6 +291,7 @@ function findTrafficVirtualIndex(offsets: number[], target: number) {
 export function SerialTerminalPanel({
   onCloseSerialTerminal,
   onOpenSerialTerminal,
+  onReconfigureSerialTerminal,
   onRefreshSerialPorts,
   onSendBytes,
   onSendData,
@@ -419,11 +453,27 @@ export function SerialTerminalPanel({
 
   useEffect(() => {
     setRuntimeProfile(serialRuntimeProfile(profile, tab));
-  }, [profile, tab]);
+  }, [profile?.id, tab.connection.id]);
 
   useEffect(() => {
     setSerialOpen(Boolean(tab.terminal && tab.connection.status !== "disconnected" && tab.connection.status !== "failed"));
   }, [tab.connection.status, terminal?.id]);
+
+  useEffect(() => {
+    if (serialOpen || !runtimeProfile.portName || selectedPortIsDetected) {
+      return;
+    }
+
+    setRuntimeProfile((current) =>
+      current.portName === runtimeProfile.portName
+        ? {
+            ...current,
+            portName: "",
+            updatedAt: new Date().toISOString(),
+          }
+        : current,
+    );
+  }, [runtimeProfile.portName, selectedPortIsDetected, serialOpen]);
 
   useEffect(() => {
     setExchangeLog([]);
@@ -481,6 +531,7 @@ export function SerialTerminalPanel({
             byteCount: event.payload.bytes.length,
             content: event.payload.text,
             direction: "rx",
+            mode: detectSerialRxMode(event.payload.bytes, event.payload.text),
             timestampUs: event.payload.timestampUs,
           });
         }),
@@ -547,11 +598,32 @@ export function SerialTerminalPanel({
   }, [sendDraft, sendSlots, terminal, terminalReady]);
 
   const updateRuntimeProfile = (patch: Partial<SerialProfile>) => {
-    setRuntimeProfile((current) => ({
-      ...current,
+    const nextProfile = {
+      ...runtimeProfile,
       ...patch,
       updatedAt: new Date().toISOString(),
-    }));
+    };
+    setRuntimeProfile(nextProfile);
+
+    if (!serialOpen || !terminal || serialActionPending) {
+      return;
+    }
+
+    setSerialActionPending(true);
+    void Promise.resolve(onReconfigureSerialTerminal(terminal.id, nextProfile))
+      .then(() => {
+        setSerialOpen(true);
+      })
+      .catch(() => {
+        setSerialOpen(false);
+      })
+      .finally(() => {
+        setSerialActionPending(false);
+      });
+  };
+
+  const updateSendSlot = (slotId: string, patch: Partial<SerialSendSlot>) => {
+    setSendSlots((current) => current.map((slot) => (slot.id === slotId ? { ...slot, ...patch } : slot)));
   };
 
   const toggleSerial = async () => {
@@ -573,10 +645,6 @@ export function SerialTerminalPanel({
     } finally {
       setSerialActionPending(false);
     }
-  };
-
-  const updateSendSlot = (slotId: string, patch: Partial<SerialSendSlot>) => {
-    setSendSlots((current) => current.map((slot) => (slot.id === slotId ? { ...slot, ...patch } : slot)));
   };
 
   const addSendSlot = () => {
@@ -662,17 +730,6 @@ export function SerialTerminalPanel({
     historyIndexRef.current = null;
   };
 
-  const copyBuffer = async () => {
-    try {
-      const text = serialLogText(exchangeLog);
-      if (text) {
-        await writeClipboardText(text);
-      }
-    } catch (error) {
-      console.warn("复制串口内容区失败", error);
-    }
-  };
-
   const clearExchangeLog = () => {
     trafficRowHeightsRef.current.clear();
     for (const observer of trafficRowObserversRef.current.values()) {
@@ -755,9 +812,6 @@ export function SerialTerminalPanel({
                 <button title="清屏" type="button" onClick={clearExchangeLog}>
                   <Icon name="trash" />
                 </button>
-                <button disabled={!exchangeLog.length} title="复制内容区" type="button" onClick={() => void copyBuffer()}>
-                  <Icon name="copy" />
-                </button>
               </div>
             </header>
             <div className="serial-traffic-log" ref={exchangeLogRef} onScroll={handleTrafficScroll}>
@@ -768,10 +822,8 @@ export function SerialTerminalPanel({
                       <article className={`serial-traffic-row ${entry.direction}`} key={entry.id} ref={registerTrafficRow(entry.id)}>
                         <span className="serial-traffic-time">{formatExchangeTime(entry.timestampUs)}</span>
                         <span className="serial-traffic-direction">{entry.direction === "tx" ? "发送" : "接收"}</span>
-                        <span className="serial-traffic-meta">
-                          {entry.mode ? `${entry.mode.toUpperCase()} · ` : ""}
-                          {entry.byteCount}B
-                        </span>
+                        <span className="serial-traffic-mode">{entry.mode ? entry.mode.toUpperCase() : "-"}</span>
+                        <span className="serial-traffic-size">{formatByteSize(entry.byteCount)}</span>
                         <pre>{entry.content}</pre>
                       </article>
                     ))}
@@ -794,7 +846,7 @@ export function SerialTerminalPanel({
 
             <div className="serial-send-slots">
               {sendSlots.map((slot, index) => (
-                <form className="serial-send-form" key={slot.id} onSubmit={(event) => handleSubmit(slot.id, event)}>
+                <form className="serial-send-form" key={slot.id} noValidate onSubmit={(event) => handleSubmit(slot.id, event)}>
                   <textarea
                     aria-label={`串口发送内容 ${index + 1}`}
                     autoComplete="off"
@@ -812,7 +864,11 @@ export function SerialTerminalPanel({
                   />
                   <div className="serial-send-row-actions">
                     <span>{index + 1}</span>
-                    <div className="serial-send-mode" role="group" aria-label={`串口发送模式 ${index + 1}`}>
+                    <div
+                      className={`serial-send-mode ${slot.mode === "hex" ? "mode-hex" : "mode-text"}`}
+                      role="group"
+                      aria-label={`串口发送模式 ${index + 1}`}
+                    >
                       <button
                         aria-pressed={slot.mode === "text"}
                         className={slot.mode === "text" ? "active" : ""}
@@ -848,14 +904,13 @@ export function SerialTerminalPanel({
                     <label className={["serial-timed-send", slot.timedSendEnabled ? "active" : ""].join(" ")}>
                       <input
                         checked={slot.timedSendEnabled}
-                        disabled={!terminalReady || (!slot.content.trim() && !slot.timedSendEnabled)}
+                        disabled={!terminalReady}
                         type="checkbox"
                         onChange={(event) => updateSendSlot(slot.id, { timedSendEnabled: event.currentTarget.checked })}
                       />
                       <span>定时</span>
                       <input
                         aria-label={`定时发送间隔 ${index + 1}（毫秒）`}
-                        disabled={!slot.timedSendEnabled}
                         max={maxTimedSendIntervalMs}
                         min={minTimedSendIntervalMs}
                         step={50}
@@ -894,9 +949,6 @@ export function SerialTerminalPanel({
                   <option disabled value="">
                     {serialPorts.length ? "选择端口" : "未检测到端口"}
                   </option>
-                  {runtimeProfile.portName && !selectedPortIsDetected ? (
-                    <option value={runtimeProfile.portName}>{runtimeProfile.portName}</option>
-                  ) : null}
                   {serialPorts.map((port) => (
                     <option disabled={!port.isAvailable && port.portName !== runtimeProfile.portName} key={port.portName} value={port.portName}>
                       {port.displayName || port.portName}
@@ -957,8 +1009,11 @@ export function SerialTerminalPanel({
             <label>
               <span>编码</span>
               <select value={runtimeProfile.encoding} onChange={(event) => updateRuntimeProfile({ encoding: event.currentTarget.value as SerialProfile["encoding"] })}>
-                <option value="utf-8">UTF-8</option>
-                <option value="latin1">Latin1</option>
+                {serialEncodingOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
@@ -978,7 +1033,12 @@ export function SerialTerminalPanel({
               <span>RTS</span>
             </label>
             <div className="serial-config-actions">
-              <button disabled={serialActionPending || !terminal || !runtimeProfile.portName.trim()} type="button" onClick={() => void toggleSerial()}>
+              <button
+                className={serialOpen ? "serial-close-action" : "serial-open-action"}
+                disabled={serialActionPending || !terminal || !runtimeProfile.portName.trim()}
+                type="button"
+                onClick={() => void toggleSerial()}
+              >
                 {serialOpen ? "关闭" : "打开"}
               </button>
             </div>

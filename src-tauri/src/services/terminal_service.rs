@@ -95,6 +95,20 @@ impl TerminalService {
         self.append_output(terminal_id, &terminal_disconnect_notice(reason))
     }
 
+    pub fn mark_attached(&self, terminal_id: &str) -> Result<TerminalSession, String> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "terminal service lock poisoned".to_string())?;
+
+        let session = sessions
+            .get_mut(terminal_id)
+            .ok_or_else(|| format!("terminal not found: {terminal_id}"))?;
+
+        session.status = TerminalSessionStatus::Attached;
+        Ok(session.clone())
+    }
+
     pub fn close(&self, terminal_id: &str) -> Result<(), String> {
         self.sessions
             .lock()

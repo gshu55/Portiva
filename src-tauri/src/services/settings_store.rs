@@ -128,6 +128,8 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     let shortcuts = [
         &settings.keymap.command_palette,
         &settings.keymap.new_profile,
+        &settings.keymap.open_local_terminal,
+        &settings.keymap.open_serial_terminal,
         &settings.keymap.close_tab,
     ];
 
@@ -220,6 +222,8 @@ mod tests {
         let settings = store.get().unwrap();
 
         assert_eq!(settings.theme.terminal_font_family, "JetBrains Mono");
+        assert_eq!(settings.keymap.open_local_terminal, "Ctrl+Alt+T");
+        assert_eq!(settings.keymap.open_serial_terminal, "Ctrl+Alt+S");
         assert_eq!(settings.theme.terminal_colors.background, "#282C34");
         assert!(matches!(
             settings.terminal.right_click_behavior,

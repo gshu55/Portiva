@@ -1,5 +1,5 @@
 import "./App.css";
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { ActiveFileTransferPanel } from "./app/ActiveFileTransferPanel";
 import { AppTitlebar } from "./app/AppTitlebar";
 import { GlobalNotice } from "./app/GlobalNotice";
@@ -131,9 +131,19 @@ function App() {
   const [terminalFullscreen, setTerminalFullscreen] = useState(Boolean(detachedSessionId));
   const [detachedActivated, setDetachedActivated] = useState(false);
   const [detachedReattachHint, setDetachedReattachHint] = useState(false);
-  const openCreateProfileDialog = () => {
+  const openCreateProfileDialog = useCallback(() => {
     setProfileDialog({ mode: "create", profile: workspace.createProfileDraft("ssh") });
-  };
+  }, [workspace]);
+  const openLocalTerminalTab = useCallback(() => {
+    setSavedConnectionsOpen(false);
+    setActiveShellTabId(null);
+    void workspace.openLocalShellTab();
+  }, [workspace]);
+  const openSerialTerminalTab = useCallback(() => {
+    setSavedConnectionsOpen(false);
+    setActiveShellTabId(null);
+    void workspace.openSerialTerminalTab();
+  }, [workspace]);
   const terminalPalette = useMemo(
     () => resolveTerminalPalette(workspace.settings.theme),
     [workspace.settings.theme],
@@ -158,10 +168,14 @@ function App() {
     () => ({
       onCloseTab: workspace.closeActiveConnection,
       onNewProfile: openCreateProfileDialog,
+      onOpenLocalTerminal: openLocalTerminalTab,
+      onOpenSerialTerminal: openSerialTerminalTab,
     }),
     [
       workspace.closeActiveConnection,
       openCreateProfileDialog,
+      openLocalTerminalTab,
+      openSerialTerminalTab,
     ],
   );
 
@@ -914,9 +928,10 @@ function App() {
           onSessionDragStateChange={notifyDetachedDragState}
           onOpenFileTransferTab={workspace.openFileTransferTab}
           onOpenSessionWindow={openSessionWindow}
-          onOpenSerialTerminal={workspace.openSerialTerminal}
-          onReconnectSessionTab={reconnectSessionTab}
-          onRefreshSerialPorts={workspace.refreshWorkspace}
+	          onOpenSerialTerminal={workspace.openSerialTerminal}
+	          onReconfigureSerialTerminal={workspace.reconfigureSerialTerminal}
+	          onReconnectSessionTab={reconnectSessionTab}
+	          onRefreshSerialPorts={workspace.refreshSerialPorts}
           onReorderSessionTabs={workspace.reorderSessionTabs}
           onSendTerminalBytes={workspace.sendTerminalBytes}
           onSendTerminalData={workspace.sendTerminalData}
@@ -936,16 +951,8 @@ function App() {
         savedConnectionsOpen={savedConnectionsOpen}
         settingsTabActive={settingsTabActive}
         onCreateProfile={openCreateProfileDialog}
-        onOpenLocalShell={() => {
-          setSavedConnectionsOpen(false);
-          setActiveShellTabId(null);
-          void workspace.openLocalShellTab();
-        }}
-        onOpenSerialTerminal={() => {
-          setSavedConnectionsOpen(false);
-          setActiveShellTabId(null);
-          void workspace.openSerialTerminalTab();
-        }}
+        onOpenLocalShell={openLocalTerminalTab}
+        onOpenSerialTerminal={openSerialTerminalTab}
         onOpenSavedConnections={() => setSavedConnectionsOpen(true)}
         onOpenSettings={openSettingsTab}
       />
@@ -991,9 +998,10 @@ function App() {
             onDetachSessionTab={openAppSessionWindow}
             onOpenFileTransferTab={workspace.openFileTransferTab}
             onOpenSessionWindow={openAppSessionWindow}
-            onOpenSerialTerminal={workspace.openSerialTerminal}
-            onReconnectSessionTab={reconnectAppSessionTab}
-            onRefreshSerialPorts={workspace.refreshWorkspace}
+	            onOpenSerialTerminal={workspace.openSerialTerminal}
+	            onReconfigureSerialTerminal={workspace.reconfigureSerialTerminal}
+	            onReconnectSessionTab={reconnectAppSessionTab}
+	            onRefreshSerialPorts={workspace.refreshSerialPorts}
             onReorderSessionTabs={reorderAppSessionTabs}
             onSendTerminalBytes={workspace.sendTerminalBytes}
             onSendTerminalData={workspace.sendTerminalData}

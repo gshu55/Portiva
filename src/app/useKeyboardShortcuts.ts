@@ -5,6 +5,8 @@ import type { AppSettings } from "../shared/types";
 interface ShortcutHandlers {
   onCloseTab: () => void;
   onNewProfile: () => void;
+  onOpenLocalTerminal: () => void;
+  onOpenSerialTerminal: () => void;
 }
 
 export function useKeyboardShortcuts(settings: AppSettings, handlers: ShortcutHandlers) {
@@ -22,19 +24,20 @@ export function useKeyboardShortcuts(settings: AppSettings, handlers: ShortcutHa
         return;
       }
 
-      const command =
-        matchesShortcut(event, keymap.newProfile)
-          ? handlers.onNewProfile
-          : matchesShortcut(event, keymap.closeTab)
-              ? handlers.onCloseTab
-              : null;
+      const shortcutCommands: Array<[string, () => void]> = [
+        [keymap.newProfile || "Ctrl+N", handlers.onNewProfile],
+        [keymap.openLocalTerminal || "Ctrl+Alt+T", handlers.onOpenLocalTerminal],
+        [keymap.openSerialTerminal || "Ctrl+Alt+S", handlers.onOpenSerialTerminal],
+        [keymap.closeTab || "Ctrl+W", handlers.onCloseTab],
+      ];
+      const command = shortcutCommands.find(([shortcut]) => matchesShortcut(event, shortcut));
 
       if (!command) {
         return;
       }
 
       event.preventDefault();
-      command();
+      command[1]();
     };
 
     window.addEventListener("keydown", onKeyDown, { capture: true });

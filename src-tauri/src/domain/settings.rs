@@ -64,10 +64,12 @@ pub struct TerminalColorPalette {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct KeymapSettings {
     pub command_palette: String,
     pub new_profile: String,
+    pub open_local_terminal: String,
+    pub open_serial_terminal: String,
     pub close_tab: String,
 }
 
@@ -112,6 +114,8 @@ impl Default for AppSettings {
             keymap: KeymapSettings {
                 command_palette: "Ctrl+Shift+P".to_string(),
                 new_profile: "Ctrl+N".to_string(),
+                open_local_terminal: "Ctrl+Alt+T".to_string(),
+                open_serial_terminal: "Ctrl+Alt+S".to_string(),
                 close_tab: "Ctrl+W".to_string(),
             },
             security: SecuritySettings {
@@ -120,6 +124,18 @@ impl Default for AppSettings {
                 allow_insecure_without_warning: false,
             },
             terminal: TerminalSettings::default(),
+        }
+    }
+}
+
+impl Default for KeymapSettings {
+    fn default() -> Self {
+        Self {
+            command_palette: "Ctrl+Shift+P".to_string(),
+            new_profile: "Ctrl+N".to_string(),
+            open_local_terminal: "Ctrl+Alt+T".to_string(),
+            open_serial_terminal: "Ctrl+Alt+S".to_string(),
+            close_tab: "Ctrl+W".to_string(),
         }
     }
 }

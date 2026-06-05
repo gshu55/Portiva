@@ -14,6 +14,7 @@ export type ConnectionType =
   | "s3";
 
 export type ConnectionStatus = "ready" | "connecting" | "connected" | "disconnected" | "failed" | "todo";
+export type TextEncoding = "ascii" | "utf-8" | "gbk" | "big5" | "shift-jis" | "euc-kr" | "utf-16le" | "utf-16be" | "latin1";
 
 export interface ProfileGroup {
   id: string;
@@ -88,7 +89,7 @@ export interface TelnetProfile extends BaseProfile {
   username?: string;
   terminalType: "xterm" | "vt100" | "vt220";
   lineEnding: "crlf" | "cr" | "lf";
-  encoding: "utf-8" | "gbk" | "latin1";
+  encoding: TextEncoding;
 }
 
 export interface SerialProfile extends BaseProfile {
@@ -100,7 +101,7 @@ export interface SerialProfile extends BaseProfile {
   stopBits: 1 | 1.5 | 2;
   flowControl: "none" | "software" | "hardware";
   lineEnding: "crlf" | "cr" | "lf";
-  encoding: "utf-8" | "gbk" | "latin1";
+  encoding: TextEncoding;
   dtr?: boolean;
   rts?: boolean;
 }
@@ -110,7 +111,7 @@ export interface RawSocketProfile extends BaseProfile {
   host: string;
   port: number;
   lineEnding: "crlf" | "cr" | "lf";
-  encoding: "utf-8" | "gbk" | "latin1";
+  encoding: TextEncoding;
 }
 
 export type ConnectionProfile =
@@ -266,6 +267,8 @@ export interface AppSettings {
   keymap: {
     commandPalette: string;
     newProfile: string;
+    openLocalTerminal: string;
+    openSerialTerminal: string;
     closeTab: string;
   };
   security: {
