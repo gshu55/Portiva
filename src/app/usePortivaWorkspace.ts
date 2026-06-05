@@ -1737,6 +1737,9 @@ export function usePortivaWorkspace() {
     () => trustProfileHost(activeProfile),
     [activeProfile, trustProfileHost],
   );
+  const clearPendingKnownHost = useCallback(() => {
+    setPendingKnownHost(null);
+  }, []);
 
   const ensureFileTransferSession = useCallback(async () => {
     if (!activeConnection || !activeConnectionCapabilities.fileTransfer) {
@@ -2716,6 +2719,7 @@ export function usePortivaWorkspace() {
     authenticateActiveSshPassword,
     closeActiveConnection,
     closeConnection,
+    clearPendingKnownHost,
     clearLogs,
     createLocalDirectory,
     createRemoteDirectory,

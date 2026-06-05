@@ -3,7 +3,10 @@ import { type CSSProperties, type MouseEvent, useEffect, useMemo, useState } fro
 import { useKeyboardShortcuts } from "./app/useKeyboardShortcuts";
 import { usePortivaWorkspace } from "./app/usePortivaWorkspace";
 import { ConnectionList } from "./features/connections/ConnectionList";
-import { ConnectionProfileDialog } from "./features/connections/ConnectionProfileDialog";
+import {
+  ConnectionProfileDialog,
+  type ConnectionSecretInput,
+} from "./features/connections/ConnectionProfileDialog";
 import { FileTransferPanel } from "./features/file-transfer/FileTransferPanel";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
@@ -72,6 +75,13 @@ interface DetachedSessionReattachComplete {
 interface DetachedSessionDragPayload {
   sourceWindowLabel: string;
   tabId: string;
+}
+
+interface HostTrustRequest {
+  connectAfterTrust: boolean;
+  input?: ConnectionSecretInput & { authenticate?: boolean };
+  profile: ConnectionProfile;
+  reconnectTabId?: string;
 }
 
 type WindowAction = "close" | "drag" | "minimize" | "toggle-maximize";
@@ -216,6 +226,8 @@ function App() {
     mode: "create" | "edit";
     profile: ConnectionProfile;
   } | null>(null);
+  const [hostTrustRequest, setHostTrustRequest] = useState<HostTrustRequest | null>(null);
+  const [hostTrustBusy, setHostTrustBusy] = useState(false);
   const [reconnectTabId, setReconnectTabId] = useState<string | null>(null);
   const [settingsTabOpen, setSettingsTabOpen] = useState(false);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
@@ -764,6 +776,61 @@ function App() {
     })();
   };
 
+  const registerHostTrustRequest = (
+    result: { status?: string; requiresFingerprintConfirmation?: boolean },
+    request: HostTrustRequest,
+  ) => {
+    if (result.status === "needs-trust" || result.requiresFingerprintConfirmation) {
+      setHostTrustRequest(request);
+      return true;
+    }
+
+    return false;
+  };
+
+  const cancelHostTrust = () => {
+    setHostTrustRequest(null);
+    setHostTrustBusy(false);
+    workspace.clearPendingKnownHost();
+  };
+
+  const confirmHostTrust = async () => {
+    if (!hostTrustRequest || !workspace.pendingKnownHost || hostTrustBusy) {
+      return;
+    }
+
+    setHostTrustBusy(true);
+    const request = hostTrustRequest;
+    const trusted = await workspace.trustProfileHost(request.profile);
+
+    if (!trusted) {
+      setHostTrustBusy(false);
+      return;
+    }
+
+    setHostTrustRequest(null);
+
+    if (request.connectAfterTrust) {
+      const result = request.reconnectTabId
+        ? await workspace.reconnectSessionTab(
+            request.reconnectTabId,
+            request.input,
+            request.profile,
+          )
+        : await workspace.openProfileConnection(request.profile, request.input);
+
+      if (result.status === "opened") {
+        setActiveShellTabId(null);
+        setProfileDialog(null);
+        setReconnectTabId(null);
+      } else if (result.status === "needs-trust") {
+        setHostTrustRequest(request);
+      }
+    }
+
+    setHostTrustBusy(false);
+  };
+
   const reconnectSessionTab = (tabId: string) => {
     const tab = workspace.sessionTabs.find((item) => (item.id ?? item.connection.id) === tabId);
     const profile = tab
@@ -786,7 +853,16 @@ function App() {
       return;
     }
 
-    void workspace.reconnectSessionTab(tabId);
+    void (async () => {
+      const result = await workspace.reconnectSessionTab(tabId);
+      if (profile) {
+        registerHostTrustRequest(result, {
+          connectAfterTrust: true,
+          profile,
+          reconnectTabId: tabId,
+        });
+      }
+    })();
   };
 
   const openSavedConnection = (profile: ConnectionProfile) => {
@@ -804,9 +880,18 @@ function App() {
       return;
     }
 
-    void workspace.openProfileConnection(profile, {
+    const input = {
       authenticate: profile.type === "ssh" || profile.type === "sftp",
-    });
+    };
+
+    void (async () => {
+      const result = await workspace.openProfileConnection(profile, input);
+      registerHostTrustRequest(result, {
+        connectAfterTrust: true,
+        input,
+        profile,
+      });
+    })();
   };
   const connectSavedConnection = (profile: ConnectionProfile) => {
     setSavedConnectionsOpen(false);
@@ -908,6 +993,42 @@ function App() {
         onUploadLocalPaths={workspace.uploadLocalPaths}
       />
     ) : null;
+  const pendingHostTrust =
+    hostTrustRequest &&
+    workspace.pendingKnownHost &&
+    (hostTrustRequest.profile.type === "ssh" || hostTrustRequest.profile.type === "sftp") &&
+    hostTrustRequest.profile.host === workspace.pendingKnownHost.host
+      ? workspace.pendingKnownHost
+      : null;
+  const activeHostTrustRequest = pendingHostTrust ? hostTrustRequest : null;
+  const globalHostTrustDialog = pendingHostTrust && activeHostTrustRequest ? (
+    <HostTrustDialog
+      busy={hostTrustBusy}
+      connectAfterTrust={activeHostTrustRequest.connectAfterTrust}
+      fingerprint={pendingHostTrust.fingerprint}
+      host={pendingHostTrust.host}
+      onCancel={cancelHostTrust}
+      onConfirm={() => void confirmHostTrust()}
+    />
+  ) : null;
+
+  useEffect(() => {
+    if (!pendingHostTrust) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !hostTrustBusy) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        cancelHostTrust();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [hostTrustBusy, pendingHostTrust]);
 
   if (detachedSessionId) {
     return (
@@ -930,13 +1051,14 @@ function App() {
           onDetachSessionTab={moveDetachedSessionToWindow}
           onSessionDragStateChange={notifyDetachedDragState}
           onOpenSessionWindow={openSessionWindow}
-          onReconnectSessionTab={(tabId) => void workspace.reconnectSessionTab(tabId)}
+          onReconnectSessionTab={reconnectSessionTab}
           onReorderSessionTabs={workspace.reorderSessionTabs}
           onSendTerminalData={workspace.sendTerminalData}
           onResizeTerminal={workspace.resizeActiveTerminal}
           onSelectSessionTab={workspace.switchSessionTab}
           onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
         />
+        {globalHostTrustDialog}
       </main>
     );
   }
@@ -1027,7 +1149,6 @@ function App() {
       {profileDialog ? (
         <ConnectionProfileDialog
           mode={profileDialog.mode}
-          pendingKnownHost={workspace.pendingKnownHost}
           profile={profileDialog.profile}
           rememberedSecret={workspace.secrets.some(
             (secret) =>
@@ -1059,6 +1180,12 @@ function App() {
               const result = reconnectTabId
                 ? await workspace.reconnectSessionTab(reconnectTabId, connectOptions, saved)
                 : await workspace.openProfileConnection(saved, connectOptions);
+              registerHostTrustRequest(result, {
+                connectAfterTrust: true,
+                input: connectOptions,
+                profile: saved,
+                reconnectTabId: reconnectTabId ?? undefined,
+              });
               if (result.status === "opened") {
                 setActiveShellTabId(null);
                 setProfileDialog(null);
@@ -1085,18 +1212,97 @@ function App() {
               };
             }
 
-            setProfileDialog(null);
             setReconnectTabId(null);
+            setProfileDialog({ mode: "edit", profile: saved });
             return {
               ok: true,
               message: "已保存配置。",
             };
           }}
-          onTest={workspace.testProfile}
-          onTrustHost={workspace.trustProfileHost}
+          onTest={async (profile, input) => {
+            const result = await workspace.testProfile(profile, input);
+            registerHostTrustRequest(result, {
+              connectAfterTrust: false,
+              input,
+              profile,
+            });
+            return result;
+          }}
         />
       ) : null}
+      {globalHostTrustDialog}
     </main>
+  );
+}
+
+function HostTrustDialog({
+  busy,
+  connectAfterTrust,
+  fingerprint,
+  host,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean;
+  connectAfterTrust: boolean;
+  fingerprint: string;
+  host: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="host-trust-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        if (!busy) {
+          onCancel();
+        }
+      }}
+    >
+      <section
+        aria-label="确认信任主机"
+        aria-modal="true"
+        className="host-trust-dialog"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="host-trust-heading">
+          <strong>确认信任 SSH 主机</strong>
+          <button
+            aria-label="关闭确认弹窗"
+            disabled={busy}
+            onClick={onCancel}
+            title="关闭确认弹窗"
+            type="button"
+          >
+            <Icon name="x" />
+          </button>
+        </div>
+        <div className="host-trust-content">
+          <p>请核对该主机指纹。确认后会写入 known_hosts，之后同一主机将自动校验。</p>
+          <dl>
+            <div>
+              <dt>主机</dt>
+              <dd>{host}</dd>
+            </div>
+            <div>
+              <dt>指纹</dt>
+              <dd>{fingerprint}</dd>
+            </div>
+          </dl>
+        </div>
+        <div className="host-trust-actions">
+          <button disabled={busy} onClick={onCancel} type="button">
+            取消
+          </button>
+          <button className="primary-action" disabled={busy} onClick={onConfirm} type="button">
+            {busy ? "处理中..." : connectAfterTrust ? "信任并连接" : "信任"}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

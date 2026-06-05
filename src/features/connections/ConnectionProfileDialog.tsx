@@ -25,7 +25,6 @@ export interface ConnectionActionResult {
 interface ConnectionProfileDialogProps {
   mode: "create" | "edit";
   profile: ConnectionProfile;
-  pendingKnownHost?: { fingerprint: string; host: string } | null;
   rememberedSecret?: boolean;
   serialPorts?: SerialPortInfo[];
   onCreateDraft: (type: ConnectionProfile["type"]) => ConnectionProfile;
@@ -35,7 +34,6 @@ interface ConnectionProfileDialogProps {
   onRefreshSerialPorts?: () => Promise<void> | void;
   onSave: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<ConnectionActionResult>;
   onTest: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<TestConnectionResult>;
-  onTrustHost: (profile: ConnectionProfile) => boolean | Promise<boolean>;
 }
 
 const profileTypeIcons: Record<ConnectionProfile["type"], IconName> = {
@@ -55,8 +53,6 @@ export function ConnectionProfileDialog({
   onRefreshSerialPorts,
   onSave,
   onTest,
-  onTrustHost,
-  pendingKnownHost,
   profile,
   rememberedSecret = false,
   serialPorts = [],
@@ -67,8 +63,6 @@ export function ConnectionProfileDialog({
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [connectResult, setConnectResult] = useState<ConnectionActionResult | null>(null);
   const [saveResult, setSaveResult] = useState<ConnectionActionResult | null>(null);
-  const [trustPromptOpen, setTrustPromptOpen] = useState(false);
-  const [connectAfterTrust, setConnectAfterTrust] = useState(false);
 
   useEffect(() => {
     setDraft(profile);
@@ -77,27 +71,18 @@ export function ConnectionProfileDialog({
     setTestResult(null);
     setConnectResult(null);
     setSaveResult(null);
-    setTrustPromptOpen(false);
-    setConnectAfterTrust(false);
   }, [profile, rememberedSecret]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (trustPromptOpen) {
-          setTrustPromptOpen(false);
-          setConnectAfterTrust(false);
-          event.stopPropagation();
-          return;
-        }
-
         onClose();
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, trustPromptOpen]);
+  }, [onClose]);
 
   const title = `${mode === "create" ? "新建" : "编辑"} ${protocolLabel(draft.type)} 配置`;
   const canSave = canSaveProfile(draft);
@@ -105,55 +90,12 @@ export function ConnectionProfileDialog({
     (draft.type === "ssh" || draft.type === "sftp") && draft.authType === "password";
   const canConnect = canSave && (!needsConnectionSecret || Boolean(secret));
   const canTest = canSave && (!needsConnectionSecret || Boolean(secret));
-  const pendingHost =
-    (draft.type === "ssh" || draft.type === "sftp") && pendingKnownHost?.host === draft.host
-      ? pendingKnownHost
-      : null;
-
-  useEffect(() => {
-    if (pendingHost) {
-      setTrustPromptOpen(true);
-    } else {
-      setTrustPromptOpen(false);
-      setConnectAfterTrust(false);
-    }
-  }, [pendingHost]);
-
-  const trustPendingHost = async () => {
-    if (!pendingHost) {
-      return;
-    }
-
-    const trusted = await onTrustHost(draft);
-    if (!trusted) {
-      return;
-    }
-
-    setTrustPromptOpen(false);
-    const shouldConnect = connectAfterTrust;
-    setConnectAfterTrust(false);
-    setTestResult(null);
-
-    if (shouldConnect) {
-      const result = await onConnect(draft, { rememberSecret, secret });
-      if (!result.ok) {
-        setConnectResult(result);
-      }
-    }
-  };
 
   const connectDraft = async () => {
     setConnectResult(null);
     setSaveResult(null);
     setTestResult(null);
 
-    if (pendingHost) {
-      setConnectAfterTrust(true);
-      setTrustPromptOpen(true);
-      return;
-    }
-
-    setConnectAfterTrust(true);
     const result = await onConnect(draft, { rememberSecret, secret });
     if (!result.ok && !result.needsTrust) {
       setConnectResult(result);
@@ -165,10 +107,6 @@ export function ConnectionProfileDialog({
     setSaveResult(null);
     const result = await onTest(draft, { rememberSecret, secret });
     setTestResult(result);
-    if (result.requiresFingerprintConfirmation) {
-      setConnectAfterTrust(false);
-      setTrustPromptOpen(true);
-    }
   };
   const saveDraft = async () => {
     setSaveResult(null);
@@ -242,11 +180,6 @@ export function ConnectionProfileDialog({
                   onRememberSecretChange={setRememberSecret}
                   onSecretChange={setSecret}
                 />
-                {pendingHost ? (
-                  <p className="profile-dialog-note attention">
-                    当前主机需要确认信任，请在弹窗中核对指纹。
-                  </p>
-                ) : null}
               </>
             ) : null}
             {draft.type === "telnet" ? (
@@ -281,12 +214,12 @@ export function ConnectionProfileDialog({
           </div>
 
           <div className="profile-dialog-actions">
-            {mode === "edit" ? (
-              <button aria-label="删除配置" className="danger-action" onClick={() => onDelete(draft.id)} title="删除配置" type="button">
-                <Icon name="trash" />
-              </button>
-            ) : null}
-            <div>
+            <div className="profile-dialog-actions-left">
+              {mode === "edit" ? (
+                <button aria-label="删除配置" className="danger-action" onClick={() => onDelete(draft.id)} title="删除配置" type="button">
+                  <Icon name="trash" />
+                </button>
+              ) : null}
               <button
                 aria-label="测试连接"
                 disabled={!canTest}
@@ -296,11 +229,13 @@ export function ConnectionProfileDialog({
               >
                 <Icon name="terminal" />
               </button>
+            </div>
+            <div className="profile-dialog-actions-right">
               <button
-                aria-label={pendingHost ? "信任并连接" : "连接"}
+                aria-label="连接"
                 disabled={!canConnect}
                 onClick={() => void connectDraft()}
-                title={pendingHost ? "信任并连接" : "连接"}
+                title="连接"
                 type="button"
               >
                 <Icon name="plug" />
@@ -310,79 +245,6 @@ export function ConnectionProfileDialog({
               </button>
             </div>
           </div>
-        </div>
-        {pendingHost && trustPromptOpen ? (
-          <HostTrustDialog
-            host={pendingHost.host}
-            fingerprint={pendingHost.fingerprint}
-            connectAfterTrust={connectAfterTrust}
-            onCancel={() => {
-              setTrustPromptOpen(false);
-              setConnectAfterTrust(false);
-            }}
-            onConfirm={() => void trustPendingHost()}
-          />
-        ) : null}
-      </section>
-    </div>
-  );
-}
-
-function HostTrustDialog({
-  connectAfterTrust,
-  fingerprint,
-  host,
-  onCancel,
-  onConfirm,
-}: {
-  connectAfterTrust: boolean;
-  fingerprint: string;
-  host: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div
-      className="host-trust-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        event.stopPropagation();
-        onCancel();
-      }}
-    >
-      <section
-        aria-label="确认信任主机"
-        aria-modal="true"
-        className="host-trust-dialog"
-        role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="host-trust-heading">
-          <strong>确认信任主机</strong>
-          <button aria-label="关闭确认弹窗" onClick={onCancel} title="关闭确认弹窗" type="button">
-            <Icon name="x" />
-          </button>
-        </div>
-        <div className="host-trust-content">
-          <p>请确认该 SSH 主机指纹可信，信任后会写入 known_hosts。</p>
-          <dl>
-            <div>
-              <dt>主机</dt>
-              <dd>{host}</dd>
-            </div>
-            <div>
-              <dt>指纹</dt>
-              <dd>{fingerprint}</dd>
-            </div>
-          </dl>
-        </div>
-        <div className="host-trust-actions">
-          <button onClick={onCancel} type="button">
-            取消
-          </button>
-          <button className="primary-action" onClick={onConfirm} type="button">
-            {connectAfterTrust ? "信任并连接" : "信任"}
-          </button>
         </div>
       </section>
     </div>

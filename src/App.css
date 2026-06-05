@@ -1029,10 +1029,18 @@ button > .icon:only-child {
   grid-column: 1;
 }
 
-.profile-dialog-actions div {
+.profile-dialog-actions-left,
+.profile-dialog-actions-right {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.profile-dialog-actions-left {
+  justify-content: flex-start;
+}
+
+.profile-dialog-actions-right {
   justify-content: flex-end;
   margin-left: auto;
 }
@@ -1044,19 +1052,19 @@ button > .icon:only-child {
 }
 
 .host-trust-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 3;
+  z-index: 80;
   display: grid;
   place-items: center;
-  padding: 18px;
-  background: rgba(5, 7, 10, 0.58);
+  padding: 24px;
+  background: rgba(5, 7, 10, 0.68);
 }
 
 .host-trust-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(460px, 100%);
+  width: min(460px, calc(100vw - 48px));
   max-height: min(360px, calc(100dvh - 72px));
   overflow: hidden;
   border: 1px solid var(--border-panel);
