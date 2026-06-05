@@ -1,0 +1,332 @@
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use russh::keys::ssh_key;
+use russh::{client, Disconnect};
+use serde::Serialize;
+use tauri::State;
+
+use crate::domain::logging::LogLevel;
+use crate::domain::profile::{ConnectionProfile, ConnectionType, ProfileGroup, RecentConnection};
+use crate::protocol::ssh::probe::probe_ssh_endpoint;
+use crate::security::fingerprint::{display_fingerprint, fingerprint_matches};
+use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
+use crate::services::log_service::LogService;
+use crate::services::profile_store::ProfileStore;
+use crate::services::secret_store::SecretStore;
+use crate::services::serial_service::SerialService;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSaveResult {
+    pub profile_id: String,
+    pub reserved_secret_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestConnectionResult {
+    pub ok: bool,
+    pub message: String,
+    pub requires_fingerprint_confirmation: bool,
+    pub host: Option<String>,
+    pub fingerprint: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownHostTrustResult {
+    pub host: String,
+    pub fingerprint: String,
+}
+
+#[tauri::command]
+pub fn profile_list(store: State<'_, ProfileStore>) -> Result<Vec<ConnectionProfile>, String> {
+    store.list()
+}
+
+#[tauri::command]
+pub fn profile_groups(store: State<'_, ProfileStore>) -> Result<Vec<ProfileGroup>, String> {
+    store.groups()
+}
+
+#[tauri::command]
+pub fn profile_recent(store: State<'_, ProfileStore>) -> Result<Vec<RecentConnection>, String> {
+    store.recent()
+}
+
+#[tauri::command]
+pub fn profile_mark_recent(
+    profile_id: String,
+    store: State<'_, ProfileStore>,
+) -> Result<RecentConnection, String> {
+    store.mark_recent(&profile_id)
+}
+
+#[tauri::command]
+pub fn profile_create(
+    profile: ConnectionProfile,
+    store: State<'_, ProfileStore>,
+    secrets: State<'_, SecretStore>,
+    logs: State<'_, LogService>,
+) -> Result<ProfileSaveResult, String> {
+    let reserved_secret_id = reserve_secret_if_needed(&profile, &secrets)?;
+    let profile_id = store.upsert(profile)?;
+    let _ = logs.record(LogLevel::Info, "profile", format!("saved {profile_id}"));
+
+    Ok(ProfileSaveResult {
+        profile_id,
+        reserved_secret_id,
+    })
+}
+
+#[tauri::command]
+pub fn profile_update(
+    profile_id: String,
+    profile: ConnectionProfile,
+    store: State<'_, ProfileStore>,
+    secrets: State<'_, SecretStore>,
+    logs: State<'_, LogService>,
+) -> Result<ProfileSaveResult, String> {
+    if profile.id != profile_id {
+        return Err("profile id mismatch".to_string());
+    }
+
+    profile_create(profile, store, secrets, logs)
+}
+
+#[tauri::command]
+pub fn profile_delete(
+    profile_id: String,
+    store: State<'_, ProfileStore>,
+    logs: State<'_, LogService>,
+) -> Result<(), String> {
+    store.delete(&profile_id)?;
+    let _ = logs.record(LogLevel::Info, "profile", format!("deleted {profile_id}"));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn profile_test_connection(
+    profile: ConnectionProfile,
+    secret: Option<String>,
+    known_hosts: State<'_, KnownHostsStore>,
+    serial_service: State<'_, SerialService>,
+) -> Result<TestConnectionResult, String> {
+    let _declared_capabilities = profile.capabilities();
+
+    if matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp) {
+        let probe = probe_ssh_endpoint(&profile).await?;
+        let host = probe.transport.host.as_str();
+        let fingerprint = probe.host_key_fingerprint.as_str();
+        let decision = known_hosts.verify_host_key(host, fingerprint)?;
+
+        return Ok(match decision {
+            KnownHostDecision::Trusted => {
+                if profile.auth_type.as_deref() == Some("password") && secret.is_some() {
+                    match test_ssh_password_auth(&profile, fingerprint, secret).await {
+                        Ok(()) => TestConnectionResult {
+                            ok: true,
+                            message: format!(
+                                "SSH transport and password authentication verified at {}:{} ({})",
+                                probe.transport.host,
+                                probe.transport.port,
+                                probe.transport.server_identification
+                            ),
+                            requires_fingerprint_confirmation: false,
+                            host: Some(host.to_string()),
+                            fingerprint: Some(display_fingerprint(fingerprint)),
+                        },
+                        Err(error) => TestConnectionResult {
+                            ok: false,
+                            message: format!("SSH 密码认证失败：{error}"),
+                            requires_fingerprint_confirmation: false,
+                            host: Some(host.to_string()),
+                            fingerprint: Some(display_fingerprint(fingerprint)),
+                        },
+                    }
+                } else {
+                    TestConnectionResult {
+                        ok: true,
+                        message: format!(
+                            "SSH transport verified at {}:{} ({})",
+                            probe.transport.host,
+                            probe.transport.port,
+                            probe.transport.server_identification
+                        ),
+                        requires_fingerprint_confirmation: false,
+                        host: Some(host.to_string()),
+                        fingerprint: Some(display_fingerprint(fingerprint)),
+                    }
+                }
+            }
+            KnownHostDecision::Unknown => TestConnectionResult {
+                ok: false,
+                message: format!(
+                    "SSH transport verified at {}:{} ({}). Confirm host key before connecting ({})",
+                    probe.transport.host,
+                    probe.transport.port,
+                    probe.transport.server_identification,
+                    display_fingerprint(fingerprint)
+                ),
+                requires_fingerprint_confirmation: true,
+                host: Some(host.to_string()),
+                fingerprint: Some(display_fingerprint(fingerprint)),
+            },
+            KnownHostDecision::Changed => TestConnectionResult {
+                ok: false,
+                message: "host key changed; connection must be blocked".to_string(),
+                requires_fingerprint_confirmation: false,
+                host: Some(host.to_string()),
+                fingerprint: Some(display_fingerprint(fingerprint)),
+            },
+        });
+    }
+
+    if matches!(profile.r#type, ConnectionType::Serial) {
+        return match serial_service.test_profile(&profile) {
+            Ok(()) => Ok(TestConnectionResult {
+                ok: true,
+                message: format!(
+                    "串口 {} 可以打开。",
+                    profile.port_name.as_deref().unwrap_or("unconfigured-port")
+                ),
+                requires_fingerprint_confirmation: false,
+                host: None,
+                fingerprint: None,
+            }),
+            Err(error) => Ok(TestConnectionResult {
+                ok: false,
+                message: error,
+                requires_fingerprint_confirmation: false,
+                host: None,
+                fingerprint: None,
+            }),
+        };
+    }
+
+    Ok(TestConnectionResult {
+        ok: false,
+        message: "TODO: protocol backend not implemented yet".to_string(),
+        requires_fingerprint_confirmation: false,
+        host: None,
+        fingerprint: None,
+    })
+}
+
+#[tauri::command]
+pub fn known_host_trust_placeholder(
+    host: String,
+    fingerprint: String,
+    known_hosts: State<'_, KnownHostsStore>,
+) -> Result<KnownHostTrustResult, String> {
+    known_hosts.trust_host_key(&host, &fingerprint)?;
+
+    Ok(KnownHostTrustResult {
+        host,
+        fingerprint: display_fingerprint(&fingerprint),
+    })
+}
+
+fn reserve_secret_if_needed(
+    profile: &ConnectionProfile,
+    secrets: &State<'_, SecretStore>,
+) -> Result<Option<String>, String> {
+    let _ = (profile, secrets);
+
+    Ok(None)
+}
+
+async fn test_ssh_password_auth(
+    profile: &ConnectionProfile,
+    expected_fingerprint: &str,
+    secret: Option<String>,
+) -> Result<(), String> {
+    let password = secret
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "需要输入当前 SSH 密码".to_string())?
+        .to_string();
+    let host = profile
+        .host
+        .as_deref()
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| "SSH host is required".to_string())?
+        .to_string();
+    let port = profile.port.unwrap_or(22);
+    let username = profile
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|username| !username.is_empty())
+        .ok_or_else(|| "SSH username is required".to_string())?
+        .to_string();
+    let timeout = Duration::from_secs(5);
+    let fingerprint = Arc::new(Mutex::new(None));
+    let handler = TestSshAuthHandler {
+        fingerprint: Arc::clone(&fingerprint),
+    };
+    let config = Arc::new(client::Config {
+        inactivity_timeout: Some(timeout),
+        nodelay: true,
+        ..Default::default()
+    });
+
+    let mut handle = tokio::time::timeout(
+        timeout,
+        client::connect(config, (host.as_str(), port), handler),
+    )
+    .await
+    .map_err(|_| format!("timed out opening SSH session {host}:{port}"))?
+    .map_err(|error| format!("failed to open SSH session {host}:{port}: {error}"))?;
+    let actual_fingerprint = fingerprint
+        .lock()
+        .map_err(|_| "SSH auth test state lock poisoned".to_string())?
+        .clone()
+        .ok_or_else(|| "SSH server did not provide a host key fingerprint".to_string())?;
+
+    if !fingerprint_matches(expected_fingerprint, &actual_fingerprint) {
+        let _ = handle
+            .disconnect(Disconnect::HostKeyNotVerifiable, "host key mismatch", "en")
+            .await;
+        return Err(format!(
+            "SSH host key changed for {host}; connection blocked"
+        ));
+    }
+
+    let auth_result = handle
+        .authenticate_password(username, password)
+        .await
+        .map_err(|error| format!("{error}"))?;
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "test completed", "en")
+        .await;
+
+    if !auth_result.success() {
+        return Err("当前密码被服务器拒绝".to_string());
+    }
+
+    Ok(())
+}
+
+struct TestSshAuthHandler {
+    fingerprint: Arc<Mutex<Option<String>>>,
+}
+
+impl client::Handler for TestSshAuthHandler {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        server_public_key: &ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        let fingerprint = server_public_key
+            .fingerprint(ssh_key::HashAlg::Sha256)
+            .to_string();
+        if let Ok(mut state) = self.fingerprint.lock() {
+            *state = Some(fingerprint);
+        }
+
+        Ok(true)
+    }
+}

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="portiva-bg" x1="256" x2="800" y1="144" y2="912" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset=".18" stop-color="#FFF8FC"/>
+      <stop offset=".36" stop-color="#EFDFFF"/>
+      <stop offset=".54" stop-color="#FFFFFF"/>
+      <stop offset=".74" stop-color="#FFDDF2"/>
+      <stop offset="1" stop-color="#DCE7FF"/>
+    </linearGradient>
+    <radialGradient id="portiva-bg-white" cx="0" cy="0" r="1" gradientTransform="matrix(432 288 -288 432 304 224)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".96"/>
+      <stop offset=".62" stop-color="#FFFFFF" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="portiva-bg-rose" cx="0" cy="0" r="1" gradientTransform="matrix(384 0 0 320 336 736)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD9F0" stop-opacity=".38"/>
+      <stop offset=".58" stop-color="#FFB7E2" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#FFBFE6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="portiva-bg-violet" cx="0" cy="0" r="1" gradientTransform="matrix(320 0 0 384 768 320)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#CDBBFF" stop-opacity=".46"/>
+      <stop offset=".56" stop-color="#CDBBFF" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#CDBBFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="portiva-bg-blue" cx="0" cy="0" r="1" gradientTransform="matrix(320 0 0 288 752 768)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8D7FF" stop-opacity=".36"/>
+      <stop offset=".6" stop-color="#B8D7FF" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#B8D7FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="portiva-bg-light" cx="0" cy="0" r="1" gradientTransform="matrix(384 256 -256 384 352 256)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity=".7"/>
+      <stop offset=".58" stop-color="#FFF8FD" stop-opacity=".32"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="portiva-bg-depth" cx="0" cy="0" r="1" gradientTransform="matrix(352 0 0 224 544 768)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A48DFF" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#6E5BCE" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="portiva-prompt" x1="272" x2="688" y1="368" y2="672" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#32DDBD"/>
+      <stop offset=".52" stop-color="#16BFE8"/>
+      <stop offset="1" stop-color="#3578FF"/>
+    </linearGradient>
+    <linearGradient id="portiva-cursor" x1="576" x2="792" y1="643.2" y2="643.2" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FFF8"/>
+      <stop offset="1" stop-color="#D5FFF0"/>
+    </linearGradient>
+    <clipPath id="portiva-bg-clip">
+      <circle cx="512" cy="512" r="451.2"/>
+    </clipPath>
+    <filter id="portiva-prompt-shadow" color-interpolation-filters="sRGB" x="-25%" y="-25%" width="150%" height="160%">
+      <feDropShadow dx="0" dy="48" flood-color="#7061D8" flood-opacity=".24" stdDeviation="32"/>
+    </filter>
+    <filter id="portiva-prompt-glow" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="0" flood-color="#4DE6D0" flood-opacity=".38" stdDeviation="35.2"/>
+    </filter>
+  </defs>
+  <g clip-path="url(#portiva-bg-clip)">
+    <circle cx="512" cy="512" r="451.2" fill="url(#portiva-bg)"/>
+    <circle cx="512" cy="512" r="451.2" fill="url(#portiva-bg-white)"/>
+    <circle cx="512" cy="512" r="451.2" fill="url(#portiva-bg-rose)"/>
+    <circle cx="512" cy="512" r="451.2" fill="url(#portiva-bg-violet)"/>
+    <circle cx="512" cy="512" r="451.2" fill="url(#portiva-bg-blue)"/>
+    <circle cx="512" cy="512" r="451.2" fill="url(#portiva-bg-light)"/>
+    <circle cx="512" cy="512" r="451.2" fill="url(#portiva-bg-depth)"/>
+    <path d="M352 297.6C372.8 281.6 401.6 283.2 422.4 299.2L729.6 534.4C763.2 560 763.2 609.6 729.6 635.2L422.4 870.4C401.6 886.4 372.8 888 352 872L272 809.6C241.6 785.6 241.6 740.8 272 716.8L438.4 588.8C446.4 582.4 446.4 571.2 438.4 564.8L272 436.8C241.6 412.8 241.6 368 272 344L352 297.6Z" fill="url(#portiva-prompt)" filter="url(#portiva-prompt-shadow)" transform="translate(504 585.6) scale(.68) translate(-504 -585.6) translate(-115.2 0)"/>
+    <rect x="576" y="593.6" width="216" height="107.2" rx="53.6" fill="url(#portiva-cursor)"/>
+  </g>
+</svg>

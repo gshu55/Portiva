@@ -1,0 +1,907 @@
+import {
+  type CSSProperties,
+  type DragEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type {
+  ConnectionCapabilities,
+  ConnectionSummary,
+  ConnectionProfile,
+  SerialProfile,
+  TerminalColorPalette,
+  TerminalRightClickBehavior,
+  TerminalSize,
+  WorkspaceSessionTab,
+} from "../../shared/types";
+import { Icon } from "../../shared/Icon";
+import { SerialTerminalPanel } from "./SerialTerminalPanel";
+import { TabContextMenu } from "./TabContextMenu";
+import { TerminalPane } from "./TerminalPane";
+
+interface TerminalWorkspaceProps {
+  activeTabId?: string;
+  capabilities: ConnectionCapabilities;
+  connection: ConnectionSummary | null;
+  sessionTabs: WorkspaceSessionTab[];
+  profiles?: ConnectionProfile[];
+  customTabPanels?: Record<string, ReactNode>;
+  fileTransferPanel?: ReactNode;
+  emptyStateNotice?: string;
+  terminalConfirmMultilinePaste?: boolean;
+  terminalCopyRichText?: boolean;
+  terminalRightClickBehavior?: TerminalRightClickBehavior;
+  terminalTheme: TerminalColorPalette;
+  onSendTerminalData: (data: string, terminalId?: string) => Promise<void> | void;
+  onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
+  onCloseSessionTab: (connectionId: string) => void;
+  onDetachSessionTab?: (connectionId: string) => void;
+  onOpenSessionWindow: (connectionId: string) => void;
+  onReconnectSessionTab: (connectionId: string) => void;
+  onReorderSessionTabs: (sourceConnectionId: string, targetConnectionId: string) => void;
+  onSessionDragStateChange?: (isDragging: boolean, tabId: string) => void;
+  onSelectSessionTab: (connectionId: string) => void;
+  onToggleFullscreen: () => void;
+  reattachHintActive?: boolean;
+  isFullscreen: boolean;
+}
+
+const getSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
+const isFileTransferTab = (tab: WorkspaceSessionTab | null | undefined) =>
+  (tab?.kind ?? "terminal") === "file-transfer";
+const isCustomTab = (tab: WorkspaceSessionTab | null | undefined) =>
+  (tab?.kind ?? "terminal") === "settings";
+const isDisconnectedTerminalTab = (
+  tab: WorkspaceSessionTab | null | undefined,
+): tab is WorkspaceSessionTab => {
+  if (!tab || (tab.kind ?? "terminal") !== "terminal") {
+    return false;
+  }
+
+  return tab.terminal?.status === "closed" || tab.terminalSnapshot?.status === "closed";
+};
+const isTerminalShortcutEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.closest(".terminal-context-menu, .tab-context-menu")) {
+    return true;
+  }
+
+  return Boolean(
+    target.closest("input, textarea, select, button, [contenteditable='true']") &&
+      !target.closest(".terminal-pane"),
+  );
+};
+
+export function TerminalWorkspace({
+  activeTabId,
+  capabilities,
+  connection,
+  customTabPanels,
+  emptyStateNotice,
+  fileTransferPanel,
+  profiles = [],
+  sessionTabs,
+  terminalConfirmMultilinePaste = true,
+  terminalCopyRichText = false,
+  terminalRightClickBehavior = "context-menu",
+  terminalTheme,
+  onCloseSessionTab,
+  onDetachSessionTab,
+  onResizeTerminal,
+  onOpenSessionWindow,
+  onReconnectSessionTab,
+  onReorderSessionTabs,
+  onSessionDragStateChange,
+  onSelectSessionTab,
+  onSendTerminalData,
+  onToggleFullscreen,
+  reattachHintActive = false,
+  isFullscreen,
+}: TerminalWorkspaceProps) {
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  const [rightSplitTabId, setRightSplitTabId] = useState<string | null>(null);
+  const [leftSplitActiveTabId, setLeftSplitActiveTabId] = useState<string | null>(null);
+  const [splitFocusedPane, setSplitFocusedPane] = useState<"left" | "right">("left");
+  const [splitDragOverPane, setSplitDragOverPane] = useState<"left" | "right" | null>(null);
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const splitLayoutRef = useRef<HTMLDivElement>(null);
+  const tabDropHandledRef = useRef(false);
+  const autoClosedLocalShellTabIdsRef = useRef(new Set<string>());
+  const lastDragPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const [tabContextMenu, setTabContextMenu] = useState<{
+    tabId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const resolvedActiveTabId = activeTabId ?? connection?.id ?? sessionTabs[0]?.connection.id ?? null;
+  const activeTab = sessionTabs.find((tab) => getSessionTabId(tab) === resolvedActiveTabId);
+  const activeCustomTabContent = activeTab ? customTabPanels?.[getSessionTabId(activeTab)] : null;
+  const profilesById = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile])),
+    [profiles],
+  );
+  const isCustomTabActive = Boolean(activeCustomTabContent);
+  const isFileTransferTabActive = (activeTab?.kind ?? "terminal") === "file-transfer";
+  const isTerminalTabActive = (activeTab?.kind ?? "terminal") === "terminal";
+  const terminalTabs = sessionTabs.filter(
+    (tab) => (tab.kind ?? "terminal") === "terminal" && tab.terminal,
+  );
+  const hasSessionTabs = sessionTabs.length > 0;
+  const splitRightTab =
+    rightSplitTabId
+      ? sessionTabs.find((tab) => getSessionTabId(tab) === rightSplitTabId) ?? null
+      : null;
+  const leftSplitTabs = splitRightTab
+    ? sessionTabs.filter((tab) => getSessionTabId(tab) !== rightSplitTabId)
+    : sessionTabs;
+  const leftSplitTabIds = new Set(leftSplitTabs.map(getSessionTabId));
+  const leftResolvedActiveTabId =
+    splitRightTab && resolvedActiveTabId && leftSplitTabIds.has(resolvedActiveTabId)
+      ? resolvedActiveTabId
+      : splitRightTab && leftSplitActiveTabId && leftSplitTabIds.has(leftSplitActiveTabId)
+        ? leftSplitActiveTabId
+        : splitRightTab
+          ? leftSplitTabs[0]
+            ? getSessionTabId(leftSplitTabs[0])
+            : null
+          : resolvedActiveTabId;
+  const leftActiveTab = leftResolvedActiveTabId
+    ? leftSplitTabs.find((tab) => getSessionTabId(tab) === leftResolvedActiveTabId) ?? null
+    : null;
+  const isLeftFileTransferTabActive = isFileTransferTab(leftActiveTab);
+  const isLeftTerminalTabActive = (leftActiveTab?.kind ?? "terminal") === "terminal";
+  const isRightFileTransferTabActive = isFileTransferTab(splitRightTab);
+  const isRightTerminalTabActive = Boolean(splitRightTab) && !isRightFileTransferTabActive;
+  const leftTerminalTabs = leftSplitTabs.filter(
+    (tab) => (tab.kind ?? "terminal") === "terminal" && tab.terminal,
+  );
+  const isTerminalSplitActive = Boolean(splitRightTab && leftSplitTabs.length > 0 && !isCustomTabActive);
+  const disconnectedShortcutTab = isTerminalSplitActive
+    ? splitFocusedPane === "right"
+      ? splitRightTab
+      : leftActiveTab
+    : activeTab;
+  const disconnectedShortcutTabId = isDisconnectedTerminalTab(disconnectedShortcutTab)
+    ? getSessionTabId(disconnectedShortcutTab)
+    : null;
+  const splitLayoutStyle = {
+    gridTemplateColumns: `minmax(220px, calc(${Math.round(splitRatio * 100)}% - 4px)) 8px minmax(220px, 1fr)`,
+  } as CSSProperties;
+  const workspaceClassName = [
+    "terminal-workspace",
+    isTerminalSplitActive ? "split-active" : "",
+    isFullscreen ? "fullscreen" : "",
+    reattachHintActive ? "reattach-hint-active" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const terminalBodyClassName = [
+    "terminal-body",
+    isTerminalSplitActive || isTerminalTabActive ? "terminal-body-terminal-content" : "terminal-body-app-content",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const shouldShowRiskBanner =
+    connection &&
+    !isCustomTabActive &&
+    !capabilities.secureTransport &&
+    connection.transport?.kind !== "serial";
+  const toggleTabFullscreen = (tabId: string) => {
+    if (tabId !== resolvedActiveTabId) {
+      onSelectSessionTab(tabId);
+    }
+
+    if (!isFullscreen || tabId === resolvedActiveTabId) {
+      onToggleFullscreen();
+    }
+  };
+  const selectSessionTab = (tabId: string) => {
+    if (isTerminalSplitActive && tabId === rightSplitTabId) {
+      setSplitFocusedPane("right");
+      if (isRightFileTransferTabActive) {
+        onSelectSessionTab(tabId);
+      } else if (leftResolvedActiveTabId && !leftSplitTabIds.has(resolvedActiveTabId ?? "")) {
+        onSelectSessionTab(leftResolvedActiveTabId);
+      }
+      return;
+    }
+
+    if (isTerminalSplitActive) {
+      setLeftSplitActiveTabId(tabId);
+      setSplitFocusedPane("left");
+    }
+
+    onSelectSessionTab(tabId);
+  };
+  const splitTabToRight = (tabId: string) => {
+    const target = sessionTabs.find((tab) => getSessionTabId(tab) === tabId) ?? null;
+    const targetId = target ? getSessionTabId(target) : null;
+
+    if (!target || !targetId || isCustomTab(target) || sessionTabs.length < 2) {
+      return;
+    }
+
+    const fallbackTab = sessionTabs.find((tab) => getSessionTabId(tab) !== targetId);
+    const leftFallbackId =
+      leftSplitActiveTabId && leftSplitActiveTabId !== targetId
+        ? leftSplitActiveTabId
+        : resolvedActiveTabId && resolvedActiveTabId !== targetId
+          ? resolvedActiveTabId
+          : fallbackTab
+            ? getSessionTabId(fallbackTab)
+            : null;
+
+    setRightSplitTabId(targetId);
+    setLeftSplitActiveTabId(leftFallbackId);
+    setSplitFocusedPane("right");
+
+    if (!leftFallbackId) {
+      closeActiveSplit();
+    } else {
+      onSelectSessionTab(isFileTransferTab(target) ? targetId : leftFallbackId);
+    }
+  };
+  const closeActiveSplit = () => {
+    setRightSplitTabId(null);
+    setSplitFocusedPane("left");
+  };
+  const moveTabToSplitPane = (tabId: string, pane: "left" | "right") => {
+    const target = sessionTabs.find((tab) => getSessionTabId(tab) === tabId);
+
+    if (!target || isCustomTab(target)) {
+      return;
+    }
+
+    if (pane === "right") {
+      if (sessionTabs.length < 2) {
+        return;
+      }
+
+      const fallbackTab = sessionTabs.find((tab) => getSessionTabId(tab) !== tabId);
+      setRightSplitTabId(tabId);
+      setLeftSplitActiveTabId(fallbackTab ? getSessionTabId(fallbackTab) : null);
+      setSplitFocusedPane("right");
+      onSelectSessionTab(isFileTransferTab(target) ? tabId : fallbackTab ? getSessionTabId(fallbackTab) : tabId);
+      return;
+    }
+
+    if (tabId === rightSplitTabId) {
+      const fallbackTab = sessionTabs.find((tab) => getSessionTabId(tab) !== tabId);
+      setRightSplitTabId(null);
+      setLeftSplitActiveTabId(fallbackTab ? getSessionTabId(fallbackTab) : tabId);
+      setSplitFocusedPane("left");
+      onSelectSessionTab(fallbackTab ? getSessionTabId(fallbackTab) : tabId);
+      return;
+    }
+
+    setLeftSplitActiveTabId(tabId);
+    setSplitFocusedPane("left");
+    onSelectSessionTab(tabId);
+  };
+  const dragTabOverSplitPane = (event: DragEvent<HTMLElement>, pane: "left" | "right") => {
+    if (!draggedTabId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setSplitDragOverPane(pane);
+  };
+  const dropTabOnSplitPane = (event: DragEvent<HTMLElement>, pane: "left" | "right") => {
+    event.preventDefault();
+    tabDropHandledRef.current = true;
+    const sourceId = event.dataTransfer.getData("text/plain") || draggedTabId;
+
+    if (sourceId) {
+      moveTabToSplitPane(sourceId, pane);
+      onSessionDragStateChange?.(false, sourceId);
+    }
+
+    setSplitDragOverPane(null);
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+  };
+  const startSplitResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const updateSplitRatio = (clientX: number) => {
+      const layout = splitLayoutRef.current;
+
+      if (!layout) {
+        return;
+      }
+
+      const bounds = layout.getBoundingClientRect();
+      if (bounds.width <= 0) {
+        return;
+      }
+
+      const nextRatio = (clientX - bounds.left) / bounds.width;
+      setSplitRatio(Math.min(0.75, Math.max(0.25, nextRatio)));
+    };
+    const onPointerMove = (moveEvent: PointerEvent) => updateSplitRatio(moveEvent.clientX);
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      document.body.classList.remove("terminal-split-resizing");
+    };
+
+    document.body.classList.add("terminal-split-resizing");
+    updateSplitRatio(event.clientX);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
+  const updateLastDragPosition = (event: DragEvent<HTMLElement>) => {
+    if (event.clientX !== 0 || event.clientY !== 0) {
+      lastDragPositionRef.current = { x: event.clientX, y: event.clientY };
+    }
+  };
+  const serialProfileForTab = (tab: WorkspaceSessionTab): SerialProfile | null => {
+    if (tab.connection.transport?.kind !== "serial") {
+      return null;
+    }
+
+    const profile = profilesById.get(tab.connection.profileId);
+    return profile?.type === "serial" ? profile : null;
+  };
+  const renderTerminalPane = (
+    tab: WorkspaceSessionTab,
+    isActivePane: boolean,
+    reportSizeWhenVisible = false,
+  ) => {
+    const serialProfile = serialProfileForTab(tab);
+
+    if (tab.connection.transport?.kind === "serial") {
+      return (
+        <SerialTerminalPanel
+          isActive={isActivePane}
+          profile={serialProfile}
+          reportSizeWhenVisible={reportSizeWhenVisible}
+          tab={tab}
+          terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
+          terminalCopyRichText={terminalCopyRichText}
+          terminalRightClickBehavior={terminalRightClickBehavior}
+          terminalTheme={terminalTheme}
+          onResizeTerminal={onResizeTerminal}
+          onSendData={onSendTerminalData}
+        />
+      );
+    }
+
+    return (
+      <TerminalPane
+        isActive={isActivePane}
+        reportSizeWhenVisible={reportSizeWhenVisible}
+        terminal={tab.terminal}
+        terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
+        terminalCopyRichText={terminalCopyRichText}
+        terminalRightClickBehavior={terminalRightClickBehavior}
+        terminalTheme={terminalTheme}
+        terminalSnapshot={tab.terminalSnapshot}
+        onCloseDisconnected={() => onCloseSessionTab(getSessionTabId(tab))}
+        onReconnectDisconnected={() => onReconnectSessionTab(getSessionTabId(tab))}
+        onResizeTerminal={onResizeTerminal}
+        onSendData={onSendTerminalData}
+      />
+    );
+  };
+  const isDragOutsideTabBar = (event: DragEvent<HTMLElement>) => {
+    const tabBar = tabBarRef.current;
+    const position =
+      event.clientX !== 0 || event.clientY !== 0
+        ? { x: event.clientX, y: event.clientY }
+        : lastDragPositionRef.current;
+
+    if (!tabBar || !position) {
+      return false;
+    }
+
+    const bounds = tabBar.getBoundingClientRect();
+    const detachThresholdPx = 18;
+
+    return (
+      position.x < bounds.left - detachThresholdPx ||
+      position.x > bounds.right + detachThresholdPx ||
+      position.y < bounds.top - detachThresholdPx ||
+      position.y > bounds.bottom + detachThresholdPx
+    );
+  };
+  const finishTabDrag = (event: DragEvent<HTMLElement>, tabId: string) => {
+    const wasDroppedOnTab = tabDropHandledRef.current;
+    const shouldOpenWindow = !wasDroppedOnTab && isDragOutsideTabBar(event);
+    const draggedTab = sessionTabs.find((tab) => getSessionTabId(tab) === tabId) ?? null;
+    tabDropHandledRef.current = false;
+    lastDragPositionRef.current = null;
+    setDraggedTabId(null);
+    setDragOverTabId(null);
+    setSplitDragOverPane(null);
+    onSessionDragStateChange?.(false, tabId);
+
+    if (shouldOpenWindow && !isCustomTab(draggedTab)) {
+      (onDetachSessionTab ?? onOpenSessionWindow)(tabId);
+    }
+  };
+
+  useEffect(() => {
+    if (!isFullscreen) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onToggleFullscreen();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isFullscreen, onToggleFullscreen]);
+
+  useEffect(() => {
+    if (!tabContextMenu) {
+      return;
+    }
+
+    const closeMenu = () => setTabContextMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+
+    window.addEventListener("pointerdown", closeMenu);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", closeMenu);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [tabContextMenu]);
+
+  useEffect(() => {
+    if (!disconnectedShortcutTabId || tabContextMenu) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || isTerminalShortcutEditableTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        onCloseSessionTab(disconnectedShortcutTabId);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "r" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+        event.preventDefault();
+        onReconnectSessionTab(disconnectedShortcutTabId);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    disconnectedShortcutTabId,
+    onCloseSessionTab,
+    onReconnectSessionTab,
+    tabContextMenu,
+  ]);
+
+  useEffect(
+    () => () => {
+      document.body.classList.remove("terminal-split-resizing");
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isTerminalSplitActive && splitFocusedPane !== "left") {
+      setSplitFocusedPane("left");
+    }
+  }, [isTerminalSplitActive, splitFocusedPane]);
+
+  useEffect(() => {
+    const currentTabIds = new Set(sessionTabs.map(getSessionTabId));
+    for (const tabId of autoClosedLocalShellTabIdsRef.current) {
+      if (!currentTabIds.has(tabId)) {
+        autoClosedLocalShellTabIdsRef.current.delete(tabId);
+      }
+    }
+
+    const closedLocalShellTab = sessionTabs.find(
+      (tab) =>
+        (tab.kind ?? "terminal") === "terminal" &&
+        tab.connection.transport?.kind === "local-shell" &&
+        isDisconnectedTerminalTab(tab),
+    );
+
+    if (!closedLocalShellTab) {
+      return;
+    }
+
+    const tabId = getSessionTabId(closedLocalShellTab);
+    if (autoClosedLocalShellTabIdsRef.current.has(tabId)) {
+      return;
+    }
+
+    autoClosedLocalShellTabIdsRef.current.add(tabId);
+    onCloseSessionTab(tabId);
+  }, [onCloseSessionTab, sessionTabs]);
+
+  useEffect(() => {
+    const sessionTabIds = new Set(sessionTabs.map(getSessionTabId));
+
+    setRightSplitTabId((current) =>
+      current && sessionTabs.length > 1 && sessionTabIds.has(current) ? current : null,
+    );
+    setLeftSplitActiveTabId((current) => {
+      if (current && sessionTabIds.has(current) && current !== rightSplitTabId) {
+        return current;
+      }
+
+      const fallbackTab = sessionTabs.find((tab) => getSessionTabId(tab) !== rightSplitTabId);
+      const fallback =
+        resolvedActiveTabId && resolvedActiveTabId !== rightSplitTabId && sessionTabIds.has(resolvedActiveTabId)
+          ? resolvedActiveTabId
+          : fallbackTab
+            ? getSessionTabId(fallbackTab)
+            : null;
+
+      return fallback;
+    });
+  }, [resolvedActiveTabId, rightSplitTabId, sessionTabs]);
+
+  const renderSessionTab = (tab: WorkspaceSessionTab) => {
+    const tabId = getSessionTabId(tab);
+    const isFileTransferSessionTab = isFileTransferTab(tab);
+    const isCustomSessionTab = isCustomTab(tab);
+
+    return (
+      <div
+        className={[
+          "tab",
+          tabId === resolvedActiveTabId ? "active" : "",
+          tabId === rightSplitTabId ? "split-right-tab" : "",
+          tabId === dragOverTabId ? "drag-over" : "",
+          isFileTransferSessionTab ? "file-transfer-tab" : "",
+          isCustomSessionTab ? "custom-page-tab" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        draggable={!isCustomSessionTab}
+        key={tabId}
+        onDrag={updateLastDragPosition}
+        onDragEnd={(event) => finishTabDrag(event, tabId)}
+        onDragEnter={() => {
+          if (draggedTabId && draggedTabId !== tabId) {
+            setDragOverTabId(tabId);
+            setSplitDragOverPane(tabId === rightSplitTabId ? "right" : "left");
+          }
+        }}
+        onDragOver={(event) => {
+          if (draggedTabId && draggedTabId !== tabId) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+          }
+        }}
+        onDragStart={(event) => {
+          tabDropHandledRef.current = false;
+          updateLastDragPosition(event);
+          setDraggedTabId(tabId);
+          onSessionDragStateChange?.(true, tabId);
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", tabId);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          tabDropHandledRef.current = true;
+          const sourceId = event.dataTransfer.getData("text/plain") || draggedTabId;
+
+          if (sourceId) {
+            if (isTerminalSplitActive) {
+              const sourcePane = sourceId === rightSplitTabId ? "right" : "left";
+              const targetPane = tabId === rightSplitTabId ? "right" : "left";
+
+              if (sourcePane !== targetPane) {
+                moveTabToSplitPane(sourceId, targetPane);
+              } else {
+                onReorderSessionTabs(sourceId, tabId);
+              }
+            } else {
+              onReorderSessionTabs(sourceId, tabId);
+            }
+
+            onSessionDragStateChange?.(false, sourceId);
+          }
+
+          setDraggedTabId(null);
+          setDragOverTabId(null);
+          setSplitDragOverPane(null);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setTabContextMenu({ tabId, x: event.clientX, y: event.clientY });
+        }}
+        onMouseDown={(event) => {
+          if (event.button !== 1) {
+            return;
+          }
+
+          event.preventDefault();
+          event.stopPropagation();
+          onCloseSessionTab(tabId);
+        }}
+      >
+        <button
+          aria-label={`切换到 ${tab.connection.title}`}
+          className="tab-main"
+          onClick={() => selectSessionTab(tabId)}
+          title={tab.connection.title}
+          type="button"
+        >
+          <span>{tab.connection.title}</span>
+        </button>
+        <div className="tab-tools">
+          <button
+            aria-label={`关闭 ${tab.connection.title}`}
+            className="tab-close"
+            onClick={(event) => {
+              event.stopPropagation();
+              onCloseSessionTab(tabId);
+            }}
+            title="关闭"
+            type="button"
+          >
+            <Icon name="x" />
+          </button>
+        </div>
+      </div>
+    );
+  };
+  return (
+    <section className={workspaceClassName}>
+      {hasSessionTabs ? (
+        <div
+          className={["tab-bar", isTerminalSplitActive ? "split-tab-bar" : ""]
+            .filter(Boolean)
+            .join(" ")}
+          ref={tabBarRef}
+          style={isTerminalSplitActive ? splitLayoutStyle : undefined}
+        >
+          {isTerminalSplitActive && splitRightTab ? (
+            <>
+              <nav
+                className={[
+                  "tabs",
+                  "split-tabs-left",
+                  splitDragOverPane === "left" ? "split-drop-over" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                aria-label="左侧标签页"
+                onDragLeave={() => setSplitDragOverPane(null)}
+                onDragOver={(event) => dragTabOverSplitPane(event, "left")}
+                onDrop={(event) => dropTabOnSplitPane(event, "left")}
+              >
+                {leftSplitTabs.map(renderSessionTab)}
+              </nav>
+              <div className="tab-bar-split-spacer" aria-hidden="true" />
+              <div
+                className={[
+                  "split-tab-group",
+                  "split-tabs-right",
+                  splitDragOverPane === "right" ? "split-drop-over" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onDragLeave={() => setSplitDragOverPane(null)}
+                onDragOver={(event) => dragTabOverSplitPane(event, "right")}
+                onDrop={(event) => dropTabOnSplitPane(event, "right")}
+              >
+                <nav className="tabs" aria-label="右侧标签页">
+                  {renderSessionTab(splitRightTab)}
+                </nav>
+                <button
+                  aria-label="取消右侧分屏"
+                  className="terminal-icon-button split-tab-close"
+                  onClick={closeActiveSplit}
+                  title="取消右侧分屏"
+                  type="button"
+                >
+                  <Icon name="columns-2" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <nav className="tabs" aria-label="已打开会话">
+              {sessionTabs.map(renderSessionTab)}
+            </nav>
+          )}
+          {tabContextMenu ? (
+            (() => {
+              const menuTab = sessionTabs.find(
+                (tab) => getSessionTabId(tab) === tabContextMenu.tabId,
+              );
+
+              return menuTab ? (
+                <TabContextMenu
+                  position={{ x: tabContextMenu.x, y: tabContextMenu.y }}
+                  tab={menuTab}
+                  tabId={tabContextMenu.tabId}
+                  activeTabId={resolvedActiveTabId ?? undefined}
+                  canSplitRight={!isCustomTab(menuTab) && sessionTabs.length > 1}
+                  isFullscreen={isFullscreen}
+                  onClose={() => setTabContextMenu(null)}
+                  onCloseTab={onCloseSessionTab}
+                  onOpenWindow={onOpenSessionWindow}
+                  onReconnect={onReconnectSessionTab}
+                  onSplitRight={splitTabToRight}
+                  onToggleFullscreen={toggleTabFullscreen}
+                />
+              ) : null;
+            })()
+          ) : null}
+        </div>
+      ) : null}
+
+      {hasSessionTabs ? (
+        <div className={terminalBodyClassName}>
+        {reattachHintActive ? (
+          <div className="terminal-reattach-target" aria-hidden="true">
+            <span>释放后合并到此窗口</span>
+          </div>
+        ) : null}
+
+        {shouldShowRiskBanner ? (
+          <div className="risk-banner">
+            当前连接未加密。Telnet 和 Raw TCP 连接前需要显示该提醒。
+          </div>
+        ) : null}
+
+        {isTerminalSplitActive && splitRightTab ? (
+          <div
+            className="terminal-layout terminal-split-layout"
+            ref={splitLayoutRef}
+            style={splitLayoutStyle}
+          >
+            <div
+              className={[
+                "terminal-split-pane",
+                splitDragOverPane === "left" ? "split-drop-over" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onDragLeave={() => setSplitDragOverPane(null)}
+              onDragOver={(event) => dragTabOverSplitPane(event, "left")}
+              onDrop={(event) => dropTabOnSplitPane(event, "left")}
+              onMouseDownCapture={() => {
+                setSplitFocusedPane("left");
+                if (leftResolvedActiveTabId && resolvedActiveTabId !== leftResolvedActiveTabId) {
+                  onSelectSessionTab(leftResolvedActiveTabId);
+                }
+              }}
+            >
+              {leftTerminalTabs.length > 0 ? (
+                <div
+                  className={[
+                    "terminal-layout",
+                    "terminal-layout-stack",
+                    isLeftTerminalTabActive ? "" : "inactive",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  {leftTerminalTabs.map((tab) => {
+                    const tabId = getSessionTabId(tab);
+                    const isActivePane = tabId === leftResolvedActiveTabId && isLeftTerminalTabActive;
+
+                    return (
+                      <div
+                        className={["terminal-layout-item", isActivePane ? "active" : ""]
+                          .filter(Boolean)
+                          .join(" ")}
+                        key={tabId}
+                      >
+                        {renderTerminalPane(tab, isActivePane && splitFocusedPane === "left", true)}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {isLeftFileTransferTabActive && fileTransferPanel ? (
+                <div className="terminal-file-tab">{fileTransferPanel}</div>
+              ) : !isLeftTerminalTabActive && leftActiveTab ? (
+                <div className="terminal-blank-page" aria-label="空白标签页" />
+              ) : null}
+            </div>
+            <div
+              aria-label="调整分屏宽度"
+              className="terminal-split-resizer"
+              onPointerDown={startSplitResize}
+              role="separator"
+              title="调整分屏宽度"
+            />
+            <div
+              className={[
+                "terminal-split-pane",
+                splitDragOverPane === "right" ? "split-drop-over" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              onDragLeave={() => setSplitDragOverPane(null)}
+              onDragOver={(event) => dragTabOverSplitPane(event, "right")}
+              onDrop={(event) => dropTabOnSplitPane(event, "right")}
+              onMouseDownCapture={() => {
+                setSplitFocusedPane("right");
+              }}
+            >
+              {isRightTerminalTabActive ? (
+                renderTerminalPane(splitRightTab, splitFocusedPane === "right", true)
+              ) : isRightFileTransferTabActive && resolvedActiveTabId === rightSplitTabId && fileTransferPanel ? (
+                <div className="terminal-file-tab">{fileTransferPanel}</div>
+              ) : (
+                <div className="terminal-blank-page" aria-label="空白标签页" />
+              )}
+            </div>
+          </div>
+        ) : terminalTabs.length > 0 ? (
+          <div
+            className={[
+              "terminal-layout",
+              "terminal-layout-stack",
+              isTerminalTabActive ? "" : "inactive",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            {terminalTabs.map((tab) => {
+              const tabId = getSessionTabId(tab);
+              const isActivePane = tabId === resolvedActiveTabId && isTerminalTabActive;
+
+              return (
+                <div
+                  className={["terminal-layout-item", isActivePane ? "active" : ""]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={tabId}
+                >
+                  {renderTerminalPane(tab, isActivePane)}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {!isTerminalSplitActive ? (
+          activeCustomTabContent ? (
+            <div className="terminal-custom-tab">{activeCustomTabContent}</div>
+          ) : isFileTransferTabActive && fileTransferPanel ? (
+            <div className="terminal-file-tab">{fileTransferPanel}</div>
+          ) : !isFileTransferTabActive && terminalTabs.length > 0 ? (
+            null
+          ) : emptyStateNotice ? (
+            <div className="terminal-notice-page" role="status">
+              <strong>连接已断开</strong>
+              <span>{emptyStateNotice}</span>
+            </div>
+          ) : activeTab ? (
+            <div className="terminal-blank-page" aria-label={isFileTransferTabActive ? "SFTP 文件管理加载中" : "空白终端页"} />
+          ) : null
+        ) : null}
+        </div>
+      ) : null}
+
+    </section>
+  );
+}

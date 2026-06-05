@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Portiva",
+  "version": "1.0.0",
+  "identifier": "com.gs.portiva",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Portiva",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 560,
+        "minHeight": 640,
+        "decorations": false,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese"],
+        "customLanguageFiles": {
+          "SimpChinese": "installer/nsis-languages/SimpChinese.nsh"
+        },
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
+  }
+}
