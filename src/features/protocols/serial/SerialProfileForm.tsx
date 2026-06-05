@@ -1,4 +1,5 @@
 import type { SerialPortInfo, SerialProfile } from "../../../shared/types";
+import { TextInput } from "../../../shared/ui";
 
 interface SerialProfileFormProps {
   profile: SerialProfile;
@@ -10,39 +11,39 @@ export function SerialProfileForm({ ports = [], profile }: SerialProfileFormProp
     <div className="protocol-form">
       <label>
         端口
-        <input readOnly value={profile.portName} />
+        <TextInput readOnly value={profile.portName} />
       </label>
       <label>
         波特率
-        <input readOnly value={profile.baudRate} />
+        <TextInput readOnly value={profile.baudRate} />
       </label>
       <label>
         数据位
-        <input readOnly value={profile.dataBits} />
+        <TextInput readOnly value={profile.dataBits} />
       </label>
       <label>
         校验
-        <input readOnly value={profile.parity} />
+        <TextInput readOnly value={profile.parity} />
       </label>
       <label>
         流控
-        <input readOnly value={profile.flowControl} />
+        <TextInput readOnly value={profile.flowControl} />
       </label>
       <label>
         换行
-        <input readOnly value={profile.lineEnding} />
+        <TextInput readOnly value={profile.lineEnding} />
       </label>
       <label>
         编码
-        <input readOnly value={profile.encoding} />
+        <TextInput readOnly value={profile.encoding} />
       </label>
       <label>
         DTR
-        <input readOnly value={profile.dtr ? "开启" : "关闭"} />
+        <TextInput readOnly value={profile.dtr ? "开启" : "关闭"} />
       </label>
       <label>
         RTS
-        <input readOnly value={profile.rts ? "开启" : "关闭"} />
+        <TextInput readOnly value={profile.rts ? "开启" : "关闭"} />
       </label>
       <div className="serial-port-list">
         <strong>检测到的端口</strong>

@@ -10,6 +10,7 @@ import type {
   WorkspaceSessionTab,
 } from "../../shared/types";
 import { Icon } from "../../shared/Icon";
+import { IconButton, Select, Toggle } from "../../shared/ui";
 
 interface SerialTerminalPanelProps {
   isActive?: boolean;
@@ -327,6 +328,19 @@ export function SerialTerminalPanel({
   const selectedPortIsDetected = serialPorts.some((port) => port.portName === runtimeProfile.portName);
   const statusText = terminalReady ? "OPEN" : "CLOSED";
   const configuredEnding = runtimeProfile.lineEnding;
+  const serialPortOptions = useMemo(
+    () => [
+      ...(runtimeProfile.portName && !selectedPortIsDetected
+        ? [{ label: `${runtimeProfile.portName}（当前配置）`, value: runtimeProfile.portName }]
+        : []),
+      ...serialPorts.map((port) => ({
+        disabled: !port.isAvailable && port.portName !== runtimeProfile.portName,
+        label: `${port.displayName || port.portName}${port.isAvailable ? "" : "（占用）"}`,
+        value: port.portName,
+      })),
+    ],
+    [runtimeProfile.portName, selectedPortIsDetected, serialPorts],
+  );
   const baudRateOptions = useMemo(() => {
     if (commonSerialBaudRates.includes(runtimeProfile.baudRate)) {
       return commonSerialBaudRates;
@@ -892,15 +906,19 @@ export function SerialTerminalPanel({
                         HEX
                       </button>
                     </div>
-                    <select
+                    <Select
                       aria-label={`发送结束符 ${index + 1}`}
+                      className="serial-send-ending-select"
                       disabled={slot.mode === "hex"}
+                      menuWidth={124}
+                      style={{ width: 124 }}
                       value={slot.sendEnding}
-                      onChange={(event) => updateSendSlot(slot.id, { sendEnding: event.currentTarget.value as SerialSendEnding })}
-                    >
-                      <option value="configured">+{serialLineEndingLabel(configuredEnding)}</option>
-                      <option value="none">无结束符</option>
-                    </select>
+                      options={[
+                        { label: `+${serialLineEndingLabel(configuredEnding)}`, value: "configured" },
+                        { label: "无结束符", value: "none" },
+                      ]}
+                      onChange={(sendEnding) => updateSendSlot(slot.id, { sendEnding: sendEnding as SerialSendEnding })}
+                    />
                     <label className={["serial-timed-send", slot.timedSendEnabled ? "active" : ""].join(" ")}>
                       <input
                         checked={slot.timedSendEnabled}
@@ -941,97 +959,100 @@ export function SerialTerminalPanel({
             <label className="serial-port-config-field">
               <span>端口</span>
               <span className="serial-port-config-control">
-                <select
+                <Select
+                  className="serial-port-select"
                   disabled={serialActionPending}
                   value={runtimeProfile.portName}
-                  onChange={(event) => updateRuntimeProfile({ portName: event.currentTarget.value })}
-                >
-                  <option disabled value="">
-                    {serialPorts.length ? "选择端口" : "未检测到端口"}
-                  </option>
-                  {serialPorts.map((port) => (
-                    <option disabled={!port.isAvailable && port.portName !== runtimeProfile.portName} key={port.portName} value={port.portName}>
-                      {port.displayName || port.portName}
-                      {port.isAvailable ? "" : "（占用）"}
-                    </option>
-                  ))}
-                </select>
-                <button disabled={serialActionPending || !onRefreshSerialPorts} title="刷新端口" type="button" onClick={() => void onRefreshSerialPorts?.()}>
-                  <Icon name="refresh-ccw" />
-                </button>
+                  placeholder={serialPorts.length ? "选择端口" : "未检测到端口"}
+                  options={serialPortOptions}
+                  onChange={(portName) => updateRuntimeProfile({ portName })}
+                />
+                <IconButton disabled={serialActionPending || !onRefreshSerialPorts} icon="refresh-ccw" title="刷新端口" onClick={() => void onRefreshSerialPorts?.()} />
               </span>
             </label>
             <label>
               <span>波特率</span>
-              <select
+              <Select
                 value={runtimeProfile.baudRate}
-                onChange={(event) => updateRuntimeProfile({ baudRate: Number(event.currentTarget.value) })}
-              >
-                {baudRateOptions.map((baudRate) => (
-                  <option key={baudRate} value={baudRate}>
-                    {baudRate}
-                  </option>
-                ))}
-              </select>
+                options={baudRateOptions.map((baudRate) => ({ label: baudRate, value: baudRate }))}
+                onChange={(baudRate) => updateRuntimeProfile({ baudRate })}
+              />
             </label>
             <label>
               <span>数据位</span>
-              <select value={runtimeProfile.dataBits} onChange={(event) => updateRuntimeProfile({ dataBits: Number(event.currentTarget.value) as SerialProfile["dataBits"] })}>
-                <option value={5}>5</option>
-                <option value={6}>6</option>
-                <option value={7}>7</option>
-                <option value={8}>8</option>
-              </select>
+              <Select
+                value={runtimeProfile.dataBits}
+                options={[5, 6, 7, 8].map((value) => ({ label: value, value }))}
+                onChange={(dataBits) => updateRuntimeProfile({ dataBits: dataBits as SerialProfile["dataBits"] })}
+              />
             </label>
             <label>
               <span>校验</span>
-              <select value={runtimeProfile.parity} onChange={(event) => updateRuntimeProfile({ parity: event.currentTarget.value as SerialProfile["parity"] })}>
-                <option value="none">无</option>
-                <option value="odd">奇校验</option>
-                <option value="even">偶校验</option>
-              </select>
+              <Select
+                value={runtimeProfile.parity}
+                options={[
+                  { label: "无", value: "none" },
+                  { label: "奇校验", value: "odd" },
+                  { label: "偶校验", value: "even" },
+                ]}
+                onChange={(parity) => updateRuntimeProfile({ parity: parity as SerialProfile["parity"] })}
+              />
             </label>
             <label>
               <span>停止位</span>
-              <select value={runtimeProfile.stopBits} onChange={(event) => updateRuntimeProfile({ stopBits: Number(event.currentTarget.value) as SerialProfile["stopBits"] })}>
-                <option value={1}>1</option>
-                <option value={2}>2</option>
-              </select>
+              <Select
+                value={runtimeProfile.stopBits}
+                options={[
+                  { label: "1", value: 1 },
+                  { label: "2", value: 2 },
+                ]}
+                onChange={(stopBits) => updateRuntimeProfile({ stopBits: stopBits as SerialProfile["stopBits"] })}
+              />
             </label>
             <label>
               <span>流控</span>
-              <select value={runtimeProfile.flowControl} onChange={(event) => updateRuntimeProfile({ flowControl: event.currentTarget.value as SerialProfile["flowControl"] })}>
-                <option value="none">无</option>
-                <option value="software">软件</option>
-                <option value="hardware">硬件</option>
-              </select>
+              <Select
+                value={runtimeProfile.flowControl}
+                options={[
+                  { label: "无", value: "none" },
+                  { label: "软件", value: "software" },
+                  { label: "硬件", value: "hardware" },
+                ]}
+                onChange={(flowControl) => updateRuntimeProfile({ flowControl: flowControl as SerialProfile["flowControl"] })}
+              />
             </label>
             <label>
               <span>编码</span>
-              <select value={runtimeProfile.encoding} onChange={(event) => updateRuntimeProfile({ encoding: event.currentTarget.value as SerialProfile["encoding"] })}>
-                {serialEncodingOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              <Select
+                value={runtimeProfile.encoding}
+                options={serialEncodingOptions}
+                onChange={(encoding) => updateRuntimeProfile({ encoding: encoding as SerialProfile["encoding"] })}
+              />
             </label>
             <label>
               <span>结束符</span>
-              <select value={runtimeProfile.lineEnding} onChange={(event) => updateRuntimeProfile({ lineEnding: event.currentTarget.value as SerialProfile["lineEnding"] })}>
-                <option value="crlf">CRLF</option>
-                <option value="cr">CR</option>
-                <option value="lf">LF</option>
-              </select>
+              <Select
+                value={runtimeProfile.lineEnding}
+                options={[
+                  { label: "CRLF", value: "crlf" },
+                  { label: "CR", value: "cr" },
+                  { label: "LF", value: "lf" },
+                ]}
+                onChange={(lineEnding) => updateRuntimeProfile({ lineEnding: lineEnding as SerialProfile["lineEnding"] })}
+              />
             </label>
-            <label className="serial-config-check">
-              <input checked={Boolean(runtimeProfile.dtr)} type="checkbox" onChange={(event) => updateRuntimeProfile({ dtr: event.currentTarget.checked })} />
-              <span>DTR</span>
-            </label>
-            <label className="serial-config-check">
-              <input checked={Boolean(runtimeProfile.rts)} type="checkbox" onChange={(event) => updateRuntimeProfile({ rts: event.currentTarget.checked })} />
-              <span>RTS</span>
-            </label>
+            <Toggle
+              checked={Boolean(runtimeProfile.dtr)}
+              className="serial-config-check"
+              label="DTR"
+              onChange={(event) => updateRuntimeProfile({ dtr: event.currentTarget.checked })}
+            />
+            <Toggle
+              checked={Boolean(runtimeProfile.rts)}
+              className="serial-config-check"
+              label="RTS"
+              onChange={(event) => updateRuntimeProfile({ rts: event.currentTarget.checked })}
+            />
             <div className="serial-config-actions">
               <button
                 className={serialOpen ? "serial-close-action" : "serial-open-action"}

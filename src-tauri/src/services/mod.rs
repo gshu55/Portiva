@@ -1,5 +1,6 @@
 pub mod connection_manager;
 pub mod file_transfer_service;
+pub mod http_workspace_store;
 pub mod known_hosts_store;
 pub mod local_shell_service;
 pub mod log_service;

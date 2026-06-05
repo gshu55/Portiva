@@ -94,6 +94,9 @@ export const commandNames = {
   logList: "log_list",
   logRecordPlaceholder: "log_record_placeholder",
   localShellOpen: "local_shell_open",
+  httpSend: "http_send",
+  httpWorkspacesGet: "http_workspaces_get",
+  httpWorkspacesSave: "http_workspaces_save",
 } as const;
 
 export interface ProfileSaveResult {
@@ -129,6 +132,30 @@ export interface SerialTerminalCreateResult {
   connection: ConnectionSummary;
   terminal: TerminalSession;
   terminalSnapshot: TerminalSnapshot;
+}
+
+export interface HttpSendHeader {
+  key: string;
+  value: string;
+}
+
+export interface HttpSendRequest {
+  body?: string;
+  headers: HttpSendHeader[];
+  method: string;
+  timeoutMs?: number;
+  url: string;
+}
+
+export interface HttpSendResponse {
+  body: string;
+  bodyKind: "binary" | "empty" | "json" | "text";
+  durationMs: number;
+  headers: Record<string, string>;
+  sizeBytes: number;
+  status: number;
+  statusText: string;
+  url: string;
 }
 
 export function profileList() {
@@ -429,4 +456,16 @@ export function serialTerminalOpen(terminalId: string, profile: ConnectionProfil
 
 export function serialTerminalReconfigure(terminalId: string, profile: ConnectionProfile) {
   return invoke<void>(commandNames.serialTerminalReconfigure, { terminalId, profile });
+}
+
+export function httpSend(request: HttpSendRequest) {
+  return invoke<HttpSendResponse>(commandNames.httpSend, { request });
+}
+
+export function httpWorkspacesGet<T>() {
+  return invoke<T[]>(commandNames.httpWorkspacesGet);
+}
+
+export function httpWorkspacesSave<T>(workspaces: T[]) {
+  return invoke<T[]>(commandNames.httpWorkspacesSave, { workspaces });
 }

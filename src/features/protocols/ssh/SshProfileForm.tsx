@@ -1,4 +1,5 @@
 import type { SftpProfile, SshProfile } from "../../../shared/types";
+import { Select, TextInput, Toggle } from "../../../shared/ui";
 
 type SshCredentialProfile = SshProfile | SftpProfile;
 
@@ -38,11 +39,11 @@ export function SshProfileForm({
     <div className="protocol-form">
       <label>
         主机
-        <input value={profile.host} onChange={(event) => update({ host: event.target.value })} />
+        <TextInput value={profile.host} onChange={(event) => update({ host: event.target.value })} />
       </label>
       <label>
         端口
-        <input
+        <TextInput
           min="1"
           max="65535"
           type="number"
@@ -52,27 +53,28 @@ export function SshProfileForm({
       </label>
       <label>
         用户
-        <input value={profile.username} onChange={(event) => update({ username: event.target.value })} />
+        <TextInput value={profile.username} onChange={(event) => update({ username: event.target.value })} />
       </label>
       <label>
         认证
-        <select
+        <Select
           value={profile.authType}
-          onChange={(event) => {
+          options={[
+            { label: "密码", value: "password" },
+            { label: "私钥", value: "private-key" },
+            { label: "Agent", value: "agent" },
+          ]}
+          onChange={(authType) => {
             onSecretChange?.("");
             onRememberSecretChange?.(false);
-            update({ authType: event.target.value as SshProfile["authType"] });
+            update({ authType: authType as SshProfile["authType"] });
           }}
-        >
-          <option value="password">密码</option>
-          <option value="private-key">私钥</option>
-          <option value="agent">Agent</option>
-        </select>
+        />
       </label>
       {profile.authType === "password" ? (
         <label>
           SSH 密码
-          <input
+          <TextInput
             autoComplete="current-password"
             type="password"
             value={passwordValue}
@@ -101,14 +103,14 @@ export function SshProfileForm({
         <>
           <label>
             私钥路径
-            <input
+            <TextInput
               value={profile.privateKeyPath ?? ""}
               onChange={(event) => update({ privateKeyPath: event.target.value })}
             />
           </label>
           <label>
             密钥口令
-            <input
+            <TextInput
               autoComplete="current-password"
               type="password"
               value={secret}
@@ -119,23 +121,17 @@ export function SshProfileForm({
       ) : null}
       <div className="protocol-option-row">
         {profile.authType === "password" ? (
-          <label className="check-row">
-            <input
-              checked={rememberSecret}
-              type="checkbox"
-              onChange={(event) => onRememberSecretChange?.(event.target.checked)}
-            />
-            <span className="check-row-label">记住密码</span>
-          </label>
-        ) : null}
-        <label className="check-row">
-          <input
-            checked={Boolean(profile.enableCompression)}
-            type="checkbox"
-            onChange={(event) => update({ enableCompression: event.target.checked })}
+          <Toggle
+            checked={rememberSecret}
+            label="记住密码"
+            onChange={(event) => onRememberSecretChange?.(event.target.checked)}
           />
-          <span className="check-row-label">压缩</span>
-        </label>
+        ) : null}
+        <Toggle
+          checked={Boolean(profile.enableCompression)}
+          label="压缩"
+          onChange={(event) => update({ enableCompression: event.target.checked })}
+        />
       </div>
     </div>
   );

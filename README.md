@@ -1,6 +1,6 @@
 # Portiva
 
-Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建的跨平台桌面终端客户端。项目目标是提供统一的连接工作台，把 SSH 终端、SFTP 文件管理、串口调试、本地终端以及后续可扩展的 Telnet、Raw TCP 等协议放在同一个应用体验里。
+Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建的跨平台桌面终端客户端。项目目标是提供统一的连接工作台，把 SSH 终端、SFTP 文件管理、串口调试、本地终端以及后续可扩展的 Telnet、Raw TCP、HTTP/API 调试等能力放在同一个应用体验里。
 
 当前项目已经围绕“连接 Profile + 终端会话 + 文件传输 + 安全配置”建立了完整的前后端结构：前端负责工作台、标签页、配置表单和终端渲染，Rust 后端负责协议连接、PTY/串口读写、SFTP 传输、本地文件访问、日志、设置和安全相关数据。
 
@@ -43,6 +43,13 @@ Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建
 - macOS/Linux 下优先使用 `$SHELL`，并回退到常见 shell。
 - 基于 `portable-pty` 管理本地 PTY，支持输入输出和 resize。
 
+### HTTP/API 调试
+
+- 规划迁移 EasyPost 的 HTTP 请求调试能力。
+- HTTP 调试将作为单实例 HTTP Console 接入，沿用 EasyPost 的工作区布局，不复用终端会话或 Raw TCP 实现。
+- 优先复用 Portiva 的标签、IPC、日志、设置和安全边界。
+- 迁移方案见 [EasyPost HTTP 调试能力迁移设计](docs/easypost_http_integration.md)。
+
 ### 工作台体验
 
 - 多标签会话工作区。
@@ -62,6 +69,7 @@ Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建
 | Local Shell | 可用 | 支持本地 PTY 终端 |
 | Telnet | 预留 | 已建模 capabilities 和 Profile，协议协商尚未实现 |
 | Raw TCP | 预留 | 已建模 capabilities 和 Profile，TCP 数据流尚未实现 |
+| HTTP/API 调试 | 规划中 | 迁移 EasyPost 核心请求模型和工作区布局，作为单实例 HTTP Console 接入 |
 
 ## 技术栈
 
@@ -136,3 +144,4 @@ pnpm clean
 - 文件传输不通过前端内存搬运文件内容。
 - UI 功能入口由 capabilities 决定，不直接依赖协议名称硬编码。
 - 非加密协议需要明确安全边界和风险提示。
+- HTTP/API 调试是短请求/响应模型，不复用 `TerminalSession`，也不通过 Raw TCP 手写 HTTP。

@@ -32,6 +32,7 @@ Serial 串口
 Telnet
 Raw TCP Socket
 Local Shell
+HTTP/API 调试
 WSL
 Docker exec
 Kubernetes exec
@@ -55,6 +56,7 @@ SSH Tunnel
 8. 文件传输和终端连接分开建模。
 9. 密码、私钥、passphrase、token 不进入前端状态。
 10. 大文件传输不经过前端内存。
+11. HTTP/API 调试属于短请求/响应模型，不复用终端会话，也不通过 Raw TCP 手写 HTTP。
 ```
 
 ---
@@ -1306,6 +1308,87 @@ timeout
 
 ---
 
+## 18.5 HTTP/API 调试扩展设计
+
+HTTP/API 调试与 SSH、SFTP、Serial、Telnet、Raw TCP 的本质差异在于：它是短请求/响应模型，不是持续连接会话。
+
+推荐迁移 EasyPost 的 HTTP 调试能力，但迁移边界必须清晰：
+
+```text
+迁移 EasyPost 的请求模型
+迁移 EasyPost 的请求准备逻辑
+迁移 EasyPost 的变量解析思路
+迁移 EasyPost 的响应读取和格式化逻辑
+不直接迁移 EasyPost 的完整 AppShell 视觉实现
+不迁移 EasyPost 的整套 UI 样式
+不把 HTTP 响应塞进 TerminalSession
+不通过 Raw TCP 手写 HTTP
+```
+
+HTTP 调试在 Portiva 中应表现为一个工作台工具，而不是一个请求一个工作台标签：
+
+```text
+WorkspaceTab(kind = http-console)
+  ↓
+HttpConsolePanel
+  ↓
+HttpRequestDraft
+  ↓
+prepareHttpRequestDraft
+  ↓
+HttpClient.send
+  ↓
+HttpResponseSnapshot
+```
+
+HTTP Console 只允许一个顶层标签。多个请求通过左侧草稿、历史、收藏、集合和搜索来管理。MVP 不提供“固定/单独打开为工作台标签”能力。
+
+EasyPost 有 Workspace / Project / Folder / Request 数据层级，请求编辑状态也绑定 workspaceId。因此 MVP 只允许一个 HTTP Console 顶层实例。重复打开 HTTP/API 调试时应聚焦已有 HTTP Console，而不是创建新标签。Phase 1 只维护一个默认 workspace；后续即使增加 workspace selector，也仍在同一个 HTTP Console 内切换。
+
+HTTP Console 的内部布局沿用 EasyPost 原有方式：左侧 workspace tree，主区上半部分 request tabs / request editor，主区下半部分 response workspace，中间使用可拖拽分隔条。这里的 request tabs 是 HTTP Console 内部编辑标签，不是 Portiva 顶层工作台标签。
+
+视觉实现必须适配 Portiva 当前风格：保留 EasyPost 的信息架构和操作路径，但替换 glass/liquid 视觉语言、Tailwind 全局样式、按钮输入框外观、面板边框、颜色和状态提示。
+
+第一阶段推荐通过 Tauri HTTP 插件发送请求，后续再封装成 Portiva 自己的 Rust IPC 命令：
+
+```text
+http_request_send
+http_request_cancel
+http_request_history_list
+http_request_history_delete
+```
+
+HTTP/API 调试可以复用：
+
+```text
+工作台标签体系
+Tauri IPC 命令桥
+应用日志
+敏感字段脱敏
+设置页
+诊断页
+浏览器 mock 数据源
+```
+
+HTTP/API 调试不复用：
+
+```text
+TerminalSession
+FileTransferSession
+PTY resize
+SFTP transfer queue
+Raw TCP 字节流
+known_hosts 校验
+```
+
+详细迁移方案见：
+
+```text
+docs/easypost_http_integration.md
+```
+
+---
+
 ## 19. Local Shell / WSL / Docker / Kubernetes
 
 这些功能适合后续版本。
@@ -1780,6 +1863,39 @@ PowerShell / cmd / bash / zsh
 WSL profile
 ```
 
+### v0.9：HTTP/API 调试
+
+目标：
+
+```text
+迁移 EasyPost 的核心 HTTP 请求调试能力。
+```
+
+功能：
+
+```text
+HTTP Console 工具页
+沿用 EasyPost 的 workspace tree / request editor / response workspace 布局
+method / URL / query / headers / body
+JSON / text / formUrlEncoded body
+发送和取消
+响应状态、响应头、响应体
+超时和响应大小限制
+敏感 Header 脱敏
+```
+
+验收：
+
+```text
+HTTP Console 不显示终端或 SFTP 操作入口。
+简单请求不会自动生成新的工作台标签。
+重复打开 HTTP Console 会聚焦已有标签。
+浏览器 mock 模式下可预览。
+Tauri 桌面模式下可发送真实 HTTP/HTTPS 请求。
+Authorization、Cookie、token 等敏感字段不进入明文日志。
+超过响应大小限制时有明确提示。
+```
+
 ### v1.0：稳定版
 
 目标：
@@ -2083,7 +2199,7 @@ Portiva Tunnel      SSH 隧道模块
 
 ## 29. 设计结论
 
-Portiva 当前设计可以支持 SSH/SFTP，也可以扩展到 Serial、Telnet、Raw TCP、Local Shell、WSL、Docker exec、Kubernetes exec 等连接类型。
+Portiva 当前设计可以支持 SSH/SFTP，也可以扩展到 Serial、Telnet、Raw TCP、Local Shell、HTTP/API 调试、WSL、Docker exec、Kubernetes exec 等能力。
 
 但必须从第一天就遵守这几个边界：
 
@@ -2097,7 +2213,8 @@ Portiva 当前设计可以支持 SSH/SFTP，也可以扩展到 Serial、Telnet�
 7. Secret 永远不进入前端。
 8. 大文件永远不经过前端内存。
 9. Telnet、Raw TCP 等明文协议必须明确提示风险。
-10. 第一版聚焦 SSH/SFTP，把核心体验打磨稳定。
+10. HTTP/API 调试是短请求/响应模型，不复用 TerminalSession，也不通过 Raw TCP 手写 HTTP。
+11. 第一版聚焦 SSH/SFTP，把核心体验打磨稳定。
 ```
 
 最终推荐路线：
@@ -2111,6 +2228,7 @@ v0.5 Serial
 v0.6 Telnet
 v0.7 Raw TCP
 v0.8 Local Shell / WSL
+v0.9 HTTP/API 调试
 v1.0 Stable Release
 ```
 

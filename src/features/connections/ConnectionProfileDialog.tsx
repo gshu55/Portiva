@@ -8,8 +8,9 @@ import type {
   TextEncoding,
 } from "../../shared/types";
 import { protocolLabel } from "../../shared/labels";
-import { Icon, type IconName } from "../../shared/Icon";
+import type { IconName } from "../../shared/Icon";
 import type { TestConnectionResult } from "../../shared/ipc/commands";
+import { IconButton, Select, SegmentedControl, TextInput, Toggle } from "../../shared/ui";
 import { SshProfileForm } from "../protocols/ssh/SshProfileForm";
 
 export interface ConnectionSecretInput {
@@ -134,39 +135,37 @@ export function ConnectionProfileDialog({
             <strong>{title}</strong>
             <span>{mode === "create" ? "填写连接参数后保存" : "修改名称即可重命名"}</span>
           </div>
-          <button aria-label="关闭弹窗" onClick={onClose} title="关闭弹窗" type="button">
-            <Icon name="x" />
-          </button>
+          <IconButton aria-label="关闭弹窗" icon="x" onClick={onClose} title="关闭弹窗" />
         </div>
 
         <div className="profile-dialog-body">
           {mode === "create" ? (
             <aside className="profile-dialog-left" aria-label="连接类型">
-              <div className="segmented-control profile-type-control" aria-label="连接类型">
-                {(["ssh", "sftp", "telnet", "raw-tcp"] as const).map((type) => (
-                  <button
-                    aria-label={protocolLabel(type)}
-                    className={draft.type === type ? "active" : ""}
-                    key={type}
-                    onClick={() => {
-                      setSecret("");
-                      setDraft(onCreateDraft(type));
-                    }}
-                    title={protocolLabel(type)}
-                    type="button"
-                  >
-                    <Icon name={profileTypeIcons[type]} />
-                    <span>{protocolLabel(type)}</span>
-                  </button>
-                ))}
-              </div>
+              <SegmentedControl
+                aria-label="连接类型"
+                className="segmented-control profile-type-control"
+                itemLayout="iconText"
+                options={(["ssh", "sftp", "telnet", "raw-tcp"] as const).map((type) => ({
+                  ariaLabel: protocolLabel(type),
+                  icon: profileTypeIcons[type],
+                  label: protocolLabel(type),
+                  title: protocolLabel(type),
+                  value: type,
+                }))}
+                orientation="vertical"
+                value={draft.type === "serial" ? "ssh" : draft.type}
+                onChange={(type) => {
+                  setSecret("");
+                  setDraft(onCreateDraft(type));
+                }}
+              />
             </aside>
           ) : null}
 
           <div className="profile-dialog-right" aria-label="连接参数">
             <label>
               配置名称
-              <input
+              <TextInput
                 autoFocus
                 value={draft.name}
                 onChange={(event) => setDraft({ ...draft, name: event.currentTarget.value })}
@@ -219,33 +218,25 @@ export function ConnectionProfileDialog({
           <div className="profile-dialog-actions">
             <div className="profile-dialog-actions-left">
               {mode === "edit" ? (
-                <button aria-label="删除配置" className="danger-action" onClick={() => onDelete(draft.id)} title="删除配置" type="button">
-                  <Icon name="trash" />
-                </button>
+                <IconButton aria-label="删除配置" className="danger-action" icon="trash" onClick={() => onDelete(draft.id)} title="删除配置" tone="danger" />
               ) : null}
-              <button
+              <IconButton
                 aria-label="测试连接"
                 disabled={!canTest}
+                icon="terminal"
                 onClick={() => void testDraft()}
                 title={canTest ? "测试连接" : "请输入密码后再测试连接"}
-                type="button"
-              >
-                <Icon name="terminal" />
-              </button>
+              />
             </div>
             <div className="profile-dialog-actions-right">
-              <button
+              <IconButton
                 aria-label="连接"
                 disabled={!canConnect}
+                icon="plug"
                 onClick={() => void connectDraft()}
                 title="连接"
-                type="button"
-              >
-                <Icon name="plug" />
-              </button>
-              <button aria-label="保存配置" disabled={!canSave} onClick={() => void saveDraft()} title="保存配置" type="button">
-                <Icon name="save" />
-              </button>
+              />
+              <IconButton aria-label="保存配置" disabled={!canSave} icon="save" onClick={() => void saveDraft()} title="保存配置" tone="primary" />
             </div>
           </div>
         </div>
@@ -267,11 +258,11 @@ function TelnetFields({
     <div className="protocol-form">
       <label>
         主机
-        <input value={profile.host} onChange={(event) => update({ host: event.currentTarget.value })} />
+        <TextInput value={profile.host} onChange={(event) => update({ host: event.currentTarget.value })} />
       </label>
       <label>
         端口
-        <input
+        <TextInput
           min="1"
           max="65535"
           type="number"
@@ -281,15 +272,19 @@ function TelnetFields({
       </label>
       <label>
         用户
-        <input value={profile.username ?? ""} onChange={(event) => update({ username: event.currentTarget.value })} />
+        <TextInput value={profile.username ?? ""} onChange={(event) => update({ username: event.currentTarget.value })} />
       </label>
       <label>
         终端
-        <select value={profile.terminalType} onChange={(event) => update({ terminalType: event.currentTarget.value as TelnetProfile["terminalType"] })}>
-          <option value="xterm">xterm</option>
-          <option value="vt100">vt100</option>
-          <option value="vt220">vt220</option>
-        </select>
+        <Select
+          value={profile.terminalType}
+          options={[
+            { label: "xterm", value: "xterm" },
+            { label: "vt100", value: "vt100" },
+            { label: "vt220", value: "vt220" },
+          ]}
+          onChange={(terminalType) => update({ terminalType: terminalType as TelnetProfile["terminalType"] })}
+        />
       </label>
       <EncodingFields
         encoding={profile.encoding}
@@ -314,11 +309,11 @@ function RawTcpFields({
     <div className="protocol-form">
       <label>
         主机
-        <input value={profile.host} onChange={(event) => update({ host: event.currentTarget.value })} />
+        <TextInput value={profile.host} onChange={(event) => update({ host: event.currentTarget.value })} />
       </label>
       <label>
         端口
-        <input
+        <TextInput
           min="1"
           max="65535"
           type="number"
@@ -355,38 +350,32 @@ function SerialFields({
       <label>
         端口
         <span className="serial-port-control">
-          <select
+          <Select
             disabled={!ports.length && !profile.portName}
             value={profile.portName}
-            onChange={(event) => update({ portName: event.currentTarget.value })}
-          >
-            <option disabled value="">
-              {ports.length ? "选择串口端口" : "未检测到串口端口"}
-            </option>
-            {profile.portName && !selectedPortIsDetected ? (
-              <option value={profile.portName}>{profile.portName}（当前配置）</option>
-            ) : null}
-            {ports.map((port) => (
-              <option disabled={!port.isAvailable && port.portName !== profile.portName} key={port.portName} value={port.portName}>
-                {port.displayName || port.portName}
-                {port.isAvailable ? "" : "（占用）"}
-              </option>
-            ))}
-          </select>
-          <button
+            placeholder={ports.length ? "选择串口端口" : "未检测到串口端口"}
+            options={[
+              ...(profile.portName && !selectedPortIsDetected ? [{ label: `${profile.portName}（当前配置）`, value: profile.portName }] : []),
+              ...ports.map((port) => ({
+                disabled: !port.isAvailable && port.portName !== profile.portName,
+                label: `${port.displayName || port.portName}${port.isAvailable ? "" : "（占用）"}`,
+                value: port.portName,
+              })),
+            ]}
+            onChange={(portName) => update({ portName })}
+          />
+          <IconButton
             aria-label="刷新串口端口"
             disabled={!onRefreshPorts}
+            icon="refresh-ccw"
             onClick={() => void onRefreshPorts?.()}
             title="刷新串口端口"
-            type="button"
-          >
-            <Icon name="refresh-ccw" />
-          </button>
+          />
         </span>
       </label>
       <label>
         波特率
-        <input
+        <TextInput
           min="1"
           type="number"
           value={profile.baudRate}
@@ -395,69 +384,62 @@ function SerialFields({
       </label>
       <label>
         数据位
-        <select value={profile.dataBits} onChange={(event) => update({ dataBits: Number(event.currentTarget.value) as SerialProfile["dataBits"] })}>
-          <option value={5}>5</option>
-          <option value={6}>6</option>
-          <option value={7}>7</option>
-          <option value={8}>8</option>
-        </select>
+        <Select
+          value={profile.dataBits}
+          options={[5, 6, 7, 8].map((value) => ({ label: value, value }))}
+          onChange={(dataBits) => update({ dataBits: dataBits as SerialProfile["dataBits"] })}
+        />
       </label>
       <label>
         校验
-        <select value={profile.parity} onChange={(event) => update({ parity: event.currentTarget.value as SerialProfile["parity"] })}>
-          {isUnsupportedSerialParity(profile.parity) ? (
-            <option disabled value={profile.parity}>
-              {profile.parity}（暂不支持）
-            </option>
-          ) : null}
-          <option value="none">无</option>
-          <option value="odd">奇校验</option>
-          <option value="even">偶校验</option>
-        </select>
+        <Select
+          value={profile.parity}
+          options={[
+            ...(isUnsupportedSerialParity(profile.parity) ? [{ disabled: true, label: `${profile.parity}（暂不支持）`, value: profile.parity }] : []),
+            { label: "无", value: "none" },
+            { label: "奇校验", value: "odd" },
+            { label: "偶校验", value: "even" },
+          ]}
+          onChange={(parity) => update({ parity: parity as SerialProfile["parity"] })}
+        />
       </label>
       <label>
         停止位
-        <select value={profile.stopBits} onChange={(event) => update({ stopBits: Number(event.currentTarget.value) as SerialProfile["stopBits"] })}>
-          {profile.stopBits === 1.5 ? (
-            <option disabled value={1.5}>
-              1.5（暂不支持）
-            </option>
-          ) : null}
-          <option value={1}>1</option>
-          <option value={2}>2</option>
-        </select>
+        <Select
+          value={profile.stopBits}
+          options={[
+            ...(profile.stopBits === 1.5 ? [{ disabled: true, label: "1.5（暂不支持）", value: 1.5 }] : []),
+            { label: "1", value: 1 },
+            { label: "2", value: 2 },
+          ]}
+          onChange={(stopBits) => update({ stopBits: stopBits as SerialProfile["stopBits"] })}
+        />
       </label>
       <label>
         流控
-        <select value={profile.flowControl} onChange={(event) => update({ flowControl: event.currentTarget.value as SerialProfile["flowControl"] })}>
-          <option value="none">无</option>
-          <option value="software">软件</option>
-          <option value="hardware">硬件</option>
-        </select>
+        <Select
+          value={profile.flowControl}
+          options={[
+            { label: "无", value: "none" },
+            { label: "软件", value: "software" },
+            { label: "硬件", value: "hardware" },
+          ]}
+          onChange={(flowControl) => update({ flowControl: flowControl as SerialProfile["flowControl"] })}
+        />
       </label>
       <div className="serial-toggle-grid">
-        <label className="check-row">
-          <input
-            checked={Boolean(profile.dtr)}
-            type="checkbox"
-            onChange={(event) => update({ dtr: event.currentTarget.checked })}
-          />
-          <span className="check-row-label">
-            <strong>DTR</strong>
-            <small>连接后置位 Data Terminal Ready</small>
-          </span>
-        </label>
-        <label className="check-row">
-          <input
-            checked={Boolean(profile.rts)}
-            type="checkbox"
-            onChange={(event) => update({ rts: event.currentTarget.checked })}
-          />
-          <span className="check-row-label">
-            <strong>RTS</strong>
-            <small>连接后置位 Request To Send</small>
-          </span>
-        </label>
+        <Toggle
+          checked={Boolean(profile.dtr)}
+          description="连接后置位 Data Terminal Ready"
+          label="DTR"
+          onChange={(event) => update({ dtr: event.currentTarget.checked })}
+        />
+        <Toggle
+          checked={Boolean(profile.rts)}
+          description="连接后置位 Request To Send"
+          label="RTS"
+          onChange={(event) => update({ rts: event.currentTarget.checked })}
+        />
       </div>
       <EncodingFields encoding={profile.encoding} lineEnding={profile.lineEnding} onChange={(patch) => update(patch)} />
       <p className="todo-note">串口端口来自系统检测结果，设备重插后可点击刷新重新检测。</p>
@@ -490,21 +472,23 @@ function EncodingFields({
     <>
       <label>
         编码
-        <select value={encoding} onChange={(event) => onChange({ encoding: event.currentTarget.value as TextEncoding })}>
-          {textEncodingOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={encoding}
+          options={textEncodingOptions}
+          onChange={(nextEncoding) => onChange({ encoding: nextEncoding as TextEncoding })}
+        />
       </label>
       <label>
         换行
-        <select value={lineEnding} onChange={(event) => onChange({ lineEnding: event.currentTarget.value as "crlf" | "cr" | "lf" })}>
-          <option value="crlf">CRLF</option>
-          <option value="cr">CR</option>
-          <option value="lf">LF</option>
-        </select>
+        <Select
+          value={lineEnding}
+          options={[
+            { label: "CRLF", value: "crlf" },
+            { label: "CR", value: "cr" },
+            { label: "LF", value: "lf" },
+          ]}
+          onChange={(nextLineEnding) => onChange({ lineEnding: nextLineEnding as "crlf" | "cr" | "lf" })}
+        />
       </label>
     </>
   );

@@ -1,4 +1,4 @@
-import { Icon } from "../../shared/Icon";
+import { Button } from "../../shared/ui";
 import type { RemoteEntry } from "../../shared/types";
 
 interface FileEntryContextMenuProps {
@@ -39,35 +39,33 @@ export function FileEntryContextMenu({
       role="menu"
       style={{ left: position.x, top: position.y }}
     >
-      <button disabled={!canAct} onClick={() => void runAction(onCreateDirectory)} role="menuitem" title="新建目录" type="button">
-        <Icon name="folder-plus" />
+      <Button disabled={!canAct} icon="folder-plus" onClick={() => void runAction(onCreateDirectory)} role="menuitem" title="新建目录" tone="muted">
         <span>新建目录</span>
-      </button>
-      <button
+      </Button>
+      <Button
         disabled={!canAct || !isTransferableEntry(entry)}
+        icon="copy"
         onClick={() => void runAction(onCopyToPeer)}
         role="menuitem"
         title={isTransferableEntry(entry) ? copyLabel : "当前仅支持传输普通文件或文件夹"}
-        type="button"
+        tone="muted"
       >
-        <Icon name="copy" />
         <span>{copyLabel}</span>
-      </button>
-      <button disabled={!canAct || !entry} onClick={() => void runAction(onRename)} role="menuitem" title="重命名" type="button">
-        <Icon name="edit" />
+      </Button>
+      <Button disabled={!canAct || !entry} icon="edit" onClick={() => void runAction(onRename)} role="menuitem" title="重命名" tone="muted">
         <span>重命名</span>
-      </button>
-      <button
+      </Button>
+      <Button
         className="danger-action"
         disabled={!canAct || !entry}
+        icon="trash"
         onClick={() => void runAction(onRemove)}
         role="menuitem"
         title="删除"
-        type="button"
+        tone="danger"
       >
-        <Icon name="trash" />
         <span>删除</span>
-      </button>
+      </Button>
     </div>
   );
 }

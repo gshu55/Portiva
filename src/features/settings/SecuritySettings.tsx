@@ -1,4 +1,4 @@
-import { Icon } from "../../shared/Icon";
+import { Button, IconButton, TextArea, Toggle } from "../../shared/ui";
 import type { AppSettings, KnownHostEntry, SecretMetadata } from "../../shared/types";
 import { SettingsSectionHeader } from "./SettingsSection";
 
@@ -35,30 +35,21 @@ export function SecuritySettings({
       <section className="settings-block security-settings-block">
         <SettingsSectionHeader description="主机信任、日志脱敏和协议风险提示。" title="连接保护" />
         <div className="settings-toggle-grid">
-          <label className="check-row">
-            <input
-              checked={settings.security.requireHostKeyVerification}
-              type="checkbox"
-              onChange={(event) => updateSecurity({ requireHostKeyVerification: event.currentTarget.checked })}
-            />
-            <span className="check-row-label">要求 SSH 主机密钥校验</span>
-          </label>
-          <label className="check-row">
-            <input
-              checked={settings.security.redactSensitiveLogs}
-              type="checkbox"
-              onChange={(event) => updateSecurity({ redactSensitiveLogs: event.currentTarget.checked })}
-            />
-            <span className="check-row-label">日志中脱敏敏感字段</span>
-          </label>
-          <label className="check-row">
-            <input
-              checked={settings.security.allowInsecureWithoutWarning}
-              type="checkbox"
-              onChange={(event) => updateSecurity({ allowInsecureWithoutWarning: event.currentTarget.checked })}
-            />
-            <span className="check-row-label">允许不安全协议且不提示</span>
-          </label>
+          <Toggle
+            checked={settings.security.requireHostKeyVerification}
+            label="要求 SSH 主机密钥校验"
+            onChange={(event) => updateSecurity({ requireHostKeyVerification: event.currentTarget.checked })}
+          />
+          <Toggle
+            checked={settings.security.redactSensitiveLogs}
+            label="日志中脱敏敏感字段"
+            onChange={(event) => updateSecurity({ redactSensitiveLogs: event.currentTarget.checked })}
+          />
+          <Toggle
+            checked={settings.security.allowInsecureWithoutWarning}
+            label="允许不安全协议且不提示"
+            onChange={(event) => updateSecurity({ allowInsecureWithoutWarning: event.currentTarget.checked })}
+          />
         </div>
       </section>
 
@@ -67,12 +58,11 @@ export function SecuritySettings({
         <div className="redaction-preview">
           <label className="settings-field">
             <span>脱敏输入</span>
-            <textarea value={redactionInput} onChange={(event) => onRedactionInputChange(event.currentTarget.value)} />
+            <TextArea mono value={redactionInput} onChange={(event) => onRedactionInputChange(event.currentTarget.value)} />
           </label>
-          <button aria-label="预览脱敏" onClick={onPreviewRedaction} title="预览脱敏" type="button">
-            <Icon name="refresh-ccw" />
+          <Button aria-label="预览脱敏" icon="refresh-ccw" onClick={onPreviewRedaction} title="预览脱敏">
             <span>预览</span>
-          </button>
+          </Button>
           <pre>{redactionPreview || "运行预览以查看后端脱敏结果。"}</pre>
         </div>
       </section>
@@ -85,9 +75,7 @@ export function SecuritySettings({
               <div className="security-row" key={secret.id}>
                 <span>{secret.purpose}</span>
                 <small>{secret.id}</small>
-                <button aria-label={`删除密钥 ${secret.id}`} onClick={() => onDeleteSecretMetadata(secret.id)} title="删除密钥元数据" type="button">
-                  <Icon name="trash" />
-                </button>
+                <IconButton aria-label={`删除密钥 ${secret.id}`} icon="trash" onClick={() => onDeleteSecretMetadata(secret.id)} title="删除密钥元数据" tone="danger" />
               </div>
             ))
           ) : (
@@ -104,9 +92,7 @@ export function SecuritySettings({
               <div className="security-row" key={host.host}>
                 <span>{host.host}</span>
                 <small>{host.fingerprint}</small>
-                <button aria-label={`删除已知主机 ${host.host}`} onClick={() => onDeleteKnownHost(host.host)} title="删除已知主机" type="button">
-                  <Icon name="trash" />
-                </button>
+                <IconButton aria-label={`删除已知主机 ${host.host}`} icon="trash" onClick={() => onDeleteKnownHost(host.host)} title="删除已知主机" tone="danger" />
               </div>
             ))
           ) : (

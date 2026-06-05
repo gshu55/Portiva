@@ -1,4 +1,5 @@
 import type { AppSettings } from "../../shared/types";
+import { TextInput } from "../../shared/ui";
 import { SettingsSectionHeader } from "./SettingsSection";
 
 interface KeymapSettingsProps {
@@ -24,7 +25,7 @@ export function KeymapSettings({ onSaveSettings, settings }: KeymapSettingsProps
         {shortcutFields.map(([key, label]) => (
           <label className="shortcut-row" key={key}>
             <span>{label}</span>
-            <input value={settings.keymap[key] ?? ""} onChange={(event) => updateKeymap(key, event.currentTarget.value)} />
+            <TextInput mono value={settings.keymap[key] ?? ""} onChange={(event) => updateKeymap(key, event.currentTarget.value)} />
           </label>
         ))}
       </div>

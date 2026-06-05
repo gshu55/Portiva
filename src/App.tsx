@@ -11,6 +11,7 @@ import { usePortivaWorkspace } from "./app/usePortivaWorkspace";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { SimpleSftpPanel } from "./features/file-transfer/SimpleSftpPanel";
 import type { ConnectionSecretInput } from "./features/connections/ConnectionProfileDialog";
+import { HttpConsolePanel } from "./features/http/HttpConsolePanel";
 import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
@@ -26,6 +27,7 @@ const mainWindowMinHeight = 640;
 const detachedWindowMinWidth = 480;
 const detachedWindowMinHeight = 480;
 const settingsTabId = "portiva-settings";
+const httpConsoleTabId = "portiva-http-console";
 const inactiveCapabilities: ConnectionCapabilities = {
   fileTransfer: false,
   localFileAccess: false,
@@ -48,6 +50,19 @@ const settingsSessionTab: WorkspaceSessionTab = {
     profileId: settingsTabId,
     status: "ready",
     title: "设置",
+  },
+  terminal: null,
+  terminalSnapshot: null,
+};
+const httpConsoleSessionTab: WorkspaceSessionTab = {
+  id: httpConsoleTabId,
+  kind: "http-console",
+  connection: {
+    capabilities: inactiveCapabilities,
+    id: httpConsoleTabId,
+    profileId: httpConsoleTabId,
+    status: "ready",
+    title: "HTTP Console",
   },
   terminal: null,
   terminalSnapshot: null,
@@ -102,6 +117,7 @@ function App() {
   const [hostTrustBusy, setHostTrustBusy] = useState(false);
   const [reconnectTabId, setReconnectTabId] = useState<string | null>(null);
   const [settingsTabOpen, setSettingsTabOpen] = useState(false);
+  const [httpConsoleOpen, setHttpConsoleOpen] = useState(false);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
   const detachedTarget = useMemo(() => {
@@ -369,8 +385,8 @@ function App() {
       return null;
     }
 
-    if (tabKind === "settings") {
-      workspace.reportWorkspaceMessage("设置标签不支持单独窗口。");
+    if (tabKind !== "terminal" && tabKind !== "file-transfer") {
+      workspace.reportWorkspaceMessage("当前工具标签不支持单独窗口。");
       return null;
     }
 
@@ -792,23 +808,50 @@ function App() {
     setSettingsTabOpen(false);
     setActiveShellTabId((current) => (current === settingsTabId ? null : current));
   };
+  const closeHttpConsoleTab = () => {
+    setHttpConsoleOpen(false);
+    setActiveShellTabId((current) => (current === httpConsoleTabId ? null : current));
+  };
   const openSettingsTab = () => {
     setSavedConnectionsOpen(false);
     setSettingsTabOpen(true);
     setActiveShellTabId(settingsTabId);
   };
-  const appSessionTabs = settingsTabOpen
-    ? [...workspace.sessionTabs, settingsSessionTab]
-    : workspace.sessionTabs;
-  const activeAppTabId =
-    settingsTabOpen && (activeShellTabId === settingsTabId || !workspace.activeSessionTabId)
+  const openHttpConsoleTab = () => {
+    setSavedConnectionsOpen(false);
+    setHttpConsoleOpen(true);
+    setActiveShellTabId(httpConsoleTabId);
+  };
+  const appSessionTabs = [
+    ...workspace.sessionTabs,
+    ...(httpConsoleOpen ? [httpConsoleSessionTab] : []),
+    ...(settingsTabOpen ? [settingsSessionTab] : []),
+  ];
+  const activeToolTabId =
+    activeShellTabId === settingsTabId && settingsTabOpen
       ? settingsTabId
-      : workspace.activeSessionTabId || undefined;
+      : activeShellTabId === httpConsoleTabId && httpConsoleOpen
+        ? httpConsoleTabId
+        : null;
+  const fallbackAppTabId = !workspace.activeSessionTabId
+    ? httpConsoleOpen
+      ? httpConsoleTabId
+      : settingsTabOpen
+        ? settingsTabId
+        : undefined
+    : workspace.activeSessionTabId;
+  const activeAppTabId = activeToolTabId ?? fallbackAppTabId;
   const settingsTabActive = activeAppTabId === settingsTabId;
+  const httpConsoleActive = activeAppTabId === httpConsoleTabId;
   const selectAppSessionTab = (tabId: string) => {
     if (tabId === settingsTabId) {
       setSettingsTabOpen(true);
       setActiveShellTabId(settingsTabId);
+      return;
+    }
+    if (tabId === httpConsoleTabId) {
+      setHttpConsoleOpen(true);
+      setActiveShellTabId(httpConsoleTabId);
       return;
     }
 
@@ -820,25 +863,34 @@ function App() {
       closeSettingsTab();
       return;
     }
+    if (tabId === httpConsoleTabId) {
+      closeHttpConsoleTab();
+      return;
+    }
 
     void workspace.closeConnection(tabId);
   };
   const openAppSessionWindow = (tabId: string) => {
-    if (tabId === settingsTabId) {
+    if (tabId === settingsTabId || tabId === httpConsoleTabId) {
       return;
     }
 
     openSessionWindow(tabId);
   };
   const reconnectAppSessionTab = (tabId: string) => {
-    if (tabId === settingsTabId) {
+    if (tabId === settingsTabId || tabId === httpConsoleTabId) {
       return;
     }
 
     reconnectSessionTab(tabId);
   };
   const reorderAppSessionTabs = (sourceTabId: string, targetTabId: string) => {
-    if (sourceTabId === settingsTabId || targetTabId === settingsTabId) {
+    if (
+      sourceTabId === settingsTabId ||
+      targetTabId === settingsTabId ||
+      sourceTabId === httpConsoleTabId ||
+      targetTabId === httpConsoleTabId
+    ) {
       return;
     }
 
@@ -948,9 +1000,11 @@ function App() {
   return (
     <main className="app-shell" data-theme={workspace.settings.theme.mode} style={themeStyle}>
       <AppTitlebar
+        httpConsoleActive={httpConsoleActive}
         savedConnectionsOpen={savedConnectionsOpen}
         settingsTabActive={settingsTabActive}
         onCreateProfile={openCreateProfileDialog}
+        onOpenHttpConsole={openHttpConsoleTab}
         onOpenLocalShell={openLocalTerminalTab}
         onOpenSerialTerminal={openSerialTerminalTab}
         onOpenSavedConnections={() => setSavedConnectionsOpen(true)}
@@ -976,14 +1030,15 @@ function App() {
         <div className="content-grid without-file-manager">
           <TerminalWorkspace
             activeTabId={activeAppTabId}
-            capabilities={settingsTabActive ? inactiveCapabilities : workspace.capabilities}
-            connection={settingsTabActive ? null : workspace.activeConnection}
+            capabilities={settingsTabActive || httpConsoleActive ? inactiveCapabilities : workspace.capabilities}
+            connection={settingsTabActive || httpConsoleActive ? null : workspace.activeConnection}
             customTabPanels={{
+              [httpConsoleTabId]: <HttpConsolePanel />,
               [settingsTabId]: <SettingsTabPanel workspace={workspace} />,
             }}
             emptyStateNotice={workspace.sessionNotice}
             fileTransferPanel={fileTransferPanel}
-            sftpSidePanel={settingsTabActive ? undefined : renderInlineSftpPanel}
+            sftpSidePanel={settingsTabActive || httpConsoleActive ? undefined : renderInlineSftpPanel}
             isFullscreen={terminalFullscreen}
             reattachHintActive={detachedReattachHint}
             profiles={workspace.profiles}

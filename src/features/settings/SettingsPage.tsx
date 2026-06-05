@@ -7,8 +7,8 @@ import { DiagnosticsOverview } from "./diagnostics/DiagnosticsOverview";
 import { DiagnosticsProtocols } from "./diagnostics/DiagnosticsProtocols";
 import { DiagnosticsStatus } from "./diagnostics/DiagnosticsStatus";
 import { DiagnosticsTunnels } from "./diagnostics/DiagnosticsTunnels";
-import { Icon } from "../../shared/Icon";
 import type { IconName } from "../../shared/Icon";
+import { Button } from "../../shared/ui";
 import type {
   AppSettings,
   ConnectionCapabilities,
@@ -143,19 +143,19 @@ export function SettingsPage({
       <div className="settings-layout">
         <nav className="settings-menu" aria-label="设置菜单">
           {menuItems.map((item) => (
-            <button
+            <Button
+              active={activeMenu === item.id}
               aria-label={`${item.label}：${item.description}`}
-              className={activeMenu === item.id ? "active" : ""}
               data-description={item.description}
               data-label={item.label}
+              icon={item.icon}
               key={item.id}
               onClick={() => setActiveMenu(item.id)}
-              type="button"
+              tone="muted"
             >
-              <Icon name={item.icon} />
               <span>{item.label}</span>
               <small>{item.description}</small>
-            </button>
+            </Button>
           ))}
         </nav>
         <div className="settings-content">

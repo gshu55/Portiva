@@ -4,6 +4,7 @@ import {
   terminalColorPresets,
   type TerminalColorKey,
 } from "../../shared/terminalThemes";
+import { Button, TextInput } from "../../shared/ui";
 import { SettingsSectionHeader } from "./SettingsSection";
 
 interface TerminalPaletteSettingsProps {
@@ -109,12 +110,12 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
       <SettingsSectionHeader title="终端配色" />
       <div className="terminal-palette-presets" aria-label="终端配色预设">
         {terminalColorPresetOptions.map((preset) => (
-          <button
-            className={settings.theme.terminalColorPreset === preset.id ? "active" : ""}
+          <Button
+            active={settings.theme.terminalColorPreset === preset.id}
             key={preset.id}
             onClick={() => updateTerminalPreset(preset.id)}
             title={`套用${preset.label}终端配色`}
-            type="button"
+            tone="muted"
           >
             <span
               className="terminal-preset-swatch"
@@ -130,10 +131,10 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
             </span>
             <strong>{preset.label}</strong>
             <small>{preset.description}</small>
-          </button>
+          </Button>
         ))}
-        <button
-          className={settings.theme.terminalColorPreset === "custom" ? "active" : ""}
+        <Button
+          active={settings.theme.terminalColorPreset === "custom"}
           onClick={() =>
             updateTheme({
               terminalColorPreset: "custom",
@@ -141,7 +142,7 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
             })
           }
           title="编辑自定义终端配色"
-          type="button"
+          tone="muted"
         >
           <span
             className="terminal-preset-swatch"
@@ -157,7 +158,7 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
           </span>
           <strong>自定义</strong>
           <small>修改任意颜色后自动启用</small>
-        </button>
+        </Button>
       </div>
       <div
         className="terminal-palette-preview"
@@ -193,14 +194,15 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
                 return (
                   <label className="terminal-color-field" key={field.key}>
                     <span>{field.label}</span>
-                    <input
+                    <Button
                       aria-label={`${field.label}颜色选择器`}
-                      className="terminal-color-swatch-input"
-                      type="color"
-                      value={value}
-                      onChange={(event) => updateTerminalColor(field.key, event.currentTarget.value)}
+                      className="terminal-color-swatch-button"
+                      style={{ background: value }}
+                      title={`${field.label}：${value}`}
+                      tone="muted"
                     />
-                    <input
+                    <TextInput
+                      mono
                       maxLength={7}
                       pattern="#[0-9a-fA-F]{6}"
                       type="text"

@@ -1,5 +1,6 @@
 import { type DragEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../shared/Icon";
+import { Button, IconButton, Select, TextInput } from "../../shared/ui";
 import type { ConnectionCapabilities, RemoteEntry, TransferTask } from "../../shared/types";
 import { FileEntryContextMenu } from "./FileEntryContextMenu";
 import { TransferQueue } from "./TransferQueue";
@@ -112,30 +113,23 @@ export function FileTransferPanel({
       <div className="sftp-source-row">
         <label>
           SSH 连接
-          <select
+          <Select
             value={selectedConnectionId}
-            onChange={(event) => setSelectedConnectionId(event.currentTarget.value)}
-          >
-            {sftpConnectionOptions.length > 0 ? (
-              sftpConnectionOptions.map((option) => (
-                <option key={option.connectionId} value={option.connectionId}>
-                  {option.active ? `${option.title}（当前）` : option.title}
-                </option>
-              ))
-            ) : (
-              <option value="">没有已认证的 SSH 连接</option>
-            )}
-          </select>
+            placeholder="没有已认证的 SSH 连接"
+            options={sftpConnectionOptions.map((option) => ({
+              label: option.active ? `${option.title}（当前）` : option.title,
+              value: option.connectionId,
+            }))}
+            onChange={setSelectedConnectionId}
+          />
         </label>
-        <button
+        <IconButton
           aria-label="添加 SFTP 标签"
           disabled={!selectedConnectionId}
+          icon="plus"
           onClick={() => onOpenConnectionFileTransfer(selectedConnectionId)}
           title="添加 SFTP 标签"
-          type="button"
-        >
-          <Icon name="plus" />
-        </button>
+        />
       </div>
       <div className="file-manager-grid">
         <FilePane
@@ -158,24 +152,20 @@ export function FileTransferPanel({
         />
 
         <div className="file-copy-actions" aria-label="传输操作">
-          <button
+          <IconButton
             disabled={!canUseRemote || !isTransferableEntry(selectedLocalEntry)}
+            icon="upload"
             onClick={onUploadSelected}
             aria-label="上传选中的本地文件或文件夹"
             title="上传选中的本地文件或文件夹"
-            type="button"
-          >
-            <Icon name="upload" />
-          </button>
-          <button
+          />
+          <IconButton
             disabled={!canUseRemote || !isTransferableEntry(selectedRemoteEntry)}
+            icon="download"
             onClick={onDownloadSelected}
             aria-label="下载选中的远程文件或文件夹"
             title="下载选中的远程文件或文件夹"
-            type="button"
-          >
-            <Icon name="download" />
-          </button>
+          />
           <span title={selectedLocalLabel}>本地</span>
           <span title={selectedRemoteLabel}>远程</span>
         </div>
@@ -424,39 +414,31 @@ function FilePane({
         <strong>{title}</strong>
         <div className="file-pane-tools">
           {onOpenRoot ? (
-            <button aria-label="回到远程根目录" disabled={disabled} onClick={onOpenRoot} title="回到远程根目录" type="button">
-              <Icon name="home" />
-            </button>
+            <IconButton aria-label="回到远程根目录" disabled={disabled} icon="home" onClick={onOpenRoot} title="回到远程根目录" />
           ) : null}
           {onOpenRoots ? (
-            <button aria-label="查看本地磁盘" onClick={onOpenRoots} title="查看本地磁盘" type="button">
-              <Icon name="hard-drive" />
-            </button>
+            <IconButton aria-label="查看本地磁盘" icon="hard-drive" onClick={onOpenRoots} title="查看本地磁盘" />
           ) : null}
-          <button
+          <IconButton
             aria-label={pathKind === "remote" ? "刷新或重连目录" : "刷新目录"}
             disabled={disabled}
+            icon="refresh-ccw"
             onClick={onRefresh}
             title={pathKind === "remote" ? "刷新或重连目录" : "刷新目录"}
-            type="button"
-          >
-            <Icon name="refresh-ccw" />
-          </button>
+          />
         </div>
       </div>
       <div className="file-path-bar">
-        <button
+        <IconButton
           aria-label="上级目录"
           disabled={disabled || !canGoParent(path)}
+          icon="folder-open"
           onClick={() => onOpenDirectory(parentPath(path, pathKind))}
           title="上级目录"
-          type="button"
-        >
-          <Icon name="folder-open" />
-        </button>
+        />
         <label>
           <span>路径</span>
-          <input
+          <TextInput
             disabled={disabled}
             title={path}
             value={pathInput}
@@ -508,13 +490,13 @@ function FilePane({
           <span role="columnheader">修改时间</span>
           <span role="columnheader">权限</span>
         </div>
-        <button
+        <Button
           className="file-browser-row is-directory parent-directory-row"
           disabled={disabled || !canGoParent(path)}
           onDoubleClick={() => onOpenDirectory(parentPath(path, pathKind))}
           title="上级目录"
           role="row"
-          type="button"
+          tone="muted"
         >
           <span className="file-browser-name" role="cell">
             <span className="file-browser-icon" aria-hidden="true" />
@@ -524,7 +506,7 @@ function FilePane({
           <small role="cell">-</small>
           <small role="cell">-</small>
           <small role="cell">-</small>
-        </button>
+        </Button>
         {entries.length > 0 ? (
           entries.map((entry) =>
             editingEntryPath === entry.path ? (
@@ -542,7 +524,7 @@ function FilePane({
               >
                 <span className="file-browser-name" role="cell">
                   <span className="file-browser-icon" aria-hidden="true" />
-                  <input
+                  <TextInput
                     autoFocus
                     className="file-inline-name-input"
                     value={editingName}
@@ -575,7 +557,7 @@ function FilePane({
                 <small role="cell">{formatPermissions(entry)}</small>
               </div>
             ) : (
-              <button
+              <Button
                 className={[
                   "file-browser-row",
                   entry.path === selectedEntry?.path ? "active" : "",
@@ -599,7 +581,7 @@ function FilePane({
                 }}
                 role="row"
                 title={entry.kind === "directory" ? `打开 ${entry.name}` : `选择 ${entry.name}`}
-                type="button"
+                tone="muted"
               >
                 <span className="file-browser-name" role="cell">
                   <span className="file-browser-icon" aria-hidden="true" />
@@ -609,7 +591,7 @@ function FilePane({
                 <small role="cell">{entry.kind === "directory" ? "-" : formatBytes(entry.size)}</small>
                 <small role="cell">{formatModifiedAt(entry.modifiedAt)}</small>
                 <small role="cell">{formatPermissions(entry)}</small>
-              </button>
+              </Button>
             ),
           )
         ) : (

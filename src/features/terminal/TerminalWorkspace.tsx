@@ -68,7 +68,7 @@ const getSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.i
 const isFileTransferTab = (tab: WorkspaceSessionTab | null | undefined) =>
   (tab?.kind ?? "terminal") === "file-transfer";
 const isCustomTab = (tab: WorkspaceSessionTab | null | undefined) =>
-  (tab?.kind ?? "terminal") === "settings";
+  (tab?.kind ?? "terminal") === "settings" || (tab?.kind ?? "terminal") === "http-console";
 const isDisconnectedTerminalTab = (
   tab: WorkspaceSessionTab | null | undefined,
 ): tab is WorkspaceSessionTab => {

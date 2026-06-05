@@ -32,3 +32,7 @@ pub fn recent_connections_path() -> PathBuf {
 pub fn logs_path() -> PathBuf {
     portiva_config_dir().join("logs.json")
 }
+
+pub fn http_console_database_path() -> PathBuf {
+    portiva_config_dir().join("http_console.sqlite")
+}

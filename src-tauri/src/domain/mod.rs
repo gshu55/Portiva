@@ -2,6 +2,7 @@ pub mod capability;
 pub mod connection;
 pub mod error;
 pub mod file_transfer;
+pub mod http_workspace;
 pub mod logging;
 pub mod profile;
 pub mod secret;

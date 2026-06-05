@@ -6,9 +6,11 @@ type WindowAction = "close" | "drag" | "minimize" | "toggle-maximize";
 type WindowControlPlatform = "linux" | "macos" | "windows";
 
 interface AppTitlebarProps {
+  httpConsoleActive: boolean;
   savedConnectionsOpen: boolean;
   settingsTabActive: boolean;
   onCreateProfile: () => void;
+  onOpenHttpConsole: () => void;
   onOpenLocalShell: () => void;
   onOpenSerialTerminal: () => void;
   onOpenSavedConnections: () => void;
@@ -59,9 +61,11 @@ function detectWindowControlPlatform(): WindowControlPlatform {
 }
 
 export function AppTitlebar({
+  httpConsoleActive,
   savedConnectionsOpen,
   settingsTabActive,
   onCreateProfile,
+  onOpenHttpConsole,
   onOpenLocalShell,
   onOpenSerialTerminal,
   onOpenSavedConnections,
@@ -142,6 +146,15 @@ export function AppTitlebar({
         </button>
         <button type="button" title="串口终端" aria-label="串口终端" onClick={onOpenSerialTerminal}>
           <Icon name="plug" />
+        </button>
+        <button
+          type="button"
+          className={httpConsoleActive ? "active" : ""}
+          title="HTTP/API 调试"
+          aria-label="HTTP/API 调试"
+          onClick={onOpenHttpConsole}
+        >
+          <Icon name="network" />
         </button>
         <button
           type="button"

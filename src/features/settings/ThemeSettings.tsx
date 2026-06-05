@@ -1,5 +1,6 @@
 import type { AppSettings } from "../../shared/types";
-import { Icon, type IconName } from "../../shared/Icon";
+import type { IconName } from "../../shared/Icon";
+import { SegmentedControl, Select, TextInput } from "../../shared/ui";
 import { SettingsSectionHeader } from "./SettingsSection";
 
 interface ThemeSettingsProps {
@@ -74,42 +75,41 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
   return (
     <section className="settings-block appearance-settings-block">
       <SettingsSectionHeader title="主题" />
-      <div className="segmented-control" aria-label="主题模式">
-        {(["dark", "light", "system"] as const).map((mode) => (
-          <button
-            aria-label={modeLabels[mode]}
-            className={settings.theme.mode === mode ? "active" : ""}
-            key={mode}
-            onClick={() => updateTheme({ mode })}
-            title={modeLabels[mode]}
-            type="button"
-          >
-            <Icon name={modeIcons[mode]} />
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        aria-label="主题模式"
+        className="segmented-control"
+        options={(["dark", "light", "system"] as const).map((mode) => ({
+          ariaLabel: modeLabels[mode],
+          icon: modeIcons[mode],
+          label: modeLabels[mode],
+          title: modeLabels[mode],
+          value: mode,
+        }))}
+        value={settings.theme.mode}
+        onChange={(mode) => updateTheme({ mode })}
+      />
       <div className="settings-field-grid">
         <label className="settings-field">
           <span>字体预设</span>
-          <select
+          <Select
             value={selectedFontPreset?.family ?? customFontValue}
-            onChange={(event) => {
-              if (event.currentTarget.value !== customFontValue) {
-                updateTheme({ terminalFontFamily: event.currentTarget.value });
+            options={[
+              ...terminalFontPresets.map((preset) => ({
+                label: preset.label,
+                value: preset.family,
+              })),
+              ...(!selectedFontPreset ? [{ label: "自定义", value: customFontValue }] : []),
+            ]}
+            onChange={(value) => {
+              if (value !== customFontValue) {
+                updateTheme({ terminalFontFamily: value });
               }
             }}
-          >
-            {terminalFontPresets.map((preset) => (
-              <option key={preset.family} value={preset.family}>
-                {preset.label}
-              </option>
-            ))}
-            {!selectedFontPreset ? <option value={customFontValue}>自定义</option> : null}
-          </select>
+          />
         </label>
         <label className="settings-field compact">
           <span>字号</span>
-          <input
+          <TextInput
             min="8"
             max="32"
             type="number"
@@ -120,7 +120,8 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
       </div>
       <label className="settings-field">
         <span>自定义字体栈</span>
-        <input
+        <TextInput
+          mono
           value={settings.theme.terminalFontFamily}
           onChange={(event) => updateTheme({ terminalFontFamily: event.currentTarget.value })}
         />

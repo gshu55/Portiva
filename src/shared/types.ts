@@ -247,7 +247,7 @@ export type TerminalRightClickBehavior =
 
 export interface WorkspaceSessionTab {
   id?: string;
-  kind?: "terminal" | "file-transfer" | "settings";
+  kind?: "terminal" | "file-transfer" | "settings" | "http-console";
   connection: ConnectionSummary;
   fileTransferSession?: FileTransferSession | null;
   parentConnectionId?: string;

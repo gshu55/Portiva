@@ -1,4 +1,5 @@
 import type { AppSettings, TerminalRightClickBehavior } from "../../shared/types";
+import { Button, Toggle } from "../../shared/ui";
 import { SettingsSectionHeader } from "./SettingsSection";
 
 interface TerminalSettingsProps {
@@ -46,16 +47,16 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
         />
         <div className="terminal-right-click-options" aria-label="终端右键点击功能">
           {rightClickOptions.map((option) => (
-            <button
+            <Button
+              active={settings.terminal.rightClickBehavior === option.value}
               aria-pressed={settings.terminal.rightClickBehavior === option.value}
-              className={settings.terminal.rightClickBehavior === option.value ? "active" : ""}
               key={option.value}
               onClick={() => updateTerminal({ rightClickBehavior: option.value })}
-              type="button"
+              tone="muted"
             >
               <strong>{option.label}</strong>
               <span>{option.description}</span>
-            </button>
+            </Button>
           ))}
         </div>
       </section>
@@ -66,14 +67,11 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
           title="粘贴"
         />
         <div className="settings-toggle-grid">
-          <label className="check-row">
-            <input
-              checked={settings.terminal.confirmMultilinePaste}
-              type="checkbox"
-              onChange={(event) => updateTerminal({ confirmMultilinePaste: event.currentTarget.checked })}
-            />
-            <span className="check-row-label">多行粘贴前编辑并确认</span>
-          </label>
+          <Toggle
+            checked={settings.terminal.confirmMultilinePaste}
+            label="多行粘贴前编辑并确认"
+            onChange={(event) => updateTerminal({ confirmMultilinePaste: event.currentTarget.checked })}
+          />
         </div>
       </section>
 
@@ -83,14 +81,11 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
           title="复制"
         />
         <div className="settings-toggle-grid">
-          <label className="check-row">
-            <input
-              checked={settings.terminal.copyRichText}
-              type="checkbox"
-              onChange={(event) => updateTerminal({ copyRichText: event.currentTarget.checked })}
-            />
-            <span className="check-row-label">复制时保留终端颜色格式</span>
-          </label>
+          <Toggle
+            checked={settings.terminal.copyRichText}
+            label="复制时保留终端颜色格式"
+            onChange={(event) => updateTerminal({ copyRichText: event.currentTarget.checked })}
+          />
         </div>
       </section>
     </>

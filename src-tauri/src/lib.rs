@@ -33,6 +33,7 @@ pub fn run() {
         .manage(services::terminal_service::TerminalService::default())
         .manage(services::file_transfer_service::FileTransferService::default())
         .manage(services::transfer_service::TransferService::default())
+        .manage(services::http_workspace_store::HttpWorkspaceStore::default())
         .manage(services::settings_store::SettingsStore::default())
         .manage(services::log_service::LogService::default())
         .manage(services::protocol_registry::ProtocolRegistry)
@@ -102,6 +103,9 @@ pub fn run() {
             commands::file_transfer::local_file_rename,
             commands::file_transfer::local_reveal_item_in_directory,
             commands::file_transfer::transfer_list,
+            commands::http::http_send,
+            commands::http_workspace::http_workspaces_get,
+            commands::http_workspace::http_workspaces_save,
             commands::serial::serial_list_ports,
             commands::serial::serial_terminal_create,
             commands::serial::serial_terminal_close,
