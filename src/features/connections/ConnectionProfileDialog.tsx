@@ -142,7 +142,7 @@ export function ConnectionProfileDialog({
           {mode === "create" ? (
             <aside className="profile-dialog-left" aria-label="连接类型">
               <div className="segmented-control profile-type-control" aria-label="连接类型">
-                {(["ssh", "sftp", "telnet", "serial", "raw-tcp"] as const).map((type) => (
+                {(["ssh", "sftp", "telnet", "raw-tcp"] as const).map((type) => (
                   <button
                     aria-label={protocolLabel(type)}
                     className={draft.type === type ? "active" : ""}

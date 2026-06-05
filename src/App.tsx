@@ -941,6 +941,11 @@ function App() {
           setActiveShellTabId(null);
           void workspace.openLocalShellTab();
         }}
+        onOpenSerialTerminal={() => {
+          setSavedConnectionsOpen(false);
+          setActiveShellTabId(null);
+          void workspace.openSerialTerminalTab();
+        }}
         onOpenSavedConnections={() => setSavedConnectionsOpen(true)}
         onOpenSettings={openSettingsTab}
       />

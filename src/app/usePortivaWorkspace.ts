@@ -44,6 +44,7 @@ import {
   secretDelete,
   secretSet,
   serialListPorts,
+  serialTerminalCreate,
   serialTerminalClose,
   serialTerminalOpen,
   serialTerminalReconfigure,
@@ -88,6 +89,7 @@ import type {
   RemoteEntry,
   SecretMetadata,
   SerialPortInfo,
+  SerialProfile,
   AppSettings,
   TerminalSession,
   TerminalSize,
@@ -171,6 +173,13 @@ const defaultTerminalSize = {
   widthPx: 1200,
   heightPx: 720,
 };
+const serialTabTitle = "[SERIAL]";
+
+function serialTabTitleForPort(portName: string) {
+  const trimmedPortName = portName.trim();
+  return trimmedPortName ? `${serialTabTitle} ${trimmedPortName}` : serialTabTitle;
+}
+
 function newConnectionProfile(type: ConnectionProfile["type"]): ConnectionProfile {
   const now = new Date().toISOString();
   const id = `${type}-${Date.now()}`;
@@ -275,6 +284,7 @@ export function usePortivaWorkspace() {
   const [activeFileTransferSession, setActiveFileTransferSession] = useState<FileTransferSession | null>(null);
   const [activeTerminal, setActiveTerminal] = useState<TerminalSession | null>(null);
   const activeTerminalIdRef = useRef<string | null>(null);
+  const closingTerminalIdsRef = useRef<Set<string>>(new Set());
   const [terminalSnapshotState, setTerminalSnapshotState] = useState<TerminalSnapshot | null>(null);
   const [remotePath, setRemotePathState] = useState(remoteRootPath);
   const [localPath, setLocalPathState] = useState("");
@@ -1066,6 +1076,62 @@ export function usePortivaWorkspace() {
       return connectionResult("failed", message);
     }
   }, [clearFileTransferView, dataSource]);
+  const openSerialTerminalTab = useCallback(async (): Promise<OpenConnectionResult> => {
+    if (dataSource === "mock") {
+      const message = "串口终端需要在 Tauri 桌面环境中运行。";
+      setWorkspaceMessage(message);
+      return connectionResult("failed", message);
+    }
+
+    try {
+      setSessionNotice("");
+      const draft = newConnectionProfile("serial") as SerialProfile;
+      const profile: SerialProfile = {
+        ...draft,
+        id: `serial-runtime-${Date.now()}`,
+        name: serialTabTitle,
+        portName: serialPorts.find((port) => port.isAvailable)?.portName ?? "",
+        updatedAt: new Date().toISOString(),
+      };
+      const opened = await serialTerminalCreate(profile, defaultTerminalSize);
+      const pendingConnection: ConnectionSummary = {
+        ...opened.connection,
+        status: "disconnected",
+        title: serialTabTitle,
+        transport: opened.connection.transport
+          ? {
+              ...opened.connection.transport,
+              terminalChannelReady: false,
+            }
+          : opened.connection.transport,
+      };
+      const nextTab: WorkspaceSessionTab = {
+        id: pendingConnection.id,
+        kind: "terminal",
+        connection: pendingConnection,
+        terminal: opened.terminal,
+        terminalSnapshot: opened.terminalSnapshot,
+      };
+
+      setSessionTabs((current) => [
+        ...current.filter((tab) => (tab.id ?? tab.connection.id) !== pendingConnection.id),
+        nextTab,
+      ]);
+      setActiveConnection(pendingConnection);
+      setActiveSessionTabId(pendingConnection.id);
+      setActiveTerminal(opened.terminal);
+      setTerminalSnapshotState(opened.terminalSnapshot);
+      clearFileTransferView();
+
+      const message = "串口终端已打开，请选择端口和参数后打开串口。";
+      setWorkspaceMessage(message);
+      return connectionResult("opened", message);
+    } catch (error) {
+      const message = `串口终端打开失败：${String(error)}`;
+      setWorkspaceMessage(message);
+      return connectionResult("failed", message);
+    }
+  }, [clearFileTransferView, dataSource, serialPorts]);
   const reportWorkspaceMessage = useCallback((message: string) => {
     setWorkspaceMessage(message);
   }, []);
@@ -1550,6 +1616,11 @@ export function usePortivaWorkspace() {
     }
 
     try {
+      const closingTerminalId = closingTab.terminal?.id ?? null;
+      if (closingTerminalId) {
+        closingTerminalIdsRef.current.add(closingTerminalId);
+      }
+
       if (closingTab.terminal) {
         await terminalClose(closingTab.terminal.id);
       }
@@ -1588,6 +1659,13 @@ export function usePortivaWorkspace() {
       }
     } catch (error) {
       setWorkspaceMessage(`断开连接失败：${String(error)}`);
+    } finally {
+      if (closingTab.terminal) {
+        const terminalId = closingTab.terminal.id;
+        window.setTimeout(() => {
+          closingTerminalIdsRef.current.delete(terminalId);
+        }, 5000);
+      }
     }
   }, [activeConnection?.id, activeSessionTabId, activateSessionTab, clearFileTransferView, sessionTabs]);
 
@@ -1623,9 +1701,16 @@ export function usePortivaWorkspace() {
         return;
       }
 
+      if (closingTerminalIdsRef.current.has(targetTerminal.id) || targetTerminal.status === "closed") {
+        return;
+      }
+
       try {
         await terminalWrite(targetTerminal.id, data);
       } catch (error) {
+        if (String(error).includes(`terminal not found: ${targetTerminal.id}`)) {
+          return;
+        }
         setWorkspaceMessage(`终端写入失败：${String(error)}`);
       }
     },
@@ -1649,9 +1734,16 @@ export function usePortivaWorkspace() {
         return;
       }
 
+      if (closingTerminalIdsRef.current.has(targetTerminal.id) || targetTerminal.status === "closed") {
+        return;
+      }
+
       try {
         await terminalWriteBytes(targetTerminal.id, bytes);
       } catch (error) {
+        if (String(error).includes(`terminal not found: ${targetTerminal.id}`)) {
+          return;
+        }
         setWorkspaceMessage(`终端字节写入失败：${String(error)}`);
       }
     },
@@ -1662,6 +1754,42 @@ export function usePortivaWorkspace() {
     async (terminalId: string) => {
       try {
         await serialTerminalClose(terminalId);
+        setSessionTabs((current) =>
+          current.map((tab) =>
+            tab.terminal?.id === terminalId && tab.connection.transport?.kind === "serial"
+              ? {
+                  ...tab,
+                  connection: {
+                    ...tab.connection,
+                    status: "disconnected",
+                    title: serialTabTitle,
+                    transport: tab.connection.transport
+                      ? {
+                          ...tab.connection.transport,
+                          terminalChannelReady: false,
+                        }
+                      : tab.connection.transport,
+                  },
+                }
+              : tab,
+          ),
+        );
+        setActiveConnection((current) =>
+          current?.transport?.kind === "serial" &&
+          sessionTabs.some((tab) => tab.terminal?.id === terminalId && tab.connection.id === current.id)
+            ? {
+                ...current,
+                status: "disconnected",
+                title: serialTabTitle,
+                transport: current.transport
+                  ? {
+                      ...current.transport,
+                      terminalChannelReady: false,
+                    }
+                  : current.transport,
+              }
+            : current,
+        );
         setWorkspaceMessage("串口已关闭。");
         await refreshWorkspace();
       } catch (error) {
@@ -1669,13 +1797,56 @@ export function usePortivaWorkspace() {
         throw error;
       }
     },
-    [refreshWorkspace],
+    [refreshWorkspace, sessionTabs],
   );
 
   const openSerialTerminal = useCallback(
     async (terminalId: string, profile: ConnectionProfile) => {
       try {
         await serialTerminalOpen(terminalId, profile);
+        const serialPortName = profile.type === "serial" ? profile.portName.trim() : "";
+        const serialTitle = serialTabTitleForPort(serialPortName);
+        const serialIdentification = profile.type === "serial" ? `${profile.baudRate} baud` : undefined;
+        setSessionTabs((current) =>
+          current.map((tab) =>
+            tab.terminal?.id === terminalId && tab.connection.transport?.kind === "serial"
+              ? {
+                  ...tab,
+                  connection: {
+                    ...tab.connection,
+                    status: "connected",
+                    title: serialTitle,
+                    transport: tab.connection.transport
+                      ? {
+                          ...tab.connection.transport,
+                          host: serialPortName,
+                          serverIdentification: serialIdentification,
+                          terminalChannelReady: true,
+                        }
+                      : tab.connection.transport,
+                  },
+                }
+              : tab,
+          ),
+        );
+        setActiveConnection((current) =>
+          current?.transport?.kind === "serial" &&
+          sessionTabs.some((tab) => tab.terminal?.id === terminalId && tab.connection.id === current.id)
+            ? {
+                ...current,
+                status: "connected",
+                title: serialTitle,
+                transport: current.transport
+                  ? {
+                      ...current.transport,
+                      host: serialPortName,
+                      serverIdentification: serialIdentification,
+                      terminalChannelReady: true,
+                    }
+                  : current.transport,
+              }
+            : current,
+        );
         setWorkspaceMessage("串口已打开。");
         await refreshWorkspace();
       } catch (error) {
@@ -1683,7 +1854,7 @@ export function usePortivaWorkspace() {
         throw error;
       }
     },
-    [refreshWorkspace],
+    [refreshWorkspace, sessionTabs],
   );
 
   const reconfigureSerialTerminal = useCallback(
@@ -2847,6 +3018,7 @@ export function usePortivaWorkspace() {
     openActiveConnection,
     openFileTransferTab,
     openLocalShellTab,
+    openSerialTerminalTab,
     openSerialTerminal,
     openProfileConnection,
     previewRedaction,

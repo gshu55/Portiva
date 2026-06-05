@@ -155,6 +155,7 @@ export function TerminalWorkspace({
   const isCustomTabActive = Boolean(activeCustomTabContent);
   const isFileTransferTabActive = (activeTab?.kind ?? "terminal") === "file-transfer";
   const isTerminalTabActive = (activeTab?.kind ?? "terminal") === "terminal";
+  const isSerialTabActive = activeTab?.connection.transport?.kind === "serial";
   const terminalTabs = sessionTabs.filter(
     (tab) => (tab.kind ?? "terminal") === "terminal" && tab.terminal,
   );
@@ -182,8 +183,10 @@ export function TerminalWorkspace({
     : null;
   const isLeftFileTransferTabActive = isFileTransferTab(leftActiveTab);
   const isLeftTerminalTabActive = (leftActiveTab?.kind ?? "terminal") === "terminal";
+  const isLeftSerialTabActive = leftActiveTab?.connection.transport?.kind === "serial";
   const isRightFileTransferTabActive = isFileTransferTab(splitRightTab);
   const isRightTerminalTabActive = Boolean(splitRightTab) && !isRightFileTransferTabActive;
+  const isRightSerialTabActive = splitRightTab?.connection.transport?.kind === "serial";
   const leftTerminalTabs = leftSplitTabs.filter(
     (tab) => (tab.kind ?? "terminal") === "terminal" && tab.terminal,
   );
@@ -209,7 +212,11 @@ export function TerminalWorkspace({
     .join(" ");
   const terminalBodyClassName = [
     "terminal-body",
-    isTerminalSplitActive || isTerminalTabActive ? "terminal-body-terminal-content" : "terminal-body-app-content",
+    isSerialTabActive
+      ? "terminal-body-serial-content"
+      : isTerminalSplitActive || isTerminalTabActive
+        ? "terminal-body-terminal-content"
+        : "terminal-body-app-content",
   ]
     .filter(Boolean)
     .join(" ");
@@ -878,6 +885,7 @@ export function TerminalWorkspace({
             <div
               className={[
                 "terminal-split-pane",
+                isLeftSerialTabActive ? "terminal-split-pane-serial-content" : "",
                 splitDragOverPane === "left" ? "split-drop-over" : "",
               ]
                 .filter(Boolean)
@@ -935,6 +943,7 @@ export function TerminalWorkspace({
             <div
               className={[
                 "terminal-split-pane",
+                isRightSerialTabActive ? "terminal-split-pane-serial-content" : "",
                 splitDragOverPane === "right" ? "split-drop-over" : "",
               ]
                 .filter(Boolean)

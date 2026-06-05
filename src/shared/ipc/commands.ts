@@ -84,6 +84,7 @@ export const commandNames = {
   transferList: "transfer_list",
   profileList: "profile_list",
   serialListPorts: "serial_list_ports",
+  serialTerminalCreate: "serial_terminal_create",
   serialTerminalClose: "serial_terminal_close",
   serialTerminalOpen: "serial_terminal_open",
   serialTerminalReconfigure: "serial_terminal_reconfigure",
@@ -119,6 +120,12 @@ export interface LocalFileListResult {
 }
 
 export interface LocalShellOpenResult {
+  connection: ConnectionSummary;
+  terminal: TerminalSession;
+  terminalSnapshot: TerminalSnapshot;
+}
+
+export interface SerialTerminalCreateResult {
   connection: ConnectionSummary;
   terminal: TerminalSession;
   terminalSnapshot: TerminalSnapshot;
@@ -278,6 +285,10 @@ export function terminalAttach(connectionId: string, size: TerminalSize) {
 
 export function localShellOpen(size: TerminalSize) {
   return invoke<LocalShellOpenResult>(commandNames.localShellOpen, { size });
+}
+
+export function serialTerminalCreate(profile: ConnectionProfile, size: TerminalSize) {
+  return invoke<SerialTerminalCreateResult>(commandNames.serialTerminalCreate, { profile, size });
 }
 
 export function terminalSession(terminalId: string) {

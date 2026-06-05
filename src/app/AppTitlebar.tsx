@@ -9,6 +9,7 @@ interface AppTitlebarProps {
   settingsTabActive: boolean;
   onCreateProfile: () => void;
   onOpenLocalShell: () => void;
+  onOpenSerialTerminal: () => void;
   onOpenSavedConnections: () => void;
   onOpenSettings: () => void;
 }
@@ -37,6 +38,7 @@ export function AppTitlebar({
   settingsTabActive,
   onCreateProfile,
   onOpenLocalShell,
+  onOpenSerialTerminal,
   onOpenSavedConnections,
   onOpenSettings,
 }: AppTitlebarProps) {
@@ -86,6 +88,9 @@ export function AppTitlebar({
         </button>
         <button type="button" title="本地终端" aria-label="本地终端" onClick={onOpenLocalShell}>
           <Icon name="terminal" />
+        </button>
+        <button type="button" title="串口终端" aria-label="串口终端" onClick={onOpenSerialTerminal}>
+          <Icon name="plug" />
         </button>
         <button
           type="button"

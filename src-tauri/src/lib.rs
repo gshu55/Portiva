@@ -103,6 +103,7 @@ pub fn run() {
             commands::file_transfer::local_reveal_item_in_directory,
             commands::file_transfer::transfer_list,
             commands::serial::serial_list_ports,
+            commands::serial::serial_terminal_create,
             commands::serial::serial_terminal_close,
             commands::serial::serial_terminal_open,
             commands::serial::serial_terminal_reconfigure,

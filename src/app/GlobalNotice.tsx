@@ -13,9 +13,10 @@ function noticeTone(message: string) {
 export function GlobalNotice({ durationMs = 3600, message }: GlobalNoticeProps) {
   const [visible, setVisible] = useState(Boolean(message));
   const tone = useMemo(() => noticeTone(message), [message]);
+  const shouldShow = tone === "error";
 
   useEffect(() => {
-    if (!message) {
+    if (!message || !shouldShow) {
       setVisible(false);
       return undefined;
     }
@@ -23,9 +24,9 @@ export function GlobalNotice({ durationMs = 3600, message }: GlobalNoticeProps) 
     setVisible(true);
     const timer = window.setTimeout(() => setVisible(false), durationMs);
     return () => window.clearTimeout(timer);
-  }, [durationMs, message]);
+  }, [durationMs, message, shouldShow]);
 
-  if (!message || !visible) {
+  if (!message || !shouldShow || !visible) {
     return null;
   }
 
