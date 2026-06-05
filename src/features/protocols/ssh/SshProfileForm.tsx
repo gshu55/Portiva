@@ -3,6 +3,7 @@ import type { SftpProfile, SshProfile } from "../../../shared/types";
 type SshCredentialProfile = SshProfile | SftpProfile;
 
 interface SshProfileFormProps {
+  hasRememberedSecret?: boolean;
   onChange: (profile: SshCredentialProfile) => void;
   onRememberSecretChange?: (remember: boolean) => void;
   onSecretChange?: (secret: string) => void;
@@ -12,6 +13,7 @@ interface SshProfileFormProps {
 }
 
 export function SshProfileForm({
+  hasRememberedSecret = false,
   onChange,
   onRememberSecretChange,
   onSecretChange,
@@ -21,6 +23,16 @@ export function SshProfileForm({
 }: SshProfileFormProps) {
   const update = (patch: Partial<SshCredentialProfile>) =>
     onChange({ ...profile, ...patch } as SshCredentialProfile);
+  const showsRememberedSecretMask = profile.authType === "password" && hasRememberedSecret && !secret;
+  const passwordValue = showsRememberedSecretMask ? "*****" : secret;
+  const updatePassword = (value: string) => {
+    if (showsRememberedSecretMask && value.startsWith("*****")) {
+      onSecretChange?.(value.slice(5));
+      return;
+    }
+
+    onSecretChange?.(value);
+  };
 
   return (
     <div className="protocol-form">
@@ -63,8 +75,25 @@ export function SshProfileForm({
           <input
             autoComplete="current-password"
             type="password"
-            value={secret}
-            onChange={(event) => onSecretChange?.(event.target.value)}
+            value={passwordValue}
+            onFocus={(event) => {
+              if (showsRememberedSecretMask) {
+                event.currentTarget.select();
+              }
+            }}
+            onMouseUp={(event) => {
+              if (showsRememberedSecretMask) {
+                event.preventDefault();
+              }
+            }}
+            onChange={(event) => updatePassword(event.target.value)}
+            onCopy={(event) => event.preventDefault()}
+            onCut={(event) => event.preventDefault()}
+            onContextMenu={(event) => {
+              if (showsRememberedSecretMask) {
+                event.preventDefault();
+              }
+            }}
           />
         </label>
       ) : null}

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serial2::{CharSize, FlowControl, Parity, SerialPort, Settings, StopBits};
 use tauri::{AppHandle, Emitter, Manager};
@@ -19,6 +19,7 @@ const SERIAL_WRITE_TIMEOUT: Duration = Duration::from_secs(3);
 const SERIAL_OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(32);
 const SERIAL_OUTPUT_MAX_CHUNK_BYTES: usize = 16 * 1024;
 const TERMINAL_SNAPSHOT_EVENT: &str = "portiva://terminal-snapshot";
+const SERIAL_RX_EVENT: &str = "portiva://serial-rx";
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +30,16 @@ struct TerminalOutputEvent {
     buffer_preview: String,
     render_policy: TerminalRenderPolicy,
     output_chunk: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SerialRxEvent {
+    terminal_id: String,
+    seq: u64,
+    timestamp_us: u64,
+    bytes: Vec<u8>,
+    text: String,
 }
 
 #[derive(Default)]
@@ -84,7 +95,9 @@ impl SerialService {
             .iter()
             .any(|active_port| active_port == port_name)
         {
-            return Err(format!("serial port is already open in Portiva: {port_name}"));
+            return Err(format!(
+                "serial port is already open in Portiva: {port_name}"
+            ));
         }
 
         let _port = open_serial_port(profile)?;
@@ -202,6 +215,33 @@ impl SerialService {
             .lock()
             .map_err(|_| "serial port writer lock poisoned".to_string())?;
         port.write_all(&bytes)
+            .and_then(|_| port.flush())
+            .map_err(|error| format!("failed to write serial data to {port_name}: {error}"))
+    }
+
+    pub fn write_terminal_bytes(
+        &self,
+        connection_id: &str,
+        terminal_id: &str,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        let (port, port_name) = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "serial service lock poisoned".to_string())?;
+            let session = sessions
+                .get(terminal_id)
+                .filter(|session| session.connection_id == connection_id)
+                .ok_or_else(|| format!("serial terminal not found: {terminal_id}"))?;
+
+            (Arc::clone(&session.port), session.port_name.clone())
+        };
+
+        let port = port
+            .lock()
+            .map_err(|_| "serial port writer lock poisoned".to_string())?;
+        port.write_all(bytes)
             .and_then(|_| port.flush())
             .map_err(|error| format!("failed to write serial data to {port_name}: {error}"))
     }
@@ -530,8 +570,10 @@ fn spawn_serial_reader(
 ) {
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
+        let mut pending_bytes = Vec::new();
         let mut pending_output = String::new();
         let mut last_flush = Instant::now();
+        let mut rx_seq = 0_u64;
         let mut disconnect_reason = format!("串口 {port_name} 已关闭");
 
         let _ = reader.set_read_timeout(SERIAL_READ_TIMEOUT);
@@ -539,6 +581,7 @@ fn spawn_serial_reader(
             match reader.read(&mut buffer) {
                 Ok(0) => continue,
                 Ok(byte_count) => {
+                    pending_bytes.extend_from_slice(&buffer[..byte_count]);
                     pending_output.push_str(&decode_serial_output(&buffer[..byte_count], encoding));
                     if pending_output.len() >= SERIAL_OUTPUT_MAX_CHUNK_BYTES
                         || last_flush.elapsed() >= SERIAL_OUTPUT_FLUSH_INTERVAL
@@ -546,27 +589,33 @@ fn spawn_serial_reader(
                         flush_serial_output(
                             &app_handle,
                             &terminal_id,
+                            &mut pending_bytes,
                             &mut pending_output,
                             &mut last_flush,
+                            &mut rx_seq,
                         );
                     }
                 }
                 Err(error) if error.kind() == ErrorKind::TimedOut => {
                     flush_serial_output(
                         &app_handle,
-                        &terminal_id,
-                        &mut pending_output,
-                        &mut last_flush,
-                    );
-                }
+                            &terminal_id,
+                            &mut pending_bytes,
+                            &mut pending_output,
+                            &mut last_flush,
+                            &mut rx_seq,
+                        );
+                    }
                 Err(error) if error.kind() == ErrorKind::Interrupted => continue,
                 Err(error) => {
                     flush_serial_output(
                         &app_handle,
-                        &terminal_id,
-                        &mut pending_output,
-                        &mut last_flush,
-                    );
+                            &terminal_id,
+                            &mut pending_bytes,
+                            &mut pending_output,
+                            &mut last_flush,
+                            &mut rx_seq,
+                        );
                     disconnect_reason = format!("读取串口 {port_name} 失败：{error}");
                     break;
                 }
@@ -575,8 +624,10 @@ fn spawn_serial_reader(
         flush_serial_output(
             &app_handle,
             &terminal_id,
+            &mut pending_bytes,
             &mut pending_output,
             &mut last_flush,
+            &mut rx_seq,
         );
 
         if !closed.load(Ordering::Relaxed) {
@@ -590,16 +641,52 @@ fn spawn_serial_reader(
 fn flush_serial_output(
     app_handle: &AppHandle,
     terminal_id: &str,
+    pending_bytes: &mut Vec<u8>,
     pending_output: &mut String,
     last_flush: &mut Instant,
+    rx_seq: &mut u64,
 ) {
     if pending_output.is_empty() {
+        pending_bytes.clear();
         return;
     }
 
+    let bytes = std::mem::take(pending_bytes);
     let output = std::mem::take(pending_output);
     *last_flush = Instant::now();
+    emit_serial_rx(app_handle, terminal_id, *rx_seq, bytes, output.clone());
+    *rx_seq = rx_seq.saturating_add(1);
     emit_terminal_snapshot(app_handle, terminal_id, &output);
+}
+
+fn emit_serial_rx(
+    app_handle: &AppHandle,
+    terminal_id: &str,
+    seq: u64,
+    bytes: Vec<u8>,
+    text: String,
+) {
+    if bytes.is_empty() && text.is_empty() {
+        return;
+    }
+
+    let _ = app_handle.emit(
+        SERIAL_RX_EVENT,
+        SerialRxEvent {
+            terminal_id: terminal_id.to_string(),
+            seq,
+            timestamp_us: current_timestamp_us(),
+            bytes,
+            text,
+        },
+    );
+}
+
+fn current_timestamp_us() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
 }
 
 fn emit_terminal_snapshot(app_handle: &AppHandle, terminal_id: &str, output: &str) {

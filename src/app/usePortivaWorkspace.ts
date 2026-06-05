@@ -44,6 +44,9 @@ import {
   secretDelete,
   secretSet,
   serialListPorts,
+  serialTerminalClose,
+  serialTerminalOpen,
+  serialTerminalReconfigure,
   securityRedactPreview,
   settingsGet,
   settingsUpdate,
@@ -56,6 +59,7 @@ import {
   terminalSession,
   terminalSnapshot,
   terminalWrite,
+  terminalWriteBytes,
   transferList,
   tunnelList,
 } from "../shared/ipc/commands";
@@ -186,7 +190,6 @@ function newConnectionProfile(type: ConnectionProfile["type"]): ConnectionProfil
       port: 22,
       username: "",
       authType: "password",
-      enableSftp: false,
       groupId: "servers",
       tags: ["ssh"],
     };
@@ -200,7 +203,6 @@ function newConnectionProfile(type: ConnectionProfile["type"]): ConnectionProfil
       port: 22,
       username: "",
       authType: "password",
-      enableSftp: true,
       groupId: "servers",
       tags: ["sftp"],
     };
@@ -1630,6 +1632,74 @@ export function usePortivaWorkspace() {
     [activeTerminal, sessionTabs],
   );
 
+  const sendTerminalBytes = useCallback(
+    async (bytes: number[], terminalId?: string) => {
+      const targetTerminal = terminalId
+        ? activeTerminal?.id === terminalId
+          ? activeTerminal
+          : sessionTabs.find((tab) => tab.terminal?.id === terminalId)?.terminal ?? null
+        : activeTerminal;
+
+      if (!targetTerminal) {
+        setWorkspaceMessage(
+          terminalId
+            ? `终端会话不存在，无法写入字节：${terminalId}。`
+            : "请先打开连接再写入终端字节。",
+        );
+        return;
+      }
+
+      try {
+        await terminalWriteBytes(targetTerminal.id, bytes);
+      } catch (error) {
+        setWorkspaceMessage(`终端字节写入失败：${String(error)}`);
+      }
+    },
+    [activeTerminal, sessionTabs],
+  );
+
+  const closeSerialTerminal = useCallback(
+    async (terminalId: string) => {
+      try {
+        await serialTerminalClose(terminalId);
+        setWorkspaceMessage("串口已关闭。");
+        await refreshWorkspace();
+      } catch (error) {
+        setWorkspaceMessage(`关闭串口失败：${String(error)}`);
+        throw error;
+      }
+    },
+    [refreshWorkspace],
+  );
+
+  const openSerialTerminal = useCallback(
+    async (terminalId: string, profile: ConnectionProfile) => {
+      try {
+        await serialTerminalOpen(terminalId, profile);
+        setWorkspaceMessage("串口已打开。");
+        await refreshWorkspace();
+      } catch (error) {
+        setWorkspaceMessage(`打开串口失败：${String(error)}`);
+        throw error;
+      }
+    },
+    [refreshWorkspace],
+  );
+
+  const reconfigureSerialTerminal = useCallback(
+    async (terminalId: string, profile: ConnectionProfile) => {
+      try {
+        await serialTerminalReconfigure(terminalId, profile);
+        setWorkspaceMessage("串口参数已应用并重新打开。");
+        await refreshWorkspace();
+      } catch (error) {
+        setWorkspaceMessage(`应用串口参数失败：${String(error)}`);
+        throw error;
+      }
+    },
+    [refreshWorkspace],
+  );
+
   const resizeActiveTerminal = useCallback(async (size?: TerminalSize, terminalId?: string) => {
     const targetTerminal = terminalId
       ? activeTerminal?.id === terminalId
@@ -1692,7 +1762,7 @@ export function usePortivaWorkspace() {
   const refreshTerminalSnapshot = useCallback(async () => {
     if (!activeTerminal) {
       setWorkspaceMessage("请先打开连接再读取终端快照。");
-      return;
+      return null;
     }
 
     try {
@@ -1700,8 +1770,10 @@ export function usePortivaWorkspace() {
       setTerminalSnapshotState(snapshot);
       updateActiveSessionTab({ terminalSnapshot: snapshot });
       setWorkspaceMessage(`终端缓冲区：${snapshot.bufferedBytes} 字节。`);
+      return snapshot;
     } catch (error) {
       setWorkspaceMessage(`读取终端快照失败：${String(error)}`);
+      return null;
     }
   }, [activeTerminal, updateActiveSessionTab]);
 
@@ -1746,7 +1818,7 @@ export function usePortivaWorkspace() {
       throw new Error("请先打开支持 SSH/SFTP 的连接再执行文件传输操作。");
     }
 
-    if (activeFileTransferSession) {
+    if (activeFileTransferSession?.connectionId === activeConnection.id) {
       return activeFileTransferSession;
     }
 
@@ -2051,7 +2123,10 @@ export function usePortivaWorkspace() {
     })();
   }, [activeFileTransferSession?.connectionId, dataSource, refreshLocalFiles, refreshRemoteFiles, transfers]);
 
-  const openFileTransferTab = useCallback(async (connectionId?: string) => {
+  const openFileTransferTab = useCallback(async (
+    connectionId?: string,
+    options: { forceNew?: boolean } = {},
+  ) => {
     const requestedTab =
       sessionTabs.find((tab) => (tab.id ?? tab.connection.id) === connectionId) ??
       sessionTabs.find((tab) => (tab.id ?? tab.connection.id) === activeSessionTabId) ??
@@ -2079,7 +2154,7 @@ export function usePortivaWorkspace() {
           tab.fileTransferSession?.connectionId === sourceConnection.id),
     );
 
-    if (existingFileTab?.fileTransferSession) {
+    if (!options.forceNew && existingFileTab?.fileTransferSession) {
       const existingTabId = existingFileTab.id ?? existingFileTab.connection.id;
       const targetPath = activeSessionTabId === existingTabId ? remotePath : remoteRootPath;
 
@@ -2195,7 +2270,7 @@ export function usePortivaWorkspace() {
   );
 
   const createRemoteDirectory = useCallback(
-    async (name: string) => {
+    async (name: string, parentPathOverride?: string) => {
       if (!name.trim()) {
         setWorkspaceMessage("需要填写远程目录名。");
         return false;
@@ -2203,10 +2278,11 @@ export function usePortivaWorkspace() {
 
       try {
         const session = await ensureFileTransferSession();
-        const targetPath = `${remotePath.replace(/\/$/, "")}/${name.trim()}`;
+        const parentPath = normalizeRemotePathInput(parentPathOverride ?? remotePath);
+        const targetPath = joinRemotePath(parentPath, name.trim());
         await fileTransferMkdir(session.id, targetPath);
         setWorkspaceMessage(`已创建远程目录 ${targetPath}。`);
-        await refreshRemoteFiles();
+        await refreshRemoteFiles(parentPath);
         return true;
       } catch (error) {
         setWorkspaceMessage(`创建目录失败：${String(error)}`);
@@ -2572,6 +2648,45 @@ export function usePortivaWorkspace() {
     await queueDownload(entry.path, joinLocalPath(localTargetDirectory, safeLocalDownloadName(entry.name)));
   }, [ensureFileTransferSession, localPath, queueDownload, queueDownloadDirectory, selectedLocalEntry]);
 
+  const downloadRemoteEntryToDirectory = useCallback(async (entry: RemoteEntry | null, targetDirectory: string) => {
+    if (!entry) {
+      setWorkspaceMessage("请先选择远程文件再下载。");
+      return;
+    }
+
+    const localTargetDirectory = targetDirectory.trim();
+
+    if (!localTargetDirectory || isVirtualLocalPath(localTargetDirectory)) {
+      setWorkspaceMessage("请选择一个有效的本地下载目录。");
+      return;
+    }
+
+    if (entry.kind === "directory") {
+      try {
+        const session = await ensureFileTransferSession();
+        const localTargetPath = joinLocalPath(localTargetDirectory, safeLocalDownloadName(entry.name));
+        setWorkspaceMessage(`正在扫描远程文件夹并加入下载队列：${entry.path}`);
+        const summary = await queueDownloadDirectory(session.id, entry.path, localTargetPath);
+        setTransfers(await transferList());
+        setWorkspaceMessage(
+          `已加入递归下载队列：${entry.name}，${summary.directoryCount} 个文件夹、${summary.fileCount} 个文件${
+            summary.skippedCount ? `，跳过 ${summary.skippedCount} 个特殊条目` : ""
+          }。`,
+        );
+      } catch (error) {
+        setWorkspaceMessage(`递归下载文件夹失败：${String(error)}`);
+      }
+      return;
+    }
+
+    if (entry.kind !== "file") {
+      setWorkspaceMessage("当前仅支持下载普通文件或文件夹。");
+      return;
+    }
+
+    await queueDownload(entry.path, joinLocalPath(localTargetDirectory, safeLocalDownloadName(entry.name)));
+  }, [ensureFileTransferSession, queueDownload, queueDownloadDirectory]);
+
   const downloadSelectedRemoteEntry = useCallback(async () => {
     await downloadRemoteEntry(selectedRemoteEntry);
   }, [downloadRemoteEntry, selectedRemoteEntry]);
@@ -2717,6 +2832,7 @@ export function usePortivaWorkspace() {
     sshPassword,
     attachDetachedSessionTab,
     authenticateActiveSshPassword,
+    closeSerialTerminal,
     closeActiveConnection,
     closeConnection,
     clearPendingKnownHost,
@@ -2731,10 +2847,12 @@ export function usePortivaWorkspace() {
     openActiveConnection,
     openFileTransferTab,
     openLocalShellTab,
+    openSerialTerminal,
     openProfileConnection,
     previewRedaction,
     downloadSelectedRemoteEntry,
     downloadRemoteEntry,
+    downloadRemoteEntryToDirectory,
     queueDownload,
     queueUpload,
     refreshLocalFiles,
@@ -2744,6 +2862,7 @@ export function usePortivaWorkspace() {
     refreshWorkspace,
     refreshTerminalSnapshot,
     reconnectSessionTab,
+    reconfigureSerialTerminal,
     renameLocalEntry,
     renameRemoteEntry,
     reorderSessionTabs,
@@ -2752,6 +2871,7 @@ export function usePortivaWorkspace() {
     resizeActiveTerminal,
     saveProfile,
     saveSettings,
+    sendTerminalBytes,
     sendTerminalData,
     setActiveProfileId: selectActiveProfile,
     setLocalPath: changeLocalPath,

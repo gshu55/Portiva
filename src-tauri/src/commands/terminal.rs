@@ -165,6 +165,33 @@ pub async fn terminal_write(
 }
 
 #[tauri::command]
+pub async fn terminal_write_bytes(
+    terminal_id: String,
+    bytes: Vec<u8>,
+    terminal_service: State<'_, TerminalService>,
+    serial_service: State<'_, SerialService>,
+) -> Result<(), String> {
+    let terminal = terminal_service.session(&terminal_id)?;
+    if matches!(terminal.status, TerminalSessionStatus::Closed) {
+        return Err("终端已断开，请重连标签页后继续".to_string());
+    }
+
+    if !serial_service.has_terminal(&terminal.connection_id, &terminal_id)? {
+        return Err("原始字节写入仅支持串口终端。".to_string());
+    }
+
+    if let Err(error) =
+        serial_service.write_terminal_bytes(&terminal.connection_id, &terminal_id, &bytes)
+    {
+        let _ = terminal_service
+            .append_disconnect_notice(&terminal_id, &format!("串口写入失败：{error}"));
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn terminal_resize(
     terminal_id: String,
     size: TerminalSize,

@@ -126,8 +126,9 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
         />
       </label>
       <div className="terminal-font-preview" style={{ fontFamily: settings.theme.terminalFontFamily }}>
-        <span>evo@portiva:~$ pnpm build && ssh 192.168.0.116</span>
+        <span>root@portiva:~$ pnpm build && ssh 192.168.1.1</span>
         <span>ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789</span>
+        <span>这是一段测试文本</span>
       </div>
     </section>
   );

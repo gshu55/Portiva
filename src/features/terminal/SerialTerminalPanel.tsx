@@ -1,6 +1,8 @@
-import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type UIEvent } from "react";
 import type {
   SerialProfile,
+  SerialPortInfo,
+  SerialRxEvent,
   TerminalColorPalette,
   TerminalRightClickBehavior,
   TerminalSize,
@@ -8,7 +10,6 @@ import type {
 } from "../../shared/types";
 import { writeClipboardText } from "../../shared/clipboard";
 import { Icon } from "../../shared/Icon";
-import { TerminalPane } from "./TerminalPane";
 
 interface SerialTerminalPanelProps {
   isActive?: boolean;
@@ -20,12 +21,86 @@ interface SerialTerminalPanelProps {
   terminalCopyRichText?: boolean;
   terminalRightClickBehavior?: TerminalRightClickBehavior;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
+  onCloseSerialTerminal: (terminalId: string) => Promise<void> | void;
+  onOpenSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
+  onRefreshSerialPorts?: () => Promise<void> | void;
+  onSendBytes: (bytes: number[], terminalId: string) => Promise<void> | void;
   onSendData: (data: string, terminalId: string) => Promise<void> | void;
+  serialPorts?: SerialPortInfo[];
 }
 
 type SerialSendEnding = "configured" | "none";
+type SerialSendMode = "text" | "hex";
+
+interface SerialSendHistoryEntry {
+  byteCount: number;
+  content: string;
+  id: string;
+  mode: SerialSendMode;
+}
+
+interface SerialSendSlot {
+  content: string;
+  id: string;
+  mode: SerialSendMode;
+  sendEnding: SerialSendEnding;
+  timedSendEnabled: boolean;
+  timedSendIntervalMs: number;
+}
+
+interface SerialExchangeEntry {
+  byteCount: number;
+  content: string;
+  direction: "rx" | "tx";
+  id: string;
+  mode?: SerialSendMode;
+  timestampUs: number;
+}
 
 const maxHistoryItems = 12;
+const estimatedTrafficRowHeight = 36;
+const trafficVirtualOverscanPx = 720;
+const defaultTimedSendIntervalMs = 1000;
+const minTimedSendIntervalMs = 50;
+const maxTimedSendIntervalMs = 600000;
+const defaultSendSlotCount = 6;
+const commonSerialBaudRates = [
+  110,
+  300,
+  600,
+  1200,
+  2400,
+  4800,
+  9600,
+  14400,
+  19200,
+  38400,
+  57600,
+  74880,
+  115200,
+  128000,
+  230400,
+  250000,
+  256000,
+  460800,
+  500000,
+  921600,
+  1000000,
+  1500000,
+  2000000,
+];
+
+function createSerialSendSlot(id: string, patch: Partial<SerialSendSlot> = {}): SerialSendSlot {
+  return {
+    content: "",
+    id,
+    mode: "text",
+    sendEnding: "configured",
+    timedSendEnabled: false,
+    timedSendIntervalMs: defaultTimedSendIntervalMs,
+    ...patch,
+  };
+}
 
 function serialLineEndingValue(lineEnding: SerialProfile["lineEnding"] | undefined) {
   switch (lineEnding) {
@@ -78,73 +153,464 @@ function serialBaudLabel(tab: WorkspaceSessionTab, profile: SerialProfile | null
   return tab.connection.transport?.serverIdentification ?? "baud";
 }
 
+function serialRuntimeProfile(profile: SerialProfile | null, tab: WorkspaceSessionTab): SerialProfile {
+  const now = new Date().toISOString();
+  return {
+    id: profile?.id ?? `${tab.connection.id}-serial-runtime`,
+    name: profile?.name ?? tab.connection.title,
+    groupId: profile?.groupId,
+    type: "serial",
+    tags: profile?.tags ?? ["serial"],
+    portName: profile?.portName ?? tab.connection.transport?.host ?? "",
+    baudRate: profile?.baudRate ?? 115200,
+    dataBits: profile?.dataBits ?? 8,
+    parity: profile?.parity ?? "none",
+    stopBits: profile?.stopBits ?? 1,
+    flowControl: profile?.flowControl ?? "none",
+    lineEnding: profile?.lineEnding ?? "crlf",
+    encoding: profile?.encoding ?? "utf-8",
+    dtr: profile?.dtr ?? true,
+    rts: profile?.rts ?? true,
+    createdAt: profile?.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
+function parseSerialHexDraft(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { bytes: [] };
+  }
+
+  const compact = trimmed.replace(/0x/gi, "").replace(/[\s,;:_-]+/g, "");
+  if (!compact) {
+    return { bytes: [] };
+  }
+
+  if (/[^0-9a-fA-F]/.test(compact)) {
+    return { bytes: [], error: "HEX 只能包含 0-9、A-F 和分隔符。" };
+  }
+
+  if (compact.length % 2 !== 0) {
+    return { bytes: [], error: "HEX 需要按两个字符组成一个字节。" };
+  }
+
+  const bytes: number[] = [];
+  for (let index = 0; index < compact.length; index += 2) {
+    bytes.push(Number.parseInt(compact.slice(index, index + 2), 16));
+  }
+
+  return { bytes };
+}
+
+function clampTimedSendInterval(value: number) {
+  if (!Number.isFinite(value)) {
+    return defaultTimedSendIntervalMs;
+  }
+
+  return Math.min(maxTimedSendIntervalMs, Math.max(minTimedSendIntervalMs, Math.round(value)));
+}
+
+function currentTimestampUs() {
+  return Math.round((performance.timeOrigin + performance.now()) * 1000);
+}
+
+function formatExchangeTime(timestampUs: number) {
+  const date = new Date(Math.floor(timestampUs / 1000));
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  const milliseconds = date.getMilliseconds().toString().padStart(3, "0");
+  return `${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+
+function serialLogText(entries: SerialExchangeEntry[]) {
+  return entries
+    .map((entry) => {
+      const mode = entry.mode ? ` ${entry.mode.toUpperCase()}` : "";
+      return `[${formatExchangeTime(entry.timestampUs)}] ${entry.direction.toUpperCase()}${mode} ${entry.byteCount}B ${entry.content}`;
+    })
+    .join("\n");
+}
+
+function findTrafficVirtualIndex(offsets: number[], target: number) {
+  if (!offsets.length || target <= 0) {
+    return 0;
+  }
+
+  let low = 0;
+  let high = offsets.length - 1;
+  let result = 0;
+
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if (offsets[middle] <= target) {
+      result = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return result;
+}
+
 export function SerialTerminalPanel({
-  isActive = true,
-  onResizeTerminal,
+  onCloseSerialTerminal,
+  onOpenSerialTerminal,
+  onRefreshSerialPorts,
+  onSendBytes,
   onSendData,
   profile,
-  reportSizeWhenVisible = false,
+  serialPorts = [],
   tab,
-  terminalTheme,
-  terminalConfirmMultilinePaste = true,
-  terminalCopyRichText = false,
-  terminalRightClickBehavior = "context-menu",
 }: SerialTerminalPanelProps) {
   const [autoScroll, setAutoScroll] = useState(true);
-  const [clearRevision, setClearRevision] = useState(0);
-  const [draft, setDraft] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
+  const [exchangeLog, setExchangeLog] = useState<SerialExchangeEntry[]>([]);
+  const [trafficMeasureVersion, setTrafficMeasureVersion] = useState(0);
+  const [trafficScrollTop, setTrafficScrollTop] = useState(0);
+  const [trafficViewportHeight, setTrafficViewportHeight] = useState(0);
+  const [hexError, setHexError] = useState("");
+  const [history, setHistory] = useState<SerialSendHistoryEntry[]>([]);
+  const [sendSlots, setSendSlots] = useState<SerialSendSlot[]>(() =>
+    Array.from({ length: defaultSendSlotCount }, (_value, index) => createSerialSendSlot(`serial-send-slot-${index}`)),
+  );
+  const exchangeLogRef = useRef<HTMLDivElement | null>(null);
   const historyIndexRef = useRef<number | null>(null);
+  const lastTimestampUsRef = useRef(0);
+  const nextExchangeIdRef = useRef(0);
+  const nextSendSlotIdRef = useRef(defaultSendSlotCount);
+  const trafficRowHeightsRef = useRef<Map<string, number>>(new Map());
+  const trafficRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map());
+  const timedSendInFlightRef = useRef<Set<string>>(new Set());
   const [outputPaused, setOutputPaused] = useState(false);
-  const [sendEnding, setSendEnding] = useState<SerialSendEnding>("configured");
+  const [runtimeProfile, setRuntimeProfile] = useState<SerialProfile>(() => serialRuntimeProfile(profile, tab));
+  const [serialActionPending, setSerialActionPending] = useState(false);
+  const [serialOpen, setSerialOpen] = useState(Boolean(tab.terminal && tab.connection.status !== "disconnected" && tab.connection.status !== "failed"));
   const terminal = tab.terminal;
-  const snapshotText = tab.terminalSnapshot?.bufferPreview ?? "";
   const portName = tab.connection.transport?.host ?? profile?.portName ?? tab.connection.title;
-  const statusText = tab.connection.status === "connected" || tab.connection.status === "ready" ? "OPEN" : tab.connection.status.toUpperCase();
-  const configuredEnding = profile?.lineEnding ?? "crlf";
+  const terminalReady = Boolean(terminal && terminal.status !== "closed" && serialOpen);
+  const selectedPortIsDetected = serialPorts.some((port) => port.portName === runtimeProfile.portName);
+  const statusText = terminalReady ? "OPEN" : "CLOSED";
+  const configuredEnding = runtimeProfile.lineEnding;
+  const baudRateOptions = useMemo(() => {
+    if (commonSerialBaudRates.includes(runtimeProfile.baudRate)) {
+      return commonSerialBaudRates;
+    }
+
+    return [...commonSerialBaudRates, runtimeProfile.baudRate].sort((left, right) => left - right);
+  }, [runtimeProfile.baudRate]);
   const statusChips = useMemo(
     () => [
-      serialBaudLabel(tab, profile),
-      serialFrameLabel(profile),
-      serialFlowLabel(profile),
-      (profile?.encoding ?? "utf-8").toUpperCase(),
-      `DTR ${profile?.dtr ? "ON" : "OFF"}`,
-      `RTS ${profile?.rts ? "ON" : "OFF"}`,
+      serialBaudLabel(tab, runtimeProfile),
+      serialFrameLabel(runtimeProfile),
+      serialFlowLabel(runtimeProfile),
+      runtimeProfile.encoding.toUpperCase(),
+      `DTR ${runtimeProfile.dtr ? "ON" : "OFF"}`,
+      `RTS ${runtimeProfile.rts ? "ON" : "OFF"}`,
     ],
-    [profile, tab],
+    [runtimeProfile, tab],
   );
 
-  const sendDraft = async () => {
-    if (!terminal || !draft) {
+  const appendExchangeEntry = useCallback((entry: Omit<SerialExchangeEntry, "id" | "timestampUs"> & { timestampUs?: number }) => {
+    const timestampUs = Math.max(entry.timestampUs ?? currentTimestampUs(), lastTimestampUsRef.current + 1);
+    lastTimestampUsRef.current = timestampUs;
+    const nextEntry: SerialExchangeEntry = {
+      ...entry,
+      id: `serial-exchange-${nextExchangeIdRef.current}`,
+      timestampUs,
+    };
+    nextExchangeIdRef.current += 1;
+    setExchangeLog((current) => [...current, nextEntry]);
+  }, []);
+
+  const handleTrafficScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
+    setTrafficScrollTop(event.currentTarget.scrollTop);
+  }, []);
+
+  const registerTrafficRow = useCallback((entryId: string) => (node: HTMLElement | null) => {
+    trafficRowObserversRef.current.get(entryId)?.disconnect();
+    trafficRowObserversRef.current.delete(entryId);
+
+    if (!node) {
       return;
     }
 
-    const payload =
-      sendEnding === "configured"
-        ? `${draft}${serialLineEndingValue(configuredEnding)}`
-        : draft;
+    const updateHeight = () => {
+      const nextHeight = node.getBoundingClientRect().height || estimatedTrafficRowHeight;
+      const previousHeight = trafficRowHeightsRef.current.get(entryId);
+      if (previousHeight === undefined || Math.abs(previousHeight - nextHeight) > 0.5) {
+        trafficRowHeightsRef.current.set(entryId, nextHeight);
+        setTrafficMeasureVersion((version) => version + 1);
+      }
+    };
 
-    await Promise.resolve(onSendData(payload, terminal.id));
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(node);
+    trafficRowObserversRef.current.set(entryId, observer);
+  }, []);
+
+  const sendDraft = useCallback(async (slotId: string) => {
+    const slot = sendSlots.find((item) => item.id === slotId);
+    const draft = slot?.content ?? "";
+    if (!slot || !terminalReady || !terminal || !draft.trim()) {
+      return;
+    }
+
+    const content = draft.trim();
+    let byteCount = 0;
+
+    if (slot.mode === "hex") {
+      const parsed = parseSerialHexDraft(content);
+      if (parsed.error) {
+        setHexError(parsed.error);
+        return;
+      }
+
+      if (!parsed.bytes.length) {
+        return;
+      }
+
+      byteCount = parsed.bytes.length;
+      await Promise.resolve(onSendBytes(parsed.bytes, terminal.id));
+      appendExchangeEntry({
+        byteCount,
+        content,
+        direction: "tx",
+        mode: slot.mode,
+      });
+    } else {
+      const payload =
+        slot.sendEnding === "configured"
+          ? `${draft}${serialLineEndingValue(configuredEnding)}`
+          : draft;
+
+      byteCount = payload.length;
+      await Promise.resolve(onSendData(payload, terminal.id));
+      appendExchangeEntry({
+        byteCount,
+        content,
+        direction: "tx",
+        mode: slot.mode,
+      });
+    }
+
     setHistory((current) => {
-      const next = [draft, ...current.filter((item) => item !== draft)];
+      const id = `${slot.mode}:${content}`;
+      if (current[0]?.id === id && current[0].byteCount === byteCount) {
+        return current;
+      }
+
+      const next = [
+        {
+          byteCount,
+          content,
+          id,
+          mode: slot.mode,
+        },
+        ...current.filter((item) => item.id !== id),
+      ];
       return next.slice(0, maxHistoryItems);
     });
+    setHexError("");
     historyIndexRef.current = null;
-    setDraft("");
+  }, [appendExchangeEntry, configuredEnding, onSendBytes, onSendData, sendSlots, terminal, terminalReady]);
+
+  useEffect(() => {
+    setRuntimeProfile(serialRuntimeProfile(profile, tab));
+  }, [profile, tab]);
+
+  useEffect(() => {
+    setSerialOpen(Boolean(tab.terminal && tab.connection.status !== "disconnected" && tab.connection.status !== "failed"));
+  }, [tab.connection.status, terminal?.id]);
+
+  useEffect(() => {
+    setExchangeLog([]);
+    trafficRowHeightsRef.current.clear();
+    for (const observer of trafficRowObserversRef.current.values()) {
+      observer.disconnect();
+    }
+    trafficRowObserversRef.current.clear();
+    setTrafficMeasureVersion((version) => version + 1);
+    setTrafficScrollTop(0);
+  }, [terminal?.id]);
+
+  useEffect(() => {
+    const log = exchangeLogRef.current;
+    if (!log) {
+      return undefined;
+    }
+
+    const updateViewportHeight = () => {
+      setTrafficViewportHeight(log.clientHeight);
+    };
+
+    updateViewportHeight();
+    const observer = new ResizeObserver(updateViewportHeight);
+    observer.observe(log);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => () => {
+    for (const observer of trafficRowObserversRef.current.values()) {
+      observer.disconnect();
+    }
+    trafficRowObserversRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    if (!terminal) {
+      return undefined;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<SerialRxEvent>("portiva://serial-rx", (event) => {
+          if (disposed || outputPaused || event.payload.terminalId !== terminal.id) {
+            return;
+          }
+
+          appendExchangeEntry({
+            byteCount: event.payload.bytes.length,
+            content: event.payload.text,
+            direction: "rx",
+            timestampUs: event.payload.timestampUs,
+          });
+        }),
+      )
+      .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+
+        unlisten = dispose;
+      })
+      .catch(() => {
+        // Browser preview cannot subscribe to Tauri events.
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [appendExchangeEntry, outputPaused, terminal]);
+
+  useEffect(() => {
+    if (!autoScroll) {
+      return;
+    }
+
+    const log = exchangeLogRef.current;
+    if (log) {
+      window.requestAnimationFrame(() => {
+        log.scrollTop = log.scrollHeight;
+      });
+    }
+  }, [autoScroll, exchangeLog.length, trafficMeasureVersion]);
+
+  useEffect(() => {
+    const timedSlots = sendSlots.filter((slot) => slot.timedSendEnabled && slot.content.trim());
+    if (!terminalReady || !terminal || !timedSlots.length) {
+      return undefined;
+    }
+
+    const intervalIds = timedSlots.map((slot) =>
+      window.setInterval(() => {
+        if (timedSendInFlightRef.current.has(slot.id)) {
+          return;
+        }
+
+        timedSendInFlightRef.current.add(slot.id);
+        void sendDraft(slot.id).finally(() => {
+          timedSendInFlightRef.current.delete(slot.id);
+        });
+      }, slot.timedSendIntervalMs),
+    );
+
+    return () => {
+      for (const intervalId of intervalIds) {
+        window.clearInterval(intervalId);
+      }
+
+      for (const slot of timedSlots) {
+        timedSendInFlightRef.current.delete(slot.id);
+      }
+    };
+  }, [sendDraft, sendSlots, terminal, terminalReady]);
+
+  const updateRuntimeProfile = (patch: Partial<SerialProfile>) => {
+    setRuntimeProfile((current) => ({
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    }));
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const toggleSerial = async () => {
+    if (!terminal || serialActionPending) {
+      return;
+    }
+
+    setSerialActionPending(true);
+    try {
+      if (serialOpen) {
+        await Promise.resolve(onCloseSerialTerminal(terminal.id));
+        setSerialOpen(false);
+      } else {
+        await Promise.resolve(onOpenSerialTerminal(terminal.id, runtimeProfile));
+        setSerialOpen(true);
+      }
+    } catch (error) {
+      setSerialOpen(false);
+    } finally {
+      setSerialActionPending(false);
+    }
+  };
+
+  const updateSendSlot = (slotId: string, patch: Partial<SerialSendSlot>) => {
+    setSendSlots((current) => current.map((slot) => (slot.id === slotId ? { ...slot, ...patch } : slot)));
+  };
+
+  const addSendSlot = () => {
+    const id = `serial-send-slot-${nextSendSlotIdRef.current}`;
+    nextSendSlotIdRef.current += 1;
+    setSendSlots((current) => [...current, createSerialSendSlot(id)]);
+  };
+
+  const removeSendSlot = (slotId: string) => {
+    setSendSlots((current) => {
+      if (current.length <= 1) {
+        return current.map((slot) => (slot.id === slotId ? { ...slot, content: "" } : slot));
+      }
+
+      return current.filter((slot) => slot.id !== slotId);
+    });
+  };
+
+  const handleSubmit = (slotId: string, event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void sendDraft();
+    void sendDraft(slotId);
   };
 
-  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const handleInputKeyDown = (slotId: string, event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "ArrowUp") {
       event.preventDefault();
       const current = historyIndexRef.current;
       const next = current === null ? 0 : Math.min(history.length - 1, current + 1);
       historyIndexRef.current = history.length ? next : null;
-      setDraft(history[next] ?? draft);
+      updateSendSlot(slotId, {
+        content: history[next]?.content ?? sendSlots.find((slot) => slot.id === slotId)?.content ?? "",
+        mode: history[next]?.mode ?? sendSlots.find((slot) => slot.id === slotId)?.mode ?? "text",
+      });
+      setHexError("");
       return;
     }
 
@@ -158,22 +624,92 @@ export function SerialTerminalPanel({
       const next = current - 1;
       if (next < 0) {
         historyIndexRef.current = null;
-        setDraft("");
+        updateSendSlot(slotId, { content: "" });
         return;
       }
 
       historyIndexRef.current = next;
-      setDraft(history[next] ?? "");
+      updateSendSlot(slotId, {
+        content: history[next]?.content ?? "",
+        mode: history[next]?.mode ?? sendSlots.find((slot) => slot.id === slotId)?.mode ?? "text",
+      });
+      setHexError("");
     }
+  };
+
+  const restoreHistory = (entry: SerialSendHistoryEntry) => {
+    setSendSlots((current) => {
+      const emptySlot = current.find((slot) => !slot.content.trim());
+      if (emptySlot) {
+        return current.map((slot) => (slot.id === emptySlot.id ? { ...slot, content: entry.content, mode: entry.mode } : slot));
+      }
+
+      const id = `serial-send-slot-${nextSendSlotIdRef.current}`;
+      nextSendSlotIdRef.current += 1;
+      return [...current, createSerialSendSlot(id, { content: entry.content, mode: entry.mode })];
+    });
+    setHexError("");
+    historyIndexRef.current = null;
+  };
+
+  const clearSendHistory = () => {
+    setHistory([]);
+    historyIndexRef.current = null;
+  };
+
+  const removeSendHistoryEntry = (entryId: string) => {
+    setHistory((current) => current.filter((entry) => entry.id !== entryId));
+    historyIndexRef.current = null;
   };
 
   const copyBuffer = async () => {
     try {
-      await writeClipboardText(snapshotText);
+      const text = serialLogText(exchangeLog);
+      if (text) {
+        await writeClipboardText(text);
+      }
     } catch (error) {
-      console.warn("复制串口缓冲区失败", error);
+      console.warn("复制串口内容区失败", error);
     }
   };
+
+  const clearExchangeLog = () => {
+    trafficRowHeightsRef.current.clear();
+    for (const observer of trafficRowObserversRef.current.values()) {
+      observer.disconnect();
+    }
+    trafficRowObserversRef.current.clear();
+    setExchangeLog([]);
+    setTrafficMeasureVersion((version) => version + 1);
+    setTrafficScrollTop(0);
+  };
+
+  const trafficVirtualMetrics = useMemo(() => {
+    const offsets: number[] = [];
+    let totalHeight = 0;
+
+    for (const entry of exchangeLog) {
+      offsets.push(totalHeight);
+      totalHeight += trafficRowHeightsRef.current.get(entry.id) ?? estimatedTrafficRowHeight;
+    }
+
+    return { offsets, totalHeight };
+  }, [exchangeLog, trafficMeasureVersion]);
+
+  const trafficVisibleRange = useMemo(() => {
+    if (!exchangeLog.length) {
+      return { end: 0, start: 0 };
+    }
+
+    const visibleTop = Math.max(0, trafficScrollTop - trafficVirtualOverscanPx);
+    const visibleBottom = trafficScrollTop + trafficViewportHeight + trafficVirtualOverscanPx;
+    const start = findTrafficVirtualIndex(trafficVirtualMetrics.offsets, visibleTop);
+    const end = Math.min(exchangeLog.length, findTrafficVirtualIndex(trafficVirtualMetrics.offsets, visibleBottom) + 2);
+    return { end, start };
+  }, [exchangeLog.length, trafficScrollTop, trafficViewportHeight, trafficVirtualMetrics]);
+
+  const visibleExchangeLog = exchangeLog.slice(trafficVisibleRange.start, trafficVisibleRange.end);
+  const trafficWindowTop = trafficVirtualMetrics.offsets[trafficVisibleRange.start] ?? 0;
 
   return (
     <section className="serial-terminal-panel">
@@ -182,8 +718,8 @@ export function SerialTerminalPanel({
           <span className="serial-port-mark">
             <Icon name="plug" />
           </span>
-          <strong>{portName}</strong>
-          <span>{serialBaudLabel(tab, profile)}</span>
+          <strong>{runtimeProfile.portName || portName}</strong>
+          <span>{serialBaudLabel(tab, runtimeProfile)}</span>
         </div>
         <div className="serial-chip-row" aria-label="串口状态">
           <span className="serial-status-chip">{statusText}</span>
@@ -193,83 +729,288 @@ export function SerialTerminalPanel({
         </div>
       </header>
 
-      <div className="serial-command-strip">
-        <form className="serial-send-form" onSubmit={handleSubmit}>
-          <input
-            aria-label="串口发送内容"
-            autoComplete="off"
-            disabled={!terminal}
-            list={`${tab.connection.id}-serial-history`}
-            placeholder="AT"
-            spellCheck={false}
-            value={draft}
-            onChange={(event) => {
-              setDraft(event.currentTarget.value);
-              historyIndexRef.current = null;
-            }}
-            onKeyDown={handleInputKeyDown}
-          />
-          <datalist id={`${tab.connection.id}-serial-history`}>
-            {history.map((item) => (
-              <option key={item} value={item} />
-            ))}
-          </datalist>
-          <select
-            aria-label="发送结束符"
-            value={sendEnding}
-            onChange={(event) => setSendEnding(event.currentTarget.value as SerialSendEnding)}
-          >
-            <option value="configured">+{serialLineEndingLabel(configuredEnding)}</option>
-            <option value="none">无结束符</option>
-          </select>
-          <button disabled={!terminal || !draft} type="submit">
-            <Icon name="terminal" />
-            <span>发送</span>
-          </button>
-        </form>
+      <div className="serial-control-layout">
+        <div className="serial-main-pane">
+          <section className="serial-traffic-panel" aria-label="串口通信内容区">
+            <header className="serial-traffic-toolbar">
+              <strong>通信内容区</strong>
+              <div className="serial-monitor-actions">
+                <label className="serial-toggle-pill">
+                  <input
+                    checked={autoScroll}
+                    type="checkbox"
+                    onChange={(event) => setAutoScroll(event.currentTarget.checked)}
+                  />
+                  <span>自动滚动</span>
+                </label>
+                <button
+                  aria-pressed={outputPaused}
+                  className={outputPaused ? "active" : ""}
+                  title={outputPaused ? "恢复显示" : "暂停显示"}
+                  type="button"
+                  onClick={() => setOutputPaused((current) => !current)}
+                >
+                  <Icon name={outputPaused ? "play" : "pause"} />
+                </button>
+                <button title="清屏" type="button" onClick={clearExchangeLog}>
+                  <Icon name="trash" />
+                </button>
+                <button disabled={!exchangeLog.length} title="复制内容区" type="button" onClick={() => void copyBuffer()}>
+                  <Icon name="copy" />
+                </button>
+              </div>
+            </header>
+            <div className="serial-traffic-log" ref={exchangeLogRef} onScroll={handleTrafficScroll}>
+              {exchangeLog.length ? (
+                <div className="serial-traffic-virtual" style={{ height: trafficVirtualMetrics.totalHeight }}>
+                  <div className="serial-traffic-window" style={{ transform: `translateY(${trafficWindowTop}px)` }}>
+                    {visibleExchangeLog.map((entry) => (
+                      <article className={`serial-traffic-row ${entry.direction}`} key={entry.id} ref={registerTrafficRow(entry.id)}>
+                        <span className="serial-traffic-time">{formatExchangeTime(entry.timestampUs)}</span>
+                        <span className="serial-traffic-direction">{entry.direction === "tx" ? "发送" : "接收"}</span>
+                        <span className="serial-traffic-meta">
+                          {entry.mode ? `${entry.mode.toUpperCase()} · ` : ""}
+                          {entry.byteCount}B
+                        </span>
+                        <pre>{entry.content}</pre>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="serial-traffic-empty">暂无串口通信内容</div>
+              )}
+            </div>
+          </section>
 
-        <div className="serial-monitor-actions">
-          <label className="serial-toggle-pill">
-            <input
-              checked={autoScroll}
-              type="checkbox"
-              onChange={(event) => setAutoScroll(event.currentTarget.checked)}
-            />
-            <span>自动滚动</span>
-          </label>
-          <button
-            aria-pressed={outputPaused}
-            className={outputPaused ? "active" : ""}
-            title={outputPaused ? "恢复显示" : "暂停显示"}
-            type="button"
-            onClick={() => setOutputPaused((current) => !current)}
-          >
-            <Icon name={outputPaused ? "play" : "pause"} />
-          </button>
-          <button title="清屏" type="button" onClick={() => setClearRevision((current) => current + 1)}>
-            <Icon name="trash" />
-          </button>
-          <button disabled={!snapshotText} title="复制缓冲区" type="button" onClick={() => void copyBuffer()}>
-            <Icon name="copy" />
-          </button>
+          <div className="serial-command-strip">
+            <div className="serial-send-toolbar">
+              <span>发送输入</span>
+              <button className="serial-add-send-slot" type="button" onClick={addSendSlot}>
+                <Icon name="plus" />
+                <span>新增输入</span>
+              </button>
+            </div>
+
+            <div className="serial-send-slots">
+              {sendSlots.map((slot, index) => (
+                <form className="serial-send-form" key={slot.id} onSubmit={(event) => handleSubmit(slot.id, event)}>
+                  <textarea
+                    aria-label={`串口发送内容 ${index + 1}`}
+                    autoComplete="off"
+                    disabled={!terminalReady}
+                    placeholder={slot.mode === "hex" ? "01 03 00 00 FF" : "AT"}
+                    rows={1}
+                    spellCheck={false}
+                    value={slot.content}
+                    onChange={(event) => {
+                      updateSendSlot(slot.id, { content: event.currentTarget.value });
+                      setHexError("");
+                      historyIndexRef.current = null;
+                    }}
+                    onKeyDown={(event) => handleInputKeyDown(slot.id, event)}
+                  />
+                  <div className="serial-send-row-actions">
+                    <span>{index + 1}</span>
+                    <div className="serial-send-mode" role="group" aria-label={`串口发送模式 ${index + 1}`}>
+                      <button
+                        aria-pressed={slot.mode === "text"}
+                        className={slot.mode === "text" ? "active" : ""}
+                        type="button"
+                        onClick={() => {
+                          updateSendSlot(slot.id, { mode: "text" });
+                          setHexError("");
+                        }}
+                      >
+                        TEXT
+                      </button>
+                      <button
+                        aria-pressed={slot.mode === "hex"}
+                        className={slot.mode === "hex" ? "active" : ""}
+                        type="button"
+                        onClick={() => {
+                          updateSendSlot(slot.id, { mode: "hex" });
+                          setHexError("");
+                        }}
+                      >
+                        HEX
+                      </button>
+                    </div>
+                    <select
+                      aria-label={`发送结束符 ${index + 1}`}
+                      disabled={slot.mode === "hex"}
+                      value={slot.sendEnding}
+                      onChange={(event) => updateSendSlot(slot.id, { sendEnding: event.currentTarget.value as SerialSendEnding })}
+                    >
+                      <option value="configured">+{serialLineEndingLabel(configuredEnding)}</option>
+                      <option value="none">无结束符</option>
+                    </select>
+                    <label className={["serial-timed-send", slot.timedSendEnabled ? "active" : ""].join(" ")}>
+                      <input
+                        checked={slot.timedSendEnabled}
+                        disabled={!terminalReady || (!slot.content.trim() && !slot.timedSendEnabled)}
+                        type="checkbox"
+                        onChange={(event) => updateSendSlot(slot.id, { timedSendEnabled: event.currentTarget.checked })}
+                      />
+                      <span>定时</span>
+                      <input
+                        aria-label={`定时发送间隔 ${index + 1}（毫秒）`}
+                        disabled={!slot.timedSendEnabled}
+                        max={maxTimedSendIntervalMs}
+                        min={minTimedSendIntervalMs}
+                        step={50}
+                        type="number"
+                        value={slot.timedSendIntervalMs}
+                        onChange={(event) => updateSendSlot(slot.id, { timedSendIntervalMs: clampTimedSendInterval(event.currentTarget.valueAsNumber) })}
+                      />
+                      <span>ms</span>
+                    </label>
+                    <button disabled={!terminalReady || !slot.content.trim()} type="submit">
+                      <Icon name="terminal" />
+                      <span>发送</span>
+                    </button>
+                    <button title={sendSlots.length <= 1 ? "清空输入" : "删除输入"} type="button" onClick={() => removeSendSlot(slot.id)}>
+                      <Icon name={sendSlots.length <= 1 ? "trash" : "x"} />
+                    </button>
+                  </div>
+                </form>
+              ))}
+            </div>
+            {hexError ? <span className="serial-send-error">{hexError}</span> : null}
+
+          </div>
+        </div>
+
+        <div className="serial-control-main">
+          <section className="serial-config-panel" aria-label="串口连接参数">
+            <label className="serial-port-config-field">
+              <span>端口</span>
+              <span className="serial-port-config-control">
+                <select
+                  disabled={serialActionPending}
+                  value={runtimeProfile.portName}
+                  onChange={(event) => updateRuntimeProfile({ portName: event.currentTarget.value })}
+                >
+                  <option disabled value="">
+                    {serialPorts.length ? "选择端口" : "未检测到端口"}
+                  </option>
+                  {runtimeProfile.portName && !selectedPortIsDetected ? (
+                    <option value={runtimeProfile.portName}>{runtimeProfile.portName}</option>
+                  ) : null}
+                  {serialPorts.map((port) => (
+                    <option disabled={!port.isAvailable && port.portName !== runtimeProfile.portName} key={port.portName} value={port.portName}>
+                      {port.displayName || port.portName}
+                      {port.isAvailable ? "" : "（占用）"}
+                    </option>
+                  ))}
+                </select>
+                <button disabled={serialActionPending || !onRefreshSerialPorts} title="刷新端口" type="button" onClick={() => void onRefreshSerialPorts?.()}>
+                  <Icon name="refresh-ccw" />
+                </button>
+              </span>
+            </label>
+            <label>
+              <span>波特率</span>
+              <select
+                value={runtimeProfile.baudRate}
+                onChange={(event) => updateRuntimeProfile({ baudRate: Number(event.currentTarget.value) })}
+              >
+                {baudRateOptions.map((baudRate) => (
+                  <option key={baudRate} value={baudRate}>
+                    {baudRate}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>数据位</span>
+              <select value={runtimeProfile.dataBits} onChange={(event) => updateRuntimeProfile({ dataBits: Number(event.currentTarget.value) as SerialProfile["dataBits"] })}>
+                <option value={5}>5</option>
+                <option value={6}>6</option>
+                <option value={7}>7</option>
+                <option value={8}>8</option>
+              </select>
+            </label>
+            <label>
+              <span>校验</span>
+              <select value={runtimeProfile.parity} onChange={(event) => updateRuntimeProfile({ parity: event.currentTarget.value as SerialProfile["parity"] })}>
+                <option value="none">无</option>
+                <option value="odd">奇校验</option>
+                <option value="even">偶校验</option>
+              </select>
+            </label>
+            <label>
+              <span>停止位</span>
+              <select value={runtimeProfile.stopBits} onChange={(event) => updateRuntimeProfile({ stopBits: Number(event.currentTarget.value) as SerialProfile["stopBits"] })}>
+                <option value={1}>1</option>
+                <option value={2}>2</option>
+              </select>
+            </label>
+            <label>
+              <span>流控</span>
+              <select value={runtimeProfile.flowControl} onChange={(event) => updateRuntimeProfile({ flowControl: event.currentTarget.value as SerialProfile["flowControl"] })}>
+                <option value="none">无</option>
+                <option value="software">软件</option>
+                <option value="hardware">硬件</option>
+              </select>
+            </label>
+            <label>
+              <span>编码</span>
+              <select value={runtimeProfile.encoding} onChange={(event) => updateRuntimeProfile({ encoding: event.currentTarget.value as SerialProfile["encoding"] })}>
+                <option value="utf-8">UTF-8</option>
+                <option value="latin1">Latin1</option>
+              </select>
+            </label>
+            <label>
+              <span>结束符</span>
+              <select value={runtimeProfile.lineEnding} onChange={(event) => updateRuntimeProfile({ lineEnding: event.currentTarget.value as SerialProfile["lineEnding"] })}>
+                <option value="crlf">CRLF</option>
+                <option value="cr">CR</option>
+                <option value="lf">LF</option>
+              </select>
+            </label>
+            <label className="serial-config-check">
+              <input checked={Boolean(runtimeProfile.dtr)} type="checkbox" onChange={(event) => updateRuntimeProfile({ dtr: event.currentTarget.checked })} />
+              <span>DTR</span>
+            </label>
+            <label className="serial-config-check">
+              <input checked={Boolean(runtimeProfile.rts)} type="checkbox" onChange={(event) => updateRuntimeProfile({ rts: event.currentTarget.checked })} />
+              <span>RTS</span>
+            </label>
+            <div className="serial-config-actions">
+              <button disabled={serialActionPending || !terminal || !runtimeProfile.portName.trim()} type="button" onClick={() => void toggleSerial()}>
+                {serialOpen ? "关闭" : "打开"}
+              </button>
+            </div>
+          </section>
+
+          <section className="serial-send-history" aria-label="串口发送历史">
+            <div className="serial-send-history-header">
+              <strong>发送历史</strong>
+              <span>{history.length ? `${history.length}/${maxHistoryItems}` : "暂无"}</span>
+              <button disabled={!history.length} title="清空发送历史" type="button" onClick={clearSendHistory}>
+                <Icon name="trash" />
+              </button>
+            </div>
+            {history.length ? (
+              <div className="serial-send-history-list">
+                {history.map((entry) => (
+                  <div className="serial-send-history-item" key={entry.id}>
+                    <button className="serial-history-restore" type="button" onClick={() => restoreHistory(entry)}>
+                      <span className="serial-history-mode">{entry.mode.toUpperCase()}</span>
+                      <span className="serial-history-content">{entry.content}</span>
+                      <span className="serial-history-count">{entry.byteCount}B</span>
+                    </button>
+                    <button className="serial-history-delete" title="删除此历史" type="button" onClick={() => removeSendHistoryEntry(entry.id)}>
+                      <Icon name="x" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </section>
         </div>
       </div>
-
-      <TerminalPane
-        autoScroll={autoScroll}
-        clearRevision={clearRevision}
-        isActive={isActive}
-        outputPaused={outputPaused}
-        reportSizeWhenVisible={reportSizeWhenVisible}
-        terminal={terminal}
-        terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
-        terminalCopyRichText={terminalCopyRichText}
-        terminalSnapshot={tab.terminalSnapshot}
-        terminalRightClickBehavior={terminalRightClickBehavior}
-        terminalTheme={terminalTheme}
-        onResizeTerminal={onResizeTerminal}
-        onSendData={onSendData}
-      />
     </section>
   );
 }

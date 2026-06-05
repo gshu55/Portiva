@@ -88,7 +88,8 @@ export function ConnectionProfileDialog({
   const canSave = canSaveProfile(draft);
   const needsConnectionSecret =
     (draft.type === "ssh" || draft.type === "sftp") && draft.authType === "password";
-  const canConnect = canSave && (!needsConnectionSecret || Boolean(secret));
+  const canUseRememberedSecret = needsConnectionSecret && rememberSecret && rememberedSecret;
+  const canConnect = canSave && (!needsConnectionSecret || Boolean(secret) || canUseRememberedSecret);
   const canTest = canSave && (!needsConnectionSecret || Boolean(secret));
 
   const connectDraft = async () => {
@@ -173,6 +174,7 @@ export function ConnectionProfileDialog({
             {draft.type === "ssh" || draft.type === "sftp" ? (
               <>
                 <SshProfileForm
+                  hasRememberedSecret={rememberSecret && rememberedSecret}
                   profile={draft}
                   rememberSecret={rememberSecret}
                   secret={secret}

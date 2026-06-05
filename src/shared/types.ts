@@ -65,7 +65,6 @@ export interface SshProfile extends BaseProfile {
   username: string;
   authType: "password" | "private-key" | "agent";
   privateKeyPath?: string;
-  enableSftp: boolean;
   enableAgentForwarding?: boolean;
   enableCompression?: boolean;
   proxyJump?: string;
@@ -78,7 +77,6 @@ export interface SftpProfile extends BaseProfile {
   username: string;
   authType: "password" | "private-key" | "agent";
   privateKeyPath?: string;
-  enableSftp: true;
   enableCompression?: boolean;
   proxyJump?: string;
 }
@@ -205,6 +203,14 @@ export interface TerminalSnapshot {
   bufferPreview: string;
   renderPolicy: TerminalRenderPolicy;
   outputChunk?: string;
+}
+
+export interface SerialRxEvent {
+  terminalId: string;
+  seq: number;
+  timestampUs: number;
+  bytes: number[];
+  text: string;
 }
 
 export type TerminalColorPresetId = "dark" | "light" | "custom";

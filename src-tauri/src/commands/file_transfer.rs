@@ -1,9 +1,10 @@
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
+use std::{env, fs};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::domain::file_transfer::{
     FileTransferSession, RemoteEntry, RemoteEntryKind, TransferDirection, TransferStatus,
@@ -28,6 +29,21 @@ pub struct LocalFileListResult {
 }
 
 const LOCAL_ROOTS_PATH: &str = "portiva://local-roots";
+
+#[tauri::command]
+pub fn local_download_directory() -> Result<String, String> {
+    let home = home_dir().ok_or_else(|| "failed to resolve user home directory".to_string())?;
+    let downloads = PathBuf::from(home).join("Downloads");
+
+    if downloads.is_dir() {
+        return Ok(downloads.display().to_string());
+    }
+
+    Err(format!(
+        "downloads directory does not exist: {}",
+        downloads.display()
+    ))
+}
 
 #[tauri::command]
 pub fn local_file_list(path: String) -> Result<LocalFileListResult, String> {
@@ -63,6 +79,30 @@ pub fn local_file_list(path: String) -> Result<LocalFileListResult, String> {
         path: target.display().to_string(),
         entries,
     })
+}
+
+fn home_dir() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let profile = env::var("USERPROFILE")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+
+        profile.or_else(|| {
+            let drive = env::var("HOMEDRIVE").ok()?;
+            let path = env::var("HOMEPATH").ok()?;
+            let home = format!("{drive}{path}");
+
+            (!home.trim().is_empty()).then_some(home)
+        })
+    }
+
+    #[cfg(not(windows))]
+    {
+        env::var("HOME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    }
 }
 
 #[tauri::command]
@@ -117,6 +157,25 @@ pub fn local_file_rename(from: String, to: String) -> Result<(), String> {
             to.display()
         )
     })
+}
+
+#[tauri::command]
+pub fn local_reveal_item_in_directory(app_handle: AppHandle, path: String) -> Result<(), String> {
+    let target = resolve_local_path(&path)?;
+
+    if !target.exists() {
+        return Err(format!("local path does not exist: {}", target.display()));
+    }
+
+    app_handle
+        .opener()
+        .reveal_item_in_dir(&target)
+        .map_err(|error| {
+            format!(
+                "failed to open containing folder {}: {error}",
+                target.display()
+            )
+        })
 }
 
 #[tauri::command]

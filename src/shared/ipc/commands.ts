@@ -57,6 +57,7 @@ export const commandNames = {
   terminalAttach: "terminal_attach",
   terminalSession: "terminal_session",
   terminalWrite: "terminal_write",
+  terminalWriteBytes: "terminal_write_bytes",
   terminalResize: "terminal_resize",
   terminalClose: "terminal_close",
   terminalSnapshot: "terminal_snapshot",
@@ -74,13 +75,18 @@ export const commandNames = {
   fileTransferResume: "file_transfer_resume",
   fileTransferRetry: "file_transfer_retry",
   fileTransferDelete: "file_transfer_delete",
+  localDownloadDirectory: "local_download_directory",
   localFileList: "local_file_list",
   localFileMkdir: "local_file_mkdir",
   localFileRemove: "local_file_remove",
   localFileRename: "local_file_rename",
+  localRevealItemInDirectory: "local_reveal_item_in_directory",
   transferList: "transfer_list",
   profileList: "profile_list",
   serialListPorts: "serial_list_ports",
+  serialTerminalClose: "serial_terminal_close",
+  serialTerminalOpen: "serial_terminal_open",
+  serialTerminalReconfigure: "serial_terminal_reconfigure",
   settingsGet: "settings_get",
   settingsUpdate: "settings_update",
   logClear: "log_clear",
@@ -282,6 +288,10 @@ export function terminalWrite(terminalId: string, data: string) {
   return invoke<void>(commandNames.terminalWrite, { terminalId, data });
 }
 
+export function terminalWriteBytes(terminalId: string, bytes: number[]) {
+  return invoke<void>(commandNames.terminalWriteBytes, { terminalId, bytes });
+}
+
 export function terminalResize(terminalId: string, size: TerminalSize) {
   return invoke<void>(commandNames.terminalResize, { terminalId, size });
 }
@@ -330,6 +340,10 @@ export function localFileList(path: string) {
   return invoke<LocalFileListResult>(commandNames.localFileList, { path });
 }
 
+export function localDownloadDirectory() {
+  return invoke<string>(commandNames.localDownloadDirectory);
+}
+
 export function localFileMkdir(path: string) {
   return invoke<void>(commandNames.localFileMkdir, { path });
 }
@@ -340,6 +354,10 @@ export function localFileRemove(path: string) {
 
 export function localFileRename(from: string, to: string) {
   return invoke<void>(commandNames.localFileRename, { from, to });
+}
+
+export function localRevealItemInDirectory(path: string) {
+  return invoke<void>(commandNames.localRevealItemInDirectory, { path });
 }
 
 export function fileTransferCancel(transferId: string) {
@@ -388,4 +406,16 @@ export function logRecordPlaceholder(level: LogEntry["level"], target: string, m
 
 export function serialListPorts() {
   return invoke<SerialPortInfo[]>(commandNames.serialListPorts);
+}
+
+export function serialTerminalClose(terminalId: string) {
+  return invoke<boolean>(commandNames.serialTerminalClose, { terminalId });
+}
+
+export function serialTerminalOpen(terminalId: string, profile: ConnectionProfile) {
+  return invoke<void>(commandNames.serialTerminalOpen, { terminalId, profile });
+}
+
+export function serialTerminalReconfigure(terminalId: string, profile: ConnectionProfile) {
+  return invoke<void>(commandNames.serialTerminalReconfigure, { terminalId, profile });
 }

@@ -129,7 +129,7 @@ impl SshSessionService {
                     host: opened.host.clone(),
                     port: opened.port,
                     username: opened.username,
-                    enable_sftp: profile.enable_sftp.unwrap_or(true),
+                    enable_sftp: true,
                     sftp: None,
                     ptys: HashMap::new(),
                 },

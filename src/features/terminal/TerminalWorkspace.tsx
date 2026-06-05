@@ -13,6 +13,7 @@ import type {
   ConnectionSummary,
   ConnectionProfile,
   SerialProfile,
+  SerialPortInfo,
   TerminalColorPalette,
   TerminalRightClickBehavior,
   TerminalSize,
@@ -29,18 +30,25 @@ interface TerminalWorkspaceProps {
   connection: ConnectionSummary | null;
   sessionTabs: WorkspaceSessionTab[];
   profiles?: ConnectionProfile[];
+  serialPorts?: SerialPortInfo[];
   customTabPanels?: Record<string, ReactNode>;
   fileTransferPanel?: ReactNode;
+  sftpSidePanel?: (props: SftpSidePanelRenderProps) => ReactNode;
   emptyStateNotice?: string;
   terminalConfirmMultilinePaste?: boolean;
   terminalCopyRichText?: boolean;
   terminalRightClickBehavior?: TerminalRightClickBehavior;
   terminalTheme: TerminalColorPalette;
+  onSendTerminalBytes: (bytes: number[], terminalId?: string) => Promise<void> | void;
   onSendTerminalData: (data: string, terminalId?: string) => Promise<void> | void;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
   onCloseSessionTab: (connectionId: string) => void;
   onDetachSessionTab?: (connectionId: string) => void;
+  onOpenFileTransferTab?: (connectionId: string, options?: { forceNew?: boolean }) => void;
   onOpenSessionWindow: (connectionId: string) => void;
+  onCloseSerialTerminal: (terminalId: string) => Promise<void> | void;
+  onOpenSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
+  onRefreshSerialPorts?: () => Promise<void> | void;
   onReconnectSessionTab: (connectionId: string) => void;
   onReorderSessionTabs: (sourceConnectionId: string, targetConnectionId: string) => void;
   onSessionDragStateChange?: (isDragging: boolean, tabId: string) => void;
@@ -48,6 +56,11 @@ interface TerminalWorkspaceProps {
   onToggleFullscreen: () => void;
   reattachHintActive?: boolean;
   isFullscreen: boolean;
+}
+
+interface SftpSidePanelRenderProps {
+  layoutSide: "left" | "right";
+  onToggleLayoutSide: () => void;
 }
 
 const getSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
@@ -86,7 +99,9 @@ export function TerminalWorkspace({
   customTabPanels,
   emptyStateNotice,
   fileTransferPanel,
+  sftpSidePanel,
   profiles = [],
+  serialPorts = [],
   sessionTabs,
   terminalConfirmMultilinePaste = true,
   terminalCopyRichText = false,
@@ -94,12 +109,17 @@ export function TerminalWorkspace({
   terminalTheme,
   onCloseSessionTab,
   onDetachSessionTab,
+  onOpenFileTransferTab,
   onResizeTerminal,
   onOpenSessionWindow,
+  onCloseSerialTerminal,
+  onOpenSerialTerminal,
+  onRefreshSerialPorts,
   onReconnectSessionTab,
   onReorderSessionTabs,
   onSessionDragStateChange,
   onSelectSessionTab,
+  onSendTerminalBytes,
   onSendTerminalData,
   onToggleFullscreen,
   reattachHintActive = false,
@@ -112,8 +132,11 @@ export function TerminalWorkspace({
   const [splitFocusedPane, setSplitFocusedPane] = useState<"left" | "right">("left");
   const [splitDragOverPane, setSplitDragOverPane] = useState<"left" | "right" | null>(null);
   const [splitRatio, setSplitRatio] = useState(0.5);
+  const [sftpPanelRatio, setSftpPanelRatio] = useState(0.22);
+  const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("left");
   const tabBarRef = useRef<HTMLDivElement>(null);
   const splitLayoutRef = useRef<HTMLDivElement>(null);
+  const sftpLayoutRef = useRef<HTMLDivElement>(null);
   const tabDropHandledRef = useRef(false);
   const autoClosedLocalShellTabIdsRef = useRef(new Set<string>());
   const lastDragPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -195,15 +218,6 @@ export function TerminalWorkspace({
     !isCustomTabActive &&
     !capabilities.secureTransport &&
     connection.transport?.kind !== "serial";
-  const toggleTabFullscreen = (tabId: string) => {
-    if (tabId !== resolvedActiveTabId) {
-      onSelectSessionTab(tabId);
-    }
-
-    if (!isFullscreen || tabId === resolvedActiveTabId) {
-      onToggleFullscreen();
-    }
-  };
   const selectSessionTab = (tabId: string) => {
     if (isTerminalSplitActive && tabId === rightSplitTabId) {
       setSplitFocusedPane("right");
@@ -339,6 +353,41 @@ export function TerminalWorkspace({
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
   };
+  const startSftpPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const updatePanelRatio = (clientX: number) => {
+      const layout = sftpLayoutRef.current;
+
+      if (!layout) {
+        return;
+      }
+
+      const bounds = layout.getBoundingClientRect();
+      if (bounds.width <= 0) {
+        return;
+      }
+
+      const nextRatio =
+        sftpPanelSide === "right"
+          ? (bounds.right - clientX) / bounds.width
+          : (clientX - bounds.left) / bounds.width;
+      setSftpPanelRatio(Math.min(0.55, Math.max(0.22, nextRatio)));
+    };
+    const onPointerMove = (moveEvent: PointerEvent) => updatePanelRatio(moveEvent.clientX);
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      document.body.classList.remove("terminal-sftp-resizing");
+    };
+
+    document.body.classList.add("terminal-sftp-resizing");
+    updatePanelRatio(event.clientX);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
+  const toggleSftpPanelSide = () => {
+    setSftpPanelSide((current) => (current === "right" ? "left" : "right"));
+  };
   const updateLastDragPosition = (event: DragEvent<HTMLElement>) => {
     if (event.clientX !== 0 || event.clientY !== 0) {
       lastDragPositionRef.current = { x: event.clientX, y: event.clientY };
@@ -365,12 +414,17 @@ export function TerminalWorkspace({
           isActive={isActivePane}
           profile={serialProfile}
           reportSizeWhenVisible={reportSizeWhenVisible}
+          serialPorts={serialPorts}
           tab={tab}
           terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
           terminalCopyRichText={terminalCopyRichText}
           terminalRightClickBehavior={terminalRightClickBehavior}
           terminalTheme={terminalTheme}
+          onCloseSerialTerminal={onCloseSerialTerminal}
+          onOpenSerialTerminal={onOpenSerialTerminal}
+          onRefreshSerialPorts={onRefreshSerialPorts}
           onResizeTerminal={onResizeTerminal}
+          onSendBytes={onSendTerminalBytes}
           onSendData={onSendTerminalData}
         />
       );
@@ -391,6 +445,53 @@ export function TerminalWorkspace({
         onResizeTerminal={onResizeTerminal}
         onSendData={onSendTerminalData}
       />
+    );
+  };
+  const renderTerminalContent = (
+    tab: WorkspaceSessionTab,
+    isActivePane: boolean,
+    reportSizeWhenVisible = false,
+  ) => {
+    const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible);
+
+    if (!sftpSidePanel || !isActivePane || isTerminalSplitActive) {
+      return terminalPane;
+    }
+
+    const panelWidth = Math.round(sftpPanelRatio * 100);
+    const terminalWidth = Math.round((1 - sftpPanelRatio) * 100);
+    const gridTemplateColumns =
+      sftpPanelSide === "right"
+        ? `minmax(260px, calc(${terminalWidth}% - 4px)) 8px minmax(240px, calc(${panelWidth}% - 4px))`
+        : `minmax(240px, calc(${panelWidth}% - 4px)) 8px minmax(260px, calc(${terminalWidth}% - 4px))`;
+    const resizer = (
+      <div
+        aria-label="调整 SFTP 面板宽度"
+        className="terminal-sftp-resizer"
+        onPointerDown={startSftpPanelResize}
+        role="separator"
+        title="调整 SFTP 面板宽度"
+      />
+    );
+    const resolvedSftpPanel = (
+      <div className="terminal-sftp-side-pane">
+        {sftpSidePanel({
+          layoutSide: sftpPanelSide,
+          onToggleLayoutSide: toggleSftpPanelSide,
+        })}
+      </div>
+    );
+
+    return (
+      <div
+        className="terminal-with-sftp"
+        ref={sftpLayoutRef}
+        style={{ gridTemplateColumns }}
+      >
+        {sftpPanelSide === "left" ? resolvedSftpPanel : <div className="terminal-primary-pane">{terminalPane}</div>}
+        {resizer}
+        {sftpPanelSide === "right" ? resolvedSftpPanel : <div className="terminal-primary-pane">{terminalPane}</div>}
+      </div>
     );
   };
   const isDragOutsideTabBar = (event: DragEvent<HTMLElement>) => {
@@ -500,6 +601,7 @@ export function TerminalWorkspace({
   useEffect(
     () => () => {
       document.body.classList.remove("terminal-split-resizing");
+      document.body.classList.remove("terminal-sftp-resizing");
     },
     [],
   );
@@ -739,15 +841,13 @@ export function TerminalWorkspace({
                   position={{ x: tabContextMenu.x, y: tabContextMenu.y }}
                   tab={menuTab}
                   tabId={tabContextMenu.tabId}
-                  activeTabId={resolvedActiveTabId ?? undefined}
                   canSplitRight={!isCustomTab(menuTab) && sessionTabs.length > 1}
-                  isFullscreen={isFullscreen}
                   onClose={() => setTabContextMenu(null)}
                   onCloseTab={onCloseSessionTab}
+                  onOpenFileTransfer={onOpenFileTransferTab}
                   onOpenWindow={onOpenSessionWindow}
                   onReconnect={onReconnectSessionTab}
                   onSplitRight={splitTabToRight}
-                  onToggleFullscreen={toggleTabFullscreen}
                 />
               ) : null;
             })()
@@ -813,7 +913,7 @@ export function TerminalWorkspace({
                           .join(" ")}
                         key={tabId}
                       >
-                        {renderTerminalPane(tab, isActivePane && splitFocusedPane === "left", true)}
+                        {renderTerminalContent(tab, isActivePane && splitFocusedPane === "left", true)}
                       </div>
                     );
                   })}
@@ -847,7 +947,7 @@ export function TerminalWorkspace({
               }}
             >
               {isRightTerminalTabActive ? (
-                renderTerminalPane(splitRightTab, splitFocusedPane === "right", true)
+                renderTerminalContent(splitRightTab, splitFocusedPane === "right", true)
               ) : isRightFileTransferTabActive && resolvedActiveTabId === rightSplitTabId && fileTransferPanel ? (
                 <div className="terminal-file-tab">{fileTransferPanel}</div>
               ) : (
@@ -876,7 +976,7 @@ export function TerminalWorkspace({
                     .join(" ")}
                   key={tabId}
                 >
-                  {renderTerminalPane(tab, isActivePane)}
+                  {renderTerminalContent(tab, isActivePane)}
                 </div>
               );
             })}

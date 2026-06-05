@@ -367,7 +367,6 @@ fn sample_ssh_profile() -> ConnectionProfile {
         username: Some("deploy".to_string()),
         auth_type: Some("password".to_string()),
         private_key_path: None,
-        enable_sftp: Some(true),
         port_name: None,
         baud_rate: None,
         data_bits: None,

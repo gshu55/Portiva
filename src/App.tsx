@@ -1,17 +1,17 @@
 import "./App.css";
-import { type CSSProperties, type MouseEvent, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { ActiveFileTransferPanel } from "./app/ActiveFileTransferPanel";
+import { AppTitlebar } from "./app/AppTitlebar";
+import { GlobalNotice } from "./app/GlobalNotice";
+import { HostTrustDialog } from "./app/HostTrustDialog";
+import { ProfileDialogHost } from "./app/ProfileDialogHost";
+import { SettingsTabPanel } from "./app/SettingsTabPanel";
 import { useKeyboardShortcuts } from "./app/useKeyboardShortcuts";
 import { usePortivaWorkspace } from "./app/usePortivaWorkspace";
 import { ConnectionList } from "./features/connections/ConnectionList";
-import {
-  ConnectionProfileDialog,
-  type ConnectionSecretInput,
-} from "./features/connections/ConnectionProfileDialog";
-import { FileTransferPanel } from "./features/file-transfer/FileTransferPanel";
-import { SettingsPage } from "./features/settings/SettingsPage";
+import { SimpleSftpPanel } from "./features/file-transfer/SimpleSftpPanel";
+import type { ConnectionSecretInput } from "./features/connections/ConnectionProfileDialog";
 import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
-import { PortivaLogo } from "./shared/PortivaLogo";
-import { Icon } from "./shared/Icon";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
 
@@ -84,139 +84,11 @@ interface HostTrustRequest {
   reconnectTabId?: string;
 }
 
-type WindowAction = "close" | "drag" | "minimize" | "toggle-maximize";
-
 function isSessionWindowLabel(label: string) {
   return (
     label === "main" ||
     label.startsWith(detachedWindowLabelPrefix) ||
     label.startsWith(legacyDetachedTerminalWindowLabelPrefix)
-  );
-}
-
-async function runWindowAction(action: WindowAction) {
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const currentWindow = getCurrentWindow();
-
-    if (action === "drag") {
-      await currentWindow.startDragging();
-    } else if (action === "minimize") {
-      await currentWindow.minimize();
-    } else if (action === "toggle-maximize") {
-      await currentWindow.toggleMaximize();
-    } else {
-      await currentWindow.close();
-    }
-  } catch {
-    // Browser preview and mocked mode do not have native window controls.
-  }
-}
-
-interface AppTitlebarProps {
-  savedConnectionsOpen: boolean;
-  settingsTabActive: boolean;
-  onCreateProfile: () => void;
-  onOpenLocalShell: () => void;
-  onOpenSavedConnections: () => void;
-  onOpenSettings: () => void;
-}
-
-function AppTitlebar({
-  savedConnectionsOpen,
-  settingsTabActive,
-  onCreateProfile,
-  onOpenLocalShell,
-  onOpenSavedConnections,
-  onOpenSettings,
-}: AppTitlebarProps) {
-  const startTitlebarDrag = (event: MouseEvent<HTMLElement>) => {
-    if (
-      event.button !== 0 ||
-      event.detail > 1 ||
-      (event.target instanceof HTMLElement && event.target.closest("button"))
-    ) {
-      return;
-    }
-
-    void runWindowAction("drag");
-  };
-  const toggleTitlebarMaximize = (event: MouseEvent<HTMLElement>) => {
-    if (event.target instanceof HTMLElement && event.target.closest("button")) {
-      return;
-    }
-
-    void runWindowAction("toggle-maximize");
-  };
-
-  return (
-    <header
-      className="app-titlebar"
-      data-tauri-drag-region
-      onDoubleClick={toggleTitlebarMaximize}
-      onMouseDown={startTitlebarDrag}
-    >
-      <div className="app-titlebar-brand" data-tauri-drag-region>
-        <PortivaLogo className="app-titlebar-logo" />
-        <strong>Portiva</strong>
-      </div>
-      <div className="app-titlebar-drag-region" data-tauri-drag-region />
-      <nav className="app-titlebar-actions" aria-label="主页工具栏">
-        <button
-          type="button"
-          className={savedConnectionsOpen ? "active" : ""}
-          title="已保存连接"
-          aria-label="已保存连接"
-          onClick={onOpenSavedConnections}
-        >
-          <Icon name="server" />
-        </button>
-        <button type="button" title="新建连接" aria-label="新建连接" onClick={onCreateProfile}>
-          <Icon name="plus" />
-        </button>
-        <button type="button" title="本地终端" aria-label="本地终端" onClick={onOpenLocalShell}>
-          <Icon name="terminal" />
-        </button>
-        <button
-          type="button"
-          className={settingsTabActive ? "active" : ""}
-          title="设置"
-          aria-label="设置"
-          onClick={onOpenSettings}
-        >
-          <Icon name="settings" />
-        </button>
-      </nav>
-      <div className="window-controls" aria-label="窗口控制">
-        <button
-          type="button"
-          className="window-control"
-          title="最小化"
-          aria-label="最小化"
-          onClick={() => void runWindowAction("minimize")}
-        >
-          <Icon name="minus" />
-        </button>
-        <button
-          type="button"
-          className="window-control"
-          title="最大化"
-          aria-label="最大化"
-          onClick={() => void runWindowAction("toggle-maximize")}
-        >
-          <Icon name="maximize" />
-        </button>
-        <button
-          type="button"
-          className="window-control close"
-          title="关闭"
-          aria-label="关闭"
-          onClick={() => void runWindowAction("close")}
-        >
-          <Icon name="x" />
-        </button>
-      </div>
-    </header>
   );
 }
 
@@ -958,41 +830,28 @@ function App() {
 
     workspace.reorderSessionTabs(sourceTabId, targetTabId);
   };
-  const fileTransferPanel =
-    workspace.activeSessionTabKind === "file-transfer" ? (
-      <FileTransferPanel
-        capabilities={workspace.capabilities}
-        sftpConnectionOptions={workspace.sftpConnectionOptions}
-        localEntries={workspace.localEntries}
-        localPath={workspace.localPath}
-        remoteEntries={workspace.remoteEntries}
-        remotePath={workspace.remotePath}
-        selectedLocalEntry={workspace.selectedLocalEntry}
-        selectedRemoteEntry={workspace.selectedRemoteEntry}
-        transfers={workspace.transfers}
-        onCancelTransfer={(transferId) => workspace.updateTransferTask(transferId, "cancel")}
-        onDeleteTransfer={(transferId) => workspace.updateTransferTask(transferId, "delete")}
-        onOpenConnectionFileTransfer={workspace.openFileTransferTab}
-        onCreateLocalDirectory={workspace.createLocalDirectory}
-        onCreateRemoteDirectory={workspace.createRemoteDirectory}
-        onDownloadEntry={workspace.downloadRemoteEntry}
-        onDownloadSelected={workspace.downloadSelectedRemoteEntry}
-        onRefreshLocal={workspace.refreshLocalFiles}
-        onRefreshRemote={workspace.refreshRemoteFiles}
-        onRemoveLocal={workspace.removeLocalEntry}
-        onRemoveRemote={workspace.removeRemoteEntry}
-        onPauseTransfer={(transferId) => workspace.updateTransferTask(transferId, "pause")}
-        onRenameLocal={workspace.renameLocalEntry}
-        onRenameRemote={workspace.renameRemoteEntry}
-        onResumeTransfer={(transferId) => workspace.updateTransferTask(transferId, "resume")}
-        onRetryTransfer={(transferId) => workspace.updateTransferTask(transferId, "retry")}
-        onSelectLocalEntry={workspace.setSelectedLocalEntry}
-        onSelectRemoteEntry={workspace.setSelectedRemoteEntry}
-        onUploadEntry={workspace.uploadLocalEntry}
-        onUploadSelected={workspace.uploadSelectedLocalEntry}
-        onUploadLocalPaths={workspace.uploadLocalPaths}
-      />
-    ) : null;
+  const fileTransferPanel = <ActiveFileTransferPanel workspace={workspace} />;
+  const shouldShowInlineSftpPanel = Boolean(
+    workspace.activeSessionTabKind === "terminal" &&
+      workspace.activeConnection?.capabilities.fileTransfer &&
+      workspace.activeConnection.transport?.kind === "ssh" &&
+      workspace.activeConnection.transport.authenticated,
+  );
+  const renderInlineSftpPanel = shouldShowInlineSftpPanel
+    ? ({
+        layoutSide,
+        onToggleLayoutSide,
+      }: {
+        layoutSide: "left" | "right";
+        onToggleLayoutSide: () => void;
+      }) => (
+        <SimpleSftpPanel
+          layoutSide={layoutSide}
+          workspace={workspace}
+          onToggleLayoutSide={onToggleLayoutSide}
+        />
+      )
+    : undefined;
   const pendingHostTrust =
     hostTrustRequest &&
     workspace.pendingKnownHost &&
@@ -1039,27 +898,35 @@ function App() {
           capabilities={workspace.capabilities}
           emptyStateNotice={workspace.workspaceMessage}
           fileTransferPanel={fileTransferPanel}
+          sftpSidePanel={renderInlineSftpPanel}
           isFullscreen={terminalFullscreen}
           reattachHintActive={detachedReattachHint}
           profiles={workspace.profiles}
+          serialPorts={workspace.serialPorts}
           sessionTabs={workspace.sessionTabs}
           terminalConfirmMultilinePaste={workspace.settings.terminal.confirmMultilinePaste}
           terminalCopyRichText={workspace.settings.terminal.copyRichText}
           terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
           terminalTheme={terminalPalette}
           onCloseSessionTab={workspace.closeConnection}
+          onCloseSerialTerminal={workspace.closeSerialTerminal}
           onDetachSessionTab={moveDetachedSessionToWindow}
           onSessionDragStateChange={notifyDetachedDragState}
+          onOpenFileTransferTab={workspace.openFileTransferTab}
           onOpenSessionWindow={openSessionWindow}
+          onOpenSerialTerminal={workspace.openSerialTerminal}
           onReconnectSessionTab={reconnectSessionTab}
+          onRefreshSerialPorts={workspace.refreshWorkspace}
           onReorderSessionTabs={workspace.reorderSessionTabs}
+          onSendTerminalBytes={workspace.sendTerminalBytes}
           onSendTerminalData={workspace.sendTerminalData}
           onResizeTerminal={workspace.resizeActiveTerminal}
           onSelectSessionTab={workspace.switchSessionTab}
           onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
-        />
-        {globalHostTrustDialog}
-      </main>
+	        />
+	        <GlobalNotice message={workspace.workspaceMessage} />
+	        {globalHostTrustDialog}
+	      </main>
     );
   }
 
@@ -1100,209 +967,49 @@ function App() {
             capabilities={settingsTabActive ? inactiveCapabilities : workspace.capabilities}
             connection={settingsTabActive ? null : workspace.activeConnection}
             customTabPanels={{
-              [settingsTabId]: (
-                <SettingsPage
-                  capabilities={workspace.capabilities}
-                  connection={workspace.activeConnection}
-                  groups={workspace.groups}
-                  knownHosts={workspace.knownHosts}
-                  logs={workspace.logs}
-                  message={workspace.workspaceMessage}
-                  protocolDescriptors={workspace.protocolDescriptors}
-                  recentConnections={workspace.recentConnections}
-                  redactionInput={workspace.redactionInput}
-                  redactionPreview={workspace.redactionPreview}
-                  secrets={workspace.secrets}
-                  settings={workspace.settings}
-                  tunnels={workspace.tunnels}
-                  onClearLogs={workspace.clearLogs}
-                  onDeleteKnownHost={workspace.deleteKnownHost}
-                  onDeleteSecretMetadata={workspace.deleteSecretMetadata}
-                  onPreviewRedaction={workspace.previewRedaction}
-                  onRedactionInputChange={workspace.setRedactionInput}
-                  onSaveSettings={workspace.saveSettings}
-                />
-              ),
+              [settingsTabId]: <SettingsTabPanel workspace={workspace} />,
             }}
             emptyStateNotice={workspace.sessionNotice}
             fileTransferPanel={fileTransferPanel}
+            sftpSidePanel={settingsTabActive ? undefined : renderInlineSftpPanel}
             isFullscreen={terminalFullscreen}
             reattachHintActive={detachedReattachHint}
             profiles={workspace.profiles}
+            serialPorts={workspace.serialPorts}
             sessionTabs={appSessionTabs}
             terminalConfirmMultilinePaste={workspace.settings.terminal.confirmMultilinePaste}
             terminalCopyRichText={workspace.settings.terminal.copyRichText}
             terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
             terminalTheme={terminalPalette}
             onCloseSessionTab={closeAppSessionTab}
+            onCloseSerialTerminal={workspace.closeSerialTerminal}
             onDetachSessionTab={openAppSessionWindow}
+            onOpenFileTransferTab={workspace.openFileTransferTab}
             onOpenSessionWindow={openAppSessionWindow}
+            onOpenSerialTerminal={workspace.openSerialTerminal}
             onReconnectSessionTab={reconnectAppSessionTab}
+            onRefreshSerialPorts={workspace.refreshWorkspace}
             onReorderSessionTabs={reorderAppSessionTabs}
+            onSendTerminalBytes={workspace.sendTerminalBytes}
             onSendTerminalData={workspace.sendTerminalData}
             onResizeTerminal={workspace.resizeActiveTerminal}
             onSelectSessionTab={selectAppSessionTab}
             onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
-          />
-        </div>
-      </section>
-      {profileDialog ? (
-        <ConnectionProfileDialog
-          mode={profileDialog.mode}
-          profile={profileDialog.profile}
-          rememberedSecret={workspace.secrets.some(
-            (secret) =>
-              secret.profileId === profileDialog.profile.id &&
-              secret.purpose === "password" &&
-              secret.hasValue,
-          )}
-          serialPorts={workspace.serialPorts}
-          onCreateDraft={workspace.createProfileDraft}
-          onClose={() => {
-            setProfileDialog(null);
-            setReconnectTabId(null);
-          }}
-          onConnect={async (profile, input) => {
-              const saved = await workspace.saveProfile(profile);
-
-              if (!saved) {
-                return {
-                  ok: false,
-                  message: "保存配置失败，未发起连接。",
-                };
-              }
-
-              const connectOptions = {
-                authenticate: profile.type === "ssh" || profile.type === "sftp",
-                rememberSecret: input?.rememberSecret,
-                secret: input?.secret,
-              };
-              const result = reconnectTabId
-                ? await workspace.reconnectSessionTab(reconnectTabId, connectOptions, saved)
-                : await workspace.openProfileConnection(saved, connectOptions);
-              registerHostTrustRequest(result, {
-                connectAfterTrust: true,
-                input: connectOptions,
-                profile: saved,
-                reconnectTabId: reconnectTabId ?? undefined,
-              });
-              if (result.status === "opened") {
-                setActiveShellTabId(null);
-                setProfileDialog(null);
-                setReconnectTabId(null);
-              }
-              return {
-                ok: result.status === "opened",
-                needsTrust: result.status === "needs-trust",
-                message: result.message,
-              };
-          }}
-          onDelete={(profileId) => {
-            void workspace.deleteProfile(profileId);
-            setProfileDialog(null);
-            setReconnectTabId(null);
-          }}
-          onRefreshSerialPorts={workspace.refreshWorkspace}
-          onSave={async (profile, input) => {
-            const saved = await workspace.saveProfile(profile, input);
-            if (!saved) {
-              return {
-                ok: false,
-                message: "保存配置失败。",
-              };
-            }
-
-            setReconnectTabId(null);
-            setProfileDialog({ mode: "edit", profile: saved });
-            return {
-              ok: true,
-              message: "已保存配置。",
-            };
-          }}
-          onTest={async (profile, input) => {
-            const result = await workspace.testProfile(profile, input);
-            registerHostTrustRequest(result, {
-              connectAfterTrust: false,
-              input,
-              profile,
-            });
-            return result;
-          }}
-        />
-      ) : null}
+	          />
+	        </div>
+	      </section>
+	      <GlobalNotice message={workspace.workspaceMessage} />
+	      <ProfileDialogHost
+        dialog={profileDialog}
+        reconnectTabId={reconnectTabId}
+        workspace={workspace}
+        onActiveShellTabChange={setActiveShellTabId}
+        onDialogChange={setProfileDialog}
+        onHostTrustRequired={registerHostTrustRequest}
+        onReconnectTabChange={setReconnectTabId}
+      />
       {globalHostTrustDialog}
     </main>
-  );
-}
-
-function HostTrustDialog({
-  busy,
-  connectAfterTrust,
-  fingerprint,
-  host,
-  onCancel,
-  onConfirm,
-}: {
-  busy: boolean;
-  connectAfterTrust: boolean;
-  fingerprint: string;
-  host: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div
-      className="host-trust-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        event.stopPropagation();
-        if (!busy) {
-          onCancel();
-        }
-      }}
-    >
-      <section
-        aria-label="确认信任主机"
-        aria-modal="true"
-        className="host-trust-dialog"
-        role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <div className="host-trust-heading">
-          <strong>确认信任 SSH 主机</strong>
-          <button
-            aria-label="关闭确认弹窗"
-            disabled={busy}
-            onClick={onCancel}
-            title="关闭确认弹窗"
-            type="button"
-          >
-            <Icon name="x" />
-          </button>
-        </div>
-        <div className="host-trust-content">
-          <p>请核对该主机指纹。确认后会写入 known_hosts，之后同一主机将自动校验。</p>
-          <dl>
-            <div>
-              <dt>主机</dt>
-              <dd>{host}</dd>
-            </div>
-            <div>
-              <dt>指纹</dt>
-              <dd>{fingerprint}</dd>
-            </div>
-          </dl>
-        </div>
-        <div className="host-trust-actions">
-          <button disabled={busy} onClick={onCancel} type="button">
-            取消
-          </button>
-          <button className="primary-action" disabled={busy} onClick={onConfirm} type="button">
-            {busy ? "处理中..." : connectAfterTrust ? "信任并连接" : "信任"}
-          </button>
-        </div>
-      </section>
-    </div>
   );
 }
 

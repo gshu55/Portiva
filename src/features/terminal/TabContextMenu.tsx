@@ -3,33 +3,29 @@ import { Icon } from "../../shared/Icon";
 import type { WorkspaceSessionTab } from "../../shared/types";
 
 interface TabContextMenuProps {
-  activeTabId?: string;
   position: {
     x: number;
     y: number;
   };
-  isFullscreen: boolean;
   tab: WorkspaceSessionTab;
   tabId: string;
   canSplitRight?: boolean;
   onClose: () => void;
   onCloseTab: (tabId: string) => void;
+  onOpenFileTransfer?: (connectionId: string, options?: { forceNew?: boolean }) => void;
   onOpenWindow: (tabId: string) => void;
   onReconnect: (tabId: string) => void;
   onSplitRight?: (tabId: string) => void;
-  onToggleFullscreen: (tabId: string) => void;
 }
 
 export function TabContextMenu({
-  activeTabId,
-  isFullscreen,
   canSplitRight = false,
   onClose,
   onCloseTab,
+  onOpenFileTransfer,
   onOpenWindow,
   onReconnect,
   onSplitRight,
-  onToggleFullscreen,
   position,
   tab,
   tabId,
@@ -44,8 +40,11 @@ export function TabContextMenu({
       ? "已恢复"
       : connectionStatusLabel(tab.connection.status);
   const reconnectTargetId = isSettingsTab ? undefined : isFileTransferTab ? tab.parentConnectionId : tabId;
-  const isActiveTab = tabId === activeTabId;
-  const fullscreenLabel = isFullscreen && isActiveTab ? "退出全屏" : "全屏显示";
+  const canOpenFileTransfer =
+    !isSettingsTab &&
+    !isFileTransferTab &&
+    tab.connection.capabilities.sftp &&
+    tab.connection.capabilities.fileTransfer;
 
   const runAction = (action: () => void) => {
     action();
@@ -74,9 +73,15 @@ export function TabContextMenu({
           <Icon name="rotate-ccw" />
           <span>重连</span>
         </button>
-        <button onClick={() => runAction(() => onToggleFullscreen(tabId))} role="menuitem" title={fullscreenLabel} type="button">
-          <Icon name={isFullscreen && isActiveTab ? "minimize" : "maximize"} />
-          <span>{fullscreenLabel}</span>
+        <button
+          disabled={!canOpenFileTransfer || !onOpenFileTransfer}
+          onClick={() => runAction(() => onOpenFileTransfer?.(tab.connection.id, { forceNew: true }))}
+          role="menuitem"
+          title={canOpenFileTransfer ? "打开 SFTP 文件管理" : "当前标签不支持 SFTP"}
+          type="button"
+        >
+          <Icon name="folder-open" />
+          <span>打开 SFTP</span>
         </button>
         <button
           disabled={isSettingsTab || !canSplitRight}

@@ -572,7 +572,7 @@ function FilePane({
                 <span role="cell">{kindLabel(entry.kind)}</span>
                 <small role="cell">{entry.kind === "directory" ? "-" : formatBytes(entry.size)}</small>
                 <small role="cell">{formatModifiedAt(entry.modifiedAt)}</small>
-                <small role="cell">{entry.permissions ?? "-"}</small>
+                <small role="cell">{formatPermissions(entry)}</small>
               </div>
             ) : (
               <button
@@ -608,7 +608,7 @@ function FilePane({
                 <span role="cell">{kindLabel(entry.kind)}</span>
                 <small role="cell">{entry.kind === "directory" ? "-" : formatBytes(entry.size)}</small>
                 <small role="cell">{formatModifiedAt(entry.modifiedAt)}</small>
-                <small role="cell">{entry.permissions ?? "-"}</small>
+                <small role="cell">{formatPermissions(entry)}</small>
               </button>
             ),
           )
@@ -780,6 +780,58 @@ function formatBytes(size: number) {
   }
 
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatPermissions(entry: RemoteEntry) {
+  const permissions = entry.permissions?.trim();
+
+  if (!permissions) {
+    return "-";
+  }
+
+  if (/^[dl-][rwxstST-]{9}$/.test(permissions)) {
+    return permissions;
+  }
+
+  if (!/^[0-7]+$/.test(permissions)) {
+    return permissions;
+  }
+
+  const mode = Number.parseInt(permissions, 8);
+
+  if (!Number.isFinite(mode)) {
+    return permissions;
+  }
+
+  const typePrefix = entry.kind === "directory" ? "d" : entry.kind === "symlink" ? "l" : "-";
+  const permissionBits = mode & 0o777;
+  const specialBits = mode & 0o7000;
+  const triplets = [
+    permissionTriplet(permissionBits, 6, Boolean(specialBits & 0o4000), "s", "S"),
+    permissionTriplet(permissionBits, 3, Boolean(specialBits & 0o2000), "s", "S"),
+    permissionTriplet(permissionBits, 0, Boolean(specialBits & 0o1000), "t", "T"),
+  ];
+
+  return `${typePrefix}${triplets.join("")}`;
+}
+
+function permissionTriplet(
+  permissionBits: number,
+  shift: number,
+  special: boolean,
+  executableSpecial: string,
+  nonExecutableSpecial: string,
+) {
+  const value = (permissionBits >> shift) & 0b111;
+  const readable = value & 0b100 ? "r" : "-";
+  const writable = value & 0b010 ? "w" : "-";
+  const executable = value & 0b001 ? "x" : "-";
+
+  if (!special) {
+    return `${readable}${writable}${executable}`;
+  }
+
+  return `${readable}${writable}${executable === "x" ? executableSpecial : nonExecutableSpecial}`;
 }
 
 function parentPath(path: string, pathKind: "local" | "remote" = "local") {

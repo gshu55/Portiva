@@ -25,7 +25,6 @@ pub struct ConnectionProfile {
     pub username: Option<String>,
     pub auth_type: Option<String>,
     pub private_key_path: Option<String>,
-    pub enable_sftp: Option<bool>,
     pub port_name: Option<String>,
     pub baud_rate: Option<u32>,
     pub data_bits: Option<u8>,

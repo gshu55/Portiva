@@ -12,6 +12,15 @@ export type IconName =
   | "download"
   | "edit"
   | "external-link"
+  | "file"
+  | "file-archive"
+  | "file-audio"
+  | "file-binary"
+  | "file-code"
+  | "file-image"
+  | "file-text"
+  | "file-video"
+  | "folder"
   | "folder-open"
   | "folder-plus"
   | "hard-drive"
@@ -54,6 +63,15 @@ const iconPaths: Record<IconName, string[]> = {
   download: ["M12 3v12", "m7 10 5 5 5-5", "M5 21h14"],
   edit: ["M12 20h9", "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"],
   "external-link": ["M15 3h6v6", "M10 14 21 3", "M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"],
+  file: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"],
+  "file-archive": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M10 11h4", "M10 14h4", "M10 17h4"],
+  "file-audio": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M9 17V11l5-1v6", "M9 17a1.5 1.5 0 1 1-1.5-1.5A1.5 1.5 0 0 1 9 17Z", "M14 16a1.5 1.5 0 1 1-1.5-1.5A1.5 1.5 0 0 1 14 16Z"],
+  "file-binary": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M8 12h2v6H8z", "M14 12h2v6h-2z"],
+  "file-code": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "m10 13-2 2 2 2", "m14 13 2 2-2 2"],
+  "file-image": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M8 17l2.5-3 2 2.5L14 15l2 2", "M9.5 11.5h.01"],
+  "file-text": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M8 13h8", "M8 16h8", "M8 19h5"],
+  "file-video": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M8 13h5v4H8z", "m13 14 3-2v6l-3-2"],
+  folder: ["M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"],
   "folder-open": ["M6 14h13l-2 6H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v3"],
   "folder-plus": ["M12 10v6", "M9 13h6", "M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"],
   "hard-drive": ["M22 12H2", "M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z", "M6 16h.01", "M10 16h.01"],
