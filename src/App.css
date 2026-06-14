@@ -7336,7 +7336,8 @@ body.http-workbench-resizing {
 .http-sidebar-card,
 .http-request-editor,
 .http-response-workspace,
-.http-environment-workbench {
+.http-environment-workbench,
+.http-share-workbench {
   border: 1px solid var(--border-panel);
   background: color-mix(in srgb, var(--panel-bg) 90%, var(--app-bg));
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent);
@@ -7435,7 +7436,7 @@ body.http-workbench-resizing {
 
 .http-sidebar-tool-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -7448,7 +7449,8 @@ body.http-workbench-resizing {
   width: 100%;
 }
 
-.http-environment-workbench {
+.http-environment-workbench,
+.http-share-workbench {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
@@ -7458,7 +7460,8 @@ body.http-workbench-resizing {
   padding: 14px;
 }
 
-.http-environment-heading {
+.http-environment-heading,
+.http-share-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7466,18 +7469,21 @@ body.http-workbench-resizing {
   min-width: 0;
 }
 
-.http-environment-heading > div {
+.http-environment-heading > div,
+.http-share-heading > div {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
-.http-environment-heading strong {
+.http-environment-heading strong,
+.http-share-heading strong {
   color: var(--text-strong);
   font-size: 16px;
 }
 
-.http-environment-heading span {
+.http-environment-heading span,
+.http-share-heading span {
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
@@ -7685,6 +7691,224 @@ body.http-workbench-resizing {
 .http-variable-reference:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
   color: var(--accent);
+}
+
+.http-share-tabs {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.http-share-tabs button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  border: 1px solid var(--border-faint);
+  background: color-mix(in srgb, var(--button-muted-bg) 88%, transparent);
+  padding: 4px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.http-share-tabs button.active {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+  color: var(--accent);
+}
+
+.http-share-tabs small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  min-height: 18px;
+  border: 1px solid var(--border-faint);
+  border-radius: 999px;
+  background: var(--button-muted-bg);
+  padding: 0 5px;
+  color: var(--text-soft);
+  font-size: 10px;
+  box-sizing: border-box;
+}
+
+.http-share-editor {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.http-share-export-panel,
+.http-share-import-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, 6px);
+  background: color-mix(in srgb, var(--panel-solid-bg) 58%, transparent);
+  padding: 12px;
+}
+
+.http-share-import-panel {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.http-share-toolbar,
+.http-share-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.http-share-toolbar > div,
+.http-share-actions > div {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.http-share-toolbar button,
+.http-share-actions button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.http-share-import-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.http-share-option-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.http-share-option-group > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.http-share-choice-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.http-share-choice-row button {
+  min-height: 32px;
+  border: 1px solid var(--border-faint);
+  background: color-mix(in srgb, var(--button-muted-bg) 88%, transparent);
+  white-space: nowrap;
+}
+
+.http-share-choice-row button.active {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+  color: var(--accent);
+}
+
+.http-share-export-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(360px, 1.1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.http-share-request-list,
+.http-share-json-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--settings-inner-radius, 6px);
+  background: color-mix(in srgb, var(--field-bg) 34%, transparent);
+}
+
+.http-share-request-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.app-shell .http-share-request-row {
+  min-height: 46px;
+  border-radius: var(--settings-inner-radius, 6px);
+  padding: 6px 8px;
+}
+
+.app-shell .http-share-request-row .check-row-label {
+  display: grid;
+  grid-template-columns: 58px minmax(120px, 0.7fr) minmax(90px, 0.45fr) minmax(160px, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.http-share-request-row strong,
+.http-share-request-row small,
+.http-share-request-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-share-request-row strong {
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
+.http-share-request-row small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.http-share-request-row code {
+  color: var(--text-soft);
+  font-family: var(--terminal-font-family), "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+}
+
+.http-share-json-panel {
+  display: grid;
+  padding: 0;
+}
+
+.http-share-json-textarea,
+.http-share-import-textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  border-radius: var(--settings-inner-radius, 6px);
+  background: color-mix(in srgb, var(--field-bg) 88%, var(--panel-solid-bg));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.http-share-error {
+  color: var(--danger);
 }
 
 .http-tree-card {

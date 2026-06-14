@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::domain::http_workspace::{
-    HttpAuthDraft, HttpKeyValueEntry, HttpProjectDraft, HttpRequestDraft, HttpWorkspaceDraft,
+    HttpProjectDraft, HttpRequestDraft, HttpWorkspaceDraft,
 };
 use crate::utils::{app_paths, clock};
 
@@ -50,6 +50,7 @@ impl HttpWorkspaceStore {
             seed_default_workspace(&mut connection)?;
         }
 
+        remove_seeded_default_content(&connection)?;
         load_workspaces(&connection)
     }
 
@@ -324,6 +325,48 @@ fn seed_default_workspace(connection: &mut Connection) -> Result<(), String> {
     replace_workspaces(connection, &default_http_workspaces())
 }
 
+fn remove_seeded_default_content(connection: &Connection) -> Result<(), String> {
+    let seeded_requests = [
+        (
+            "req-workspace-status",
+            "工作区状态",
+            "https://api.example.local/status",
+        ),
+        (
+            "req-health",
+            "服务健康检查",
+            "https://api.example.local/health",
+        ),
+        (
+            "req-login",
+            "登录接口",
+            "https://api.example.local/auth/login",
+        ),
+    ];
+
+    for (request_id, name, url) in seeded_requests {
+        connection
+            .execute(
+                "DELETE FROM http_requests WHERE workspace_id = ? AND id = ? AND name = ? AND url = ?",
+                params!["ws-default", request_id, name, url],
+            )
+            .map_err(|error| format!("failed to remove seeded http request: {error}"))?;
+    }
+
+    connection
+        .execute(
+            "DELETE FROM http_projects
+             WHERE workspace_id = ? AND id = ? AND name = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM http_requests WHERE http_requests.project_id = http_projects.id
+             )",
+            params!["ws-default", "project-default", "默认项目"],
+        )
+        .map_err(|error| format!("failed to remove seeded http project: {error}"))?;
+
+    Ok(())
+}
+
 fn count_rows(connection: &Connection, table: &str) -> Result<i64, String> {
     connection
         .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -334,71 +377,21 @@ fn count_rows(connection: &Connection, table: &str) -> Result<i64, String> {
         .ok_or_else(|| format!("failed to count {table}"))
 }
 
-fn default_auth() -> HttpAuthDraft {
-    HttpAuthDraft {
-        api_key_location: "header".to_string(),
-        api_key_name: String::new(),
-        api_key_value: String::new(),
-        bearer_token: String::new(),
-        password: String::new(),
-        r#type: "none".to_string(),
-        username: String::new(),
-    }
-}
-
 fn default_http_workspaces() -> Vec<HttpWorkspaceDraft> {
     vec![HttpWorkspaceDraft {
         id: "ws-default".to_string(),
         name: "默认工作区".to_string(),
-        requests: vec![HttpRequestDraft {
-            auth: default_auth(),
-            body: String::new(),
-            body_mode: "none".to_string(),
-            form_body: Vec::new(),
-            headers: vec![HttpKeyValueEntry {
-                description: None,
-                enabled: true,
-                key: "Accept".to_string(),
-                value: "application/json".to_string(),
-            }],
-            id: "req-workspace-status".to_string(),
-            method: "GET".to_string(),
-            name: "工作区状态".to_string(),
-            params: Vec::new(),
-            url: "https://api.example.local/status".to_string(),
-        }],
-        projects: vec![HttpProjectDraft {
-            id: "project-default".to_string(),
-            name: "默认项目".to_string(),
-            requests: vec![HttpRequestDraft {
-                auth: default_auth(),
-                body: String::new(),
-                body_mode: "none".to_string(),
-                form_body: Vec::new(),
-                headers: vec![HttpKeyValueEntry {
-                    description: None,
-                    enabled: true,
-                    key: "Accept".to_string(),
-                    value: "application/json".to_string(),
-                }],
-                id: "req-health".to_string(),
-                method: "GET".to_string(),
-                name: "服务健康检查".to_string(),
-                params: vec![HttpKeyValueEntry {
-                    description: None,
-                    enabled: true,
-                    key: "verbose".to_string(),
-                    value: "true".to_string(),
-                }],
-                url: "https://api.example.local/health".to_string(),
-            }],
-        }],
+        projects: Vec::new(),
+        requests: Vec::new(),
     }]
 }
 
 #[cfg(test)]
 mod tests {
     use super::HttpWorkspaceStore;
+    use crate::domain::http_workspace::{
+        HttpAuthDraft, HttpProjectDraft, HttpRequestDraft, HttpWorkspaceDraft,
+    };
 
     #[test]
     fn seeds_default_workspace() {
@@ -406,5 +399,70 @@ mod tests {
         let workspaces = store.list().unwrap();
 
         assert_eq!(workspaces[0].id, "ws-default");
+        assert!(workspaces[0].projects.is_empty());
+        assert!(workspaces[0].requests.is_empty());
+    }
+
+    #[test]
+    fn removes_legacy_seeded_requests_from_default_workspace() {
+        let path = test_path("http-workspace-legacy-seed.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let store = HttpWorkspaceStore::with_path(path.clone());
+
+        store
+            .save_all(vec![HttpWorkspaceDraft {
+                id: "ws-default".to_string(),
+                name: "默认工作区".to_string(),
+                projects: vec![HttpProjectDraft {
+                    id: "project-default".to_string(),
+                    name: "默认项目".to_string(),
+                    requests: vec![seeded_request(
+                        "req-health",
+                        "服务健康检查",
+                        "https://api.example.local/health",
+                    )],
+                }],
+                requests: vec![seeded_request(
+                    "req-workspace-status",
+                    "工作区状态",
+                    "https://api.example.local/status",
+                )],
+            }])
+            .unwrap();
+
+        let workspaces = store.list().unwrap();
+
+        assert_eq!(workspaces[0].id, "ws-default");
+        assert!(workspaces[0].projects.is_empty());
+        assert!(workspaces[0].requests.is_empty());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn seeded_request(id: &str, name: &str, url: &str) -> HttpRequestDraft {
+        HttpRequestDraft {
+            auth: HttpAuthDraft {
+                api_key_location: "header".to_string(),
+                api_key_name: String::new(),
+                api_key_value: String::new(),
+                bearer_token: String::new(),
+                password: String::new(),
+                r#type: "none".to_string(),
+                username: String::new(),
+            },
+            body: String::new(),
+            body_mode: "none".to_string(),
+            form_body: Vec::new(),
+            headers: Vec::new(),
+            id: id.to_string(),
+            method: "GET".to_string(),
+            name: name.to_string(),
+            params: Vec::new(),
+            url: url.to_string(),
+        }
+    }
+
+    fn test_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("portiva-{name}-{}", std::process::id()))
     }
 }

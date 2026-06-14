@@ -18,10 +18,14 @@ import type {
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 type RequestSection = "params" | "headers" | "body" | "auth" | "preview";
-type MainView = "blank" | "request" | "environment";
+type MainView = "blank" | "request" | "environment" | "share";
 type ResponseView = "body" | "headers" | "history";
+type ShareView = "export" | "import";
+type ImportTarget = "current" | "new";
+type ImportConflictMode = "overwrite" | "ignore";
 type VariableScope = "workspace" | "project" | "environment" | "request-temp";
 type TreeNodeType = "workspace" | "project" | "request";
+type RequestRowField = "formBody" | "headers" | "params";
 type KeyValueEntry = { description?: string; enabled: boolean; key: string; sensitive?: boolean; value: string };
 type BodyMode = "none" | "json" | "text" | "form";
 type AuthType = "none" | "bearer" | "basic" | "api-key";
@@ -72,6 +76,28 @@ interface HttpWorkspaceDraft {
   projects: HttpProjectDraft[];
   requests: HttpRequestDraft[];
   variables?: KeyValueEntry[];
+}
+
+interface HttpWorkspaceShareDocument {
+  exportedAt: string;
+  kind: "portiva.http.workspace";
+  version: 1;
+  workspace: HttpWorkspaceDraft;
+}
+
+interface HttpShareRequestOption {
+  id: string;
+  projectId: string | null;
+  projectName: string;
+  request: HttpRequestDraft;
+}
+
+interface HttpImportMergeResult {
+  added: number;
+  ignored: number;
+  importedRequestIds: string[];
+  overwritten: number;
+  workspace: HttpWorkspaceDraft;
 }
 
 interface HttpResponsePreview {
@@ -164,6 +190,8 @@ function getDeleteConfirmContent(target: Exclude<HttpDeleteConfirmState, null>) 
 }
 
 const httpTreeDragMimeType = "application/x-portiva-http-tree-node";
+const httpWorkspaceShareKind = "portiva.http.workspace";
+const httpWorkspaceShareVersion = 1;
 
 const defaultWorkspaces: HttpWorkspaceDraft[] = [
   {
@@ -181,60 +209,13 @@ const defaultWorkspaces: HttpWorkspaceDraft[] = [
     ],
     id: "ws-default",
     name: "默认工作区",
-    requests: [
-      {
-        auth: createDefaultAuth(),
-        body: "",
-        bodyMode: "none",
-        formBody: [],
-        headers: [{ enabled: true, key: "Accept", value: "application/json" }],
-        id: "req-workspace-status",
-        method: "GET",
-        name: "工作区状态",
-        params: [],
-        url: "https://api.example.local/status",
-      },
-    ],
-    projects: [
-      {
-        id: "project-default",
-        name: "默认项目",
-        requests: [
-          {
-            auth: createDefaultAuth(),
-            body: "",
-            bodyMode: "none",
-            formBody: [],
-            headers: [{ enabled: true, key: "Accept", value: "application/json" }],
-            id: "req-health",
-            method: "GET",
-            name: "服务健康检查",
-            params: [{ enabled: true, key: "verbose", value: "true" }],
-            url: "https://api.example.local/health",
-          },
-          {
-            auth: {
-              ...createDefaultAuth(),
-              bearerToken: "{{token}}",
-              type: "bearer",
-            },
-            body: '{\n  "username": "demo",\n  "password": "{{password}}"\n}',
-            bodyMode: "json",
-            formBody: [],
-            headers: [
-              { enabled: true, key: "Content-Type", value: "application/json" },
-            ],
-            id: "req-login",
-            method: "POST",
-            name: "登录接口",
-            params: [],
-            url: "https://api.example.local/auth/login",
-          },
-        ],
-      },
-    ],
+    projects: [],
+    requests: [],
   },
 ];
+const initialWorkspace = defaultWorkspaces[0];
+const initialProject = initialWorkspace.projects[0] ?? null;
+const initialRequest = initialWorkspace.requests[0] ?? initialProject?.requests[0] ?? null;
 const httpMethods: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const httpMethodOptions: Array<{ label: HttpMethod; value: HttpMethod }> = httpMethods.map((method) => ({
   label: method,
@@ -268,6 +249,11 @@ const emptyVariableDrafts: Record<VariableScope, KeyValueEntry> = {
   project: { ...createBlankRow(), enabled: false },
   "request-temp": { ...createBlankRow(), enabled: false },
   workspace: { ...createBlankRow(), enabled: false },
+};
+const emptyRequestDraftRows: Record<RequestRowField, KeyValueEntry> = {
+  formBody: { ...createBlankRow(), enabled: false },
+  headers: { ...createBlankRow(), enabled: false },
+  params: { ...createBlankRow(), enabled: false },
 };
 
 function createDefaultAuth(): HttpAuthDraft {
@@ -448,6 +434,312 @@ function createBlankRequest(name = "新建请求"): HttpRequestDraft {
     tempVariables: [],
     url: "",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function textValue(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function booleanValue(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizeImportedRows(value: unknown): KeyValueEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+
+    return [
+      {
+        description: textValue(entry.description),
+        enabled: booleanValue(entry.enabled, true),
+        key: textValue(entry.key),
+        sensitive: booleanValue(entry.sensitive, false),
+        value: textValue(entry.value),
+      },
+    ];
+  });
+}
+
+function normalizeImportedAuth(value: unknown): HttpAuthDraft {
+  const auth = isRecord(value) ? value : {};
+  const authType = textValue(auth.type);
+  const apiKeyLocation = textValue(auth.apiKeyLocation);
+
+  return {
+    apiKeyLocation: apiKeyLocation === "query" ? "query" : "header",
+    apiKeyName: textValue(auth.apiKeyName),
+    apiKeyValue: textValue(auth.apiKeyValue),
+    bearerToken: textValue(auth.bearerToken),
+    password: textValue(auth.password),
+    type: authTypeOptions.some((option) => option.value === authType) ? (authType as AuthType) : "none",
+    username: textValue(auth.username),
+  };
+}
+
+function normalizeImportedRequest(value: unknown): HttpRequestDraft | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const method = textValue(value.method);
+  const bodyMode = textValue(value.bodyMode);
+
+  return {
+    auth: normalizeImportedAuth(value.auth),
+    body: textValue(value.body),
+    bodyMode: bodyModeOptions.some((option) => option.value === bodyMode) ? (bodyMode as BodyMode) : "none",
+    formBody: normalizeImportedRows(value.formBody),
+    headers: normalizeImportedRows(value.headers),
+    id: makeId("req"),
+    method: httpMethods.includes(method as HttpMethod) ? (method as HttpMethod) : "GET",
+    name: textValue(value.name, "导入请求"),
+    params: normalizeImportedRows(value.params),
+    tempVariables: normalizeImportedRows(value.tempVariables),
+    url: textValue(value.url),
+  };
+}
+
+function normalizeImportedProject(value: unknown): HttpProjectDraft | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    id: makeId("project"),
+    name: textValue(value.name, "导入项目"),
+    requests: Array.isArray(value.requests) ? value.requests.flatMap((request) => normalizeImportedRequest(request) ?? []) : [],
+    variables: normalizeImportedRows(value.variables),
+  };
+}
+
+function normalizeImportedEnvironment(value: unknown, idMap: Map<string, string>): HttpEnvironmentDraft | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const importedId = makeId("env");
+  const sourceId = textValue(value.id);
+  if (sourceId) {
+    idMap.set(sourceId, importedId);
+  }
+
+  return {
+    id: importedId,
+    name: textValue(value.name, "导入环境"),
+    variables: normalizeImportedRows(value.variables),
+  };
+}
+
+function normalizeImportedWorkspace(value: unknown, existingNames: string[]): HttpWorkspaceDraft {
+  if (!isRecord(value)) {
+    throw new Error("JSON 中缺少 workspace 对象。");
+  }
+
+  const environmentIdMap = new Map<string, string>();
+  const environments = Array.isArray(value.environments)
+    ? value.environments.flatMap((environment) => normalizeImportedEnvironment(environment, environmentIdMap) ?? [])
+    : [];
+  const activeEnvironmentId = environmentIdMap.get(textValue(value.activeEnvironmentId)) ?? environments[0]?.id ?? null;
+  const baseName = textValue(value.name, "导入工作区");
+
+  return normalizeWorkspace({
+    activeEnvironmentId,
+    environments,
+    id: makeId("ws"),
+    name: uniqueName(existingNames, `${baseName} 导入`),
+    projects: Array.isArray(value.projects) ? value.projects.flatMap((project) => normalizeImportedProject(project) ?? []) : [],
+    requests: Array.isArray(value.requests) ? value.requests.flatMap((request) => normalizeImportedRequest(request) ?? []) : [],
+    variables: normalizeImportedRows(value.variables),
+  });
+}
+
+function parseWorkspaceShareJson(json: string, existingNames: string[]) {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    throw new Error("JSON 格式无效。");
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error("JSON 根节点必须是对象。");
+  }
+
+  if (parsed.kind !== httpWorkspaceShareKind) {
+    throw new Error("不是 Portiva HTTP 工作区分享文件。");
+  }
+
+  if (parsed.version !== httpWorkspaceShareVersion) {
+    throw new Error(`不支持的分享版本：${String(parsed.version)}`);
+  }
+
+  return normalizeImportedWorkspace(parsed.workspace, existingNames);
+}
+
+function requestUrlKey(request: HttpRequestDraft) {
+  return request.url.trim();
+}
+
+function requestLocationById(workspace: HttpWorkspaceDraft, requestId: string) {
+  if (workspace.requests.some((request) => request.id === requestId)) {
+    return { projectId: null, requestId };
+  }
+
+  for (const project of workspace.projects) {
+    if (project.requests.some((request) => request.id === requestId)) {
+      return { projectId: project.id, requestId };
+    }
+  }
+
+  return null;
+}
+
+function mergeImportedWorkspaceIntoCurrent(
+  currentWorkspace: HttpWorkspaceDraft,
+  importedWorkspace: HttpWorkspaceDraft,
+  conflictMode: ImportConflictMode,
+): HttpImportMergeResult {
+  const existingRequestIdByUrl = new Map<string, string>();
+
+  currentWorkspace.requests.forEach((request) => {
+    const key = requestUrlKey(request);
+    if (key && !existingRequestIdByUrl.has(key)) {
+      existingRequestIdByUrl.set(key, request.id);
+    }
+  });
+  currentWorkspace.projects.forEach((project) => {
+    project.requests.forEach((request) => {
+      const key = requestUrlKey(request);
+      if (key && !existingRequestIdByUrl.has(key)) {
+        existingRequestIdByUrl.set(key, request.id);
+      }
+    });
+  });
+
+  const overwrittenRequests = new Map<string, HttpRequestDraft>();
+  const importedRequestIds: string[] = [];
+  let added = 0;
+  let ignored = 0;
+  let overwritten = 0;
+
+  const resolveImportedRequest = (request: HttpRequestDraft) => {
+    const key = requestUrlKey(request);
+    const existingRequestId = key ? existingRequestIdByUrl.get(key) : undefined;
+
+    if (existingRequestId) {
+      if (conflictMode === "overwrite") {
+        overwrittenRequests.set(existingRequestId, { ...request, id: existingRequestId });
+        importedRequestIds.push(existingRequestId);
+        overwritten += 1;
+      } else {
+        ignored += 1;
+      }
+
+      return null;
+    }
+
+    importedRequestIds.push(request.id);
+    added += 1;
+    return request;
+  };
+
+  const importedWorkspaceRequests = importedWorkspace.requests.flatMap((request) => resolveImportedRequest(request) ?? []);
+  const currentProjectNames = currentWorkspace.projects.map((project) => project.name);
+  const importedProjects = importedWorkspace.projects.flatMap((project) => {
+    const requests = project.requests.flatMap((request) => resolveImportedRequest(request) ?? []);
+    const variables = project.variables ?? [];
+
+    if (requests.length === 0 && variables.length === 0) {
+      return [];
+    }
+
+    const projectName = uniqueName(currentProjectNames, project.name);
+    currentProjectNames.push(projectName);
+    return [
+      {
+        ...project,
+        name: projectName,
+        requests,
+      },
+    ];
+  });
+
+  const replaceRequest = (request: HttpRequestDraft) => overwrittenRequests.get(request.id) ?? request;
+  const workspace = normalizeWorkspace({
+    ...currentWorkspace,
+    environments: [...(currentWorkspace.environments ?? []), ...(importedWorkspace.environments ?? [])],
+    projects: [
+      ...currentWorkspace.projects.map((project) => ({
+        ...project,
+        requests: project.requests.map(replaceRequest),
+      })),
+      ...importedProjects,
+    ],
+    requests: [...currentWorkspace.requests.map(replaceRequest), ...importedWorkspaceRequests],
+    variables: [...(currentWorkspace.variables ?? []), ...(importedWorkspace.variables ?? [])],
+  });
+
+  return {
+    added,
+    ignored,
+    importedRequestIds,
+    overwritten,
+    workspace,
+  };
+}
+
+function collectShareRequestOptions(workspace: HttpWorkspaceDraft): HttpShareRequestOption[] {
+  return [
+    ...workspace.requests.map((request) => ({
+      id: request.id,
+      projectId: null,
+      projectName: "工作区",
+      request,
+    })),
+    ...workspace.projects.flatMap((project) =>
+      project.requests.map((request) => ({
+        id: request.id,
+        projectId: project.id,
+        projectName: project.name,
+        request,
+      })),
+    ),
+  ];
+}
+
+function buildShareWorkspace(workspace: HttpWorkspaceDraft, selectedRequestIds: Set<string>): HttpWorkspaceDraft {
+  return {
+    ...workspace,
+    projects: workspace.projects
+      .map((project) => ({
+        ...project,
+        requests: project.requests.filter((request) => selectedRequestIds.has(request.id)),
+      }))
+      .filter((project) => project.requests.length > 0),
+    requests: workspace.requests.filter((request) => selectedRequestIds.has(request.id)),
+  };
+}
+
+function buildWorkspaceShareJson(workspace: HttpWorkspaceDraft, selectedRequestIds: Set<string>) {
+  const document: HttpWorkspaceShareDocument = {
+    exportedAt: new Date().toISOString(),
+    kind: httpWorkspaceShareKind,
+    version: httpWorkspaceShareVersion,
+    workspace: buildShareWorkspace(workspace, selectedRequestIds),
+  };
+
+  return JSON.stringify(document, null, 2);
 }
 
 function appendEnabledQueryParams(url: string, params: KeyValueEntry[]) {
@@ -807,14 +1099,25 @@ async function sendHttpDraftRequest(
 
 export function HttpConsolePanel() {
   const [workspaces, setWorkspaces] = useState<HttpWorkspaceDraft[]>(() => normalizeWorkspaces(defaultWorkspaces));
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(defaultWorkspaces[0].id);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [activeRequestId, setActiveRequestId] = useState(defaultWorkspaces[0].requests[0].id);
-  const [activeMainView, setActiveMainView] = useState<MainView>("request");
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(initialWorkspace.id);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(
+    initialWorkspace.requests[0] ? null : initialProject?.id ?? null,
+  );
+  const [activeRequestId, setActiveRequestId] = useState(initialRequest?.id ?? "");
+  const [activeMainView, setActiveMainView] = useState<MainView>(initialRequest ? "request" : "blank");
   const [activeSection, setActiveSection] = useState<RequestSection>("params");
+  const [activeShareView, setActiveShareView] = useState<ShareView>("export");
   const [selectedVariableScope, setSelectedVariableScope] = useState<VariableScope>("environment");
   const [environmentTabOpen, setEnvironmentTabOpen] = useState(false);
+  const [shareTabOpen, setShareTabOpen] = useState(false);
+  const [selectedShareRequestIds, setSelectedShareRequestIds] = useState<Set<string>>(() => new Set());
+  const [importTarget, setImportTarget] = useState<ImportTarget>("new");
+  const [importConflictMode, setImportConflictMode] = useState<ImportConflictMode>("overwrite");
+  const [importJson, setImportJson] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
+  const [shareError, setShareError] = useState("");
   const [variableDraftRows, setVariableDraftRows] = useState<Record<VariableScope, KeyValueEntry>>(() => emptyVariableDrafts);
+  const [requestDraftRows, setRequestDraftRows] = useState<Record<RequestRowField, KeyValueEntry>>(() => emptyRequestDraftRows);
   const [treeSearchQuery, setTreeSearchQuery] = useState("");
   const [closedRequestTabIds, setClosedRequestTabIds] = useState<Set<string>>(() => new Set());
   const [responseView, setResponseView] = useState<ResponseView>("body");
@@ -853,6 +1156,15 @@ export function HttpConsolePanel() {
   const activeRequestList = activeProject?.requests ?? activeWorkspace.requests;
   const openRequestTabs = activeRequestList.filter((request) => !closedRequestTabIds.has(request.id));
   const activeRequest = activeRequestList.find((request) => request.id === activeRequestId) ?? null;
+  const shareRequestOptions = useMemo(() => collectShareRequestOptions(activeWorkspace), [activeWorkspace]);
+  const selectedShareRequestIdsForWorkspace = useMemo(() => {
+    const availableIds = new Set(shareRequestOptions.map((option) => option.id));
+    return new Set([...selectedShareRequestIds].filter((requestId) => availableIds.has(requestId)));
+  }, [selectedShareRequestIds, shareRequestOptions]);
+  const shareJson = useMemo(
+    () => buildWorkspaceShareJson(activeWorkspace, selectedShareRequestIdsForWorkspace),
+    [activeWorkspace, selectedShareRequestIdsForWorkspace],
+  );
   const activeVariableRows = useMemo(
     () => scopedVariableRows(activeWorkspace, activeProject, activeEnvironment, activeRequest),
     [activeEnvironment, activeProject, activeRequest, activeWorkspace],
@@ -920,6 +1232,7 @@ export function HttpConsolePanel() {
         setActiveWorkspaceId(nextWorkspace.id);
         setActiveProjectId(nextWorkspace.requests[0] ? null : nextProject?.id ?? null);
         setActiveRequestId(nextRequest?.id ?? "");
+        setActiveMainView(nextRequest ? "request" : "blank");
         setDirtyRequestIds(new Set());
       })
       .catch((error) => {
@@ -1188,6 +1501,42 @@ export function HttpConsolePanel() {
     setActiveMainView("environment");
   };
 
+  const selectAllShareRequests = () => {
+    setSelectedShareRequestIds(new Set(shareRequestOptions.map((option) => option.id)));
+  };
+
+  const clearShareRequestSelection = () => {
+    setSelectedShareRequestIds(new Set());
+  };
+
+  const toggleShareRequestSelection = (requestId: string) => {
+    setSelectedShareRequestIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(requestId)) {
+        next.delete(requestId);
+      } else {
+        next.add(requestId);
+      }
+
+      return next;
+    });
+  };
+
+  const openShareTab = () => {
+    setShareTabOpen(true);
+    setActiveShareView("export");
+    setActiveMainView("share");
+    setShareError("");
+    setShareMessage("");
+    setSelectedShareRequestIds((current) => {
+      const availableIds = new Set(shareRequestOptions.map((option) => option.id));
+      const currentVisibleIds = [...current].filter((requestId) => availableIds.has(requestId));
+
+      return currentVisibleIds.length > 0 ? new Set(currentVisibleIds) : availableIds;
+    });
+  };
+
   const closeEnvironmentTab = () => {
     const nextRequest =
       openRequestTabs.find((request) => request.id === activeRequestId) ?? openRequestTabs[0] ?? null;
@@ -1196,6 +1545,26 @@ export function HttpConsolePanel() {
     if (nextRequest) {
       setActiveRequestId(nextRequest.id);
       setActiveMainView("request");
+    } else if (shareTabOpen) {
+      setActiveRequestId("");
+      setActiveMainView("share");
+    } else {
+      setActiveRequestId("");
+      setActiveMainView("blank");
+    }
+  };
+
+  const closeShareTab = () => {
+    const nextRequest =
+      openRequestTabs.find((request) => request.id === activeRequestId) ?? openRequestTabs[0] ?? null;
+
+    setShareTabOpen(false);
+    if (nextRequest) {
+      setActiveRequestId(nextRequest.id);
+      setActiveMainView("request");
+    } else if (environmentTabOpen) {
+      setActiveRequestId("");
+      setActiveMainView("environment");
     } else {
       setActiveRequestId("");
       setActiveMainView("blank");
@@ -1876,7 +2245,7 @@ export function HttpConsolePanel() {
       activeRequest?.id === requestId
     ) {
       setActiveRequestId(nextRequest?.id ?? "");
-      setActiveMainView(nextRequest ? "request" : environmentTabOpen ? "environment" : "blank");
+      setActiveMainView(nextRequest ? "request" : environmentTabOpen ? "environment" : shareTabOpen ? "share" : "blank");
       resetResponse();
     }
   };
@@ -1884,6 +2253,84 @@ export function HttpConsolePanel() {
   const copyText = (text: string) => {
     setContextMenu(null);
     void navigator.clipboard?.writeText(text);
+  };
+
+  const copyShareJson = () => {
+    copyText(shareJson);
+    setShareError("");
+    setShareMessage("JSON 已复制。");
+  };
+
+  const downloadShareJson = () => {
+    const blob = new Blob([shareJson], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${activeWorkspace.name.replace(/[\\/:*?"<>|]/g, "_") || "http-workspace"}.portiva-http.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setShareError("");
+    setShareMessage("JSON 已下载。");
+  };
+
+  const importShareJson = () => {
+    setShareError("");
+    setShareMessage("");
+
+    try {
+      const importedWorkspace = parseWorkspaceShareJson(
+        importJson,
+        workspaces.map((workspace) => workspace.name),
+      );
+
+      if (importTarget === "current") {
+        const mergeResult = mergeImportedWorkspaceIntoCurrent(activeWorkspace, importedWorkspace, importConflictMode);
+        const firstImportedRequestId = mergeResult.importedRequestIds[0] ?? "";
+        const firstImportedRequestLocation = firstImportedRequestId
+          ? requestLocationById(mergeResult.workspace, firstImportedRequestId)
+          : null;
+
+        setWorkspaces((current) =>
+          current.map((workspace) => (workspace.id === activeWorkspace.id ? mergeResult.workspace : workspace)),
+        );
+        setActiveWorkspaceId(activeWorkspace.id);
+        if (firstImportedRequestLocation) {
+          setActiveProjectId(firstImportedRequestLocation.projectId);
+          setActiveRequestId(firstImportedRequestLocation.requestId);
+          setClosedRequestTabIds((current) => {
+            const next = new Set(current);
+            mergeResult.importedRequestIds.forEach((requestId) => next.delete(requestId));
+            return next;
+          });
+        }
+        setSelectedShareRequestIds(new Set(mergeResult.importedRequestIds));
+        setImportJson("");
+        setShareTabOpen(true);
+        setActiveMainView("share");
+        setActiveShareView("export");
+        setShareMessage(
+          `已导入到当前工作区：新增 ${mergeResult.added}，覆盖 ${mergeResult.overwritten}，忽略 ${mergeResult.ignored}。`,
+        );
+        return;
+      }
+
+      const nextProject = importedWorkspace.projects[0] ?? null;
+      const nextRequest = importedWorkspace.requests[0] ?? nextProject?.requests[0] ?? null;
+
+      setWorkspaces((current) => [...current, importedWorkspace]);
+      setActiveWorkspaceId(importedWorkspace.id);
+      setActiveProjectId(importedWorkspace.requests[0] ? null : nextProject?.id ?? null);
+      setActiveRequestId(nextRequest?.id ?? "");
+      setClosedRequestTabIds(new Set());
+      setSelectedShareRequestIds(new Set(collectShareRequestOptions(importedWorkspace).map((option) => option.id)));
+      setImportJson("");
+      setShareTabOpen(true);
+      setActiveMainView("share");
+      setActiveShareView("export");
+      setShareMessage(`已导入「${importedWorkspace.name}」。`);
+    } catch (error) {
+      setShareError(formatErrorMessage(error));
+    }
   };
 
   const updateActiveAuth = (patch: Partial<HttpAuthDraft>) => {
@@ -2096,15 +2543,41 @@ export function HttpConsolePanel() {
     );
   };
 
-  const updateRequestRows = (field: "formBody" | "headers" | "params", rows: KeyValueEntry[]) => {
+  const resetRequestDraft = (field: RequestRowField) => {
+    setRequestDraftRows((current) => ({ ...current, [field]: { ...createBlankRow(), enabled: false } }));
+  };
+
+  const updateRequestDraft = (field: RequestRowField, patch: Partial<KeyValueEntry>) => {
+    setRequestDraftRows((current) => ({
+      ...current,
+      [field]: {
+        ...current[field],
+        ...patch,
+        enabled: false,
+      },
+    }));
+  };
+
+  const updateRequestRows = (field: RequestRowField, rows: KeyValueEntry[]) => {
     updateActiveRequest({ [field]: rows } as Partial<HttpRequestDraft>);
   };
 
-  const updateRequestRow = (
-    field: "formBody" | "headers" | "params",
-    index: number,
-    patch: Partial<KeyValueEntry>,
-  ) => {
+  const commitRequestDraft = (field: RequestRowField) => {
+    if (!activeRequest) {
+      return;
+    }
+
+    const draft = requestDraftRows[field];
+    if (!hasKeyValueContent(draft)) {
+      resetRequestDraft(field);
+      return;
+    }
+
+    updateRequestRows(field, [...trimTrailingBlankRows(activeRequest[field]), { ...draft, enabled: true }]);
+    resetRequestDraft(field);
+  };
+
+  const updateRequestRow = (field: RequestRowField, index: number, patch: Partial<KeyValueEntry>) => {
     if (!activeRequest) {
       return;
     }
@@ -2112,13 +2585,7 @@ export function HttpConsolePanel() {
     const rows = trimTrailingBlankRows(activeRequest[field]);
 
     if (index >= rows.length) {
-      const nextRow = { ...createBlankRow(), ...patch };
-
-      if (!hasKeyValueContent(nextRow)) {
-        return;
-      }
-
-      updateRequestRows(field, [...rows, nextRow]);
+      updateRequestDraft(field, patch);
       return;
     }
 
@@ -2126,7 +2593,7 @@ export function HttpConsolePanel() {
     updateRequestRows(field, trimTrailingBlankRows(nextRows));
   };
 
-  const removeRequestRow = (field: "formBody" | "headers" | "params", index: number) => {
+  const removeRequestRow = (field: RequestRowField, index: number) => {
     if (!activeRequest) {
       return;
     }
@@ -2137,7 +2604,7 @@ export function HttpConsolePanel() {
     );
   };
 
-  const moveRequestRow = (field: "formBody" | "headers" | "params", index: number, direction: -1 | 1) => {
+  const moveRequestRow = (field: RequestRowField, index: number, direction: -1 | 1) => {
     if (!activeRequest) {
       return;
     }
@@ -2377,9 +2844,9 @@ export function HttpConsolePanel() {
     );
   };
 
-  const renderKeyValueRows = (field: "formBody" | "headers" | "params") => {
+  const renderKeyValueRows = (field: RequestRowField) => {
     const rows = trimTrailingBlankRows(activeRequest?.[field] ?? []);
-    const displayRows = [...rows, { ...createBlankRow(), enabled: false }];
+    const displayRows = [...rows, requestDraftRows[field]];
 
     return (
       <div className="http-parameter-table">
@@ -2399,6 +2866,27 @@ export function HttpConsolePanel() {
                 .filter(Boolean)
                 .join(" ")}
               key={`${field}-${isVirtualRow ? "blank" : index}`}
+              onBlur={
+                isVirtualRow
+                  ? (event) => {
+                      const nextFocus = event.relatedTarget;
+                      if (nextFocus instanceof Node && event.currentTarget.contains(nextFocus)) {
+                        return;
+                      }
+                      commitRequestDraft(field);
+                    }
+                  : undefined
+              }
+              onKeyDown={
+                isVirtualRow
+                  ? (event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitRequestDraft(field);
+                      }
+                    }
+                  : undefined
+              }
             >
               <button
                 aria-label={entry.enabled ? "停用条目" : "启用条目"}
@@ -2722,8 +3210,9 @@ export function HttpConsolePanel() {
     const menuProject = contextMenu.projectId
       ? menuWorkspace.projects.find((project) => project.id === contextMenu.projectId) ?? menuWorkspace.projects[0]
       : menuWorkspace.projects[0];
-    const menuRequestList = contextMenu.projectId ? menuProject.requests : menuWorkspace.requests;
-    const menuRequest = menuRequestList.find((request) => request.id === contextMenu.requestId) ?? activeRequest;
+    const menuRequestList = contextMenu.projectId ? menuProject?.requests ?? [] : menuWorkspace.requests;
+    const menuRequest =
+      menuRequestList.find((request) => request.id === contextMenu.requestId) ?? (contextMenu.requestId ? null : activeRequest);
 
     return (
       <div
@@ -2772,7 +3261,7 @@ export function HttpConsolePanel() {
             </Button>
           </>
         ) : null}
-        {contextMenu.type === "project" ? (
+        {contextMenu.type === "project" && menuProject ? (
           <>
             <Button
               icon="plus"
@@ -2931,6 +3420,153 @@ export function HttpConsolePanel() {
     />
   );
 
+  const renderShareWorkspace = () => {
+    const selectedCount = selectedShareRequestIdsForWorkspace.size;
+
+    return (
+      <section className="http-share-workbench" aria-label="分享与导入">
+        <header className="http-share-heading">
+          <div>
+            <strong>分享与导入</strong>
+            <span>{activeWorkspace.name}</span>
+          </div>
+          <Tag icon="file-code" tone="accent">
+            v{httpWorkspaceShareVersion}
+          </Tag>
+        </header>
+
+        <div className="http-share-tabs" role="tablist" aria-label="分享导入">
+          <Button active={activeShareView === "export"} icon="download" onClick={() => setActiveShareView("export")} tone="muted">
+            <span>导出 JSON</span>
+            <small>{selectedCount}</small>
+          </Button>
+          <Button active={activeShareView === "import"} icon="upload" onClick={() => setActiveShareView("import")} tone="muted">
+            <span>导入 JSON</span>
+          </Button>
+        </div>
+
+        <div className="http-share-editor">
+          {activeShareView === "export" ? (
+            <div className="http-share-export-panel">
+              <div className="http-share-toolbar">
+                <span>{shareRequestOptions.length} 请求 · 已选 {selectedCount}</span>
+                <div>
+                  <Button icon="check" onClick={selectAllShareRequests} tone="muted">
+                    全选
+                  </Button>
+                  <Button icon="x" onClick={clearShareRequestSelection} tone="muted">
+                    清空
+                  </Button>
+                </div>
+              </div>
+
+              <div className="http-share-export-grid">
+                <div className="http-share-request-list" aria-label="选择导出的请求">
+                  {shareRequestOptions.length > 0 ? (
+                    shareRequestOptions.map((option) => (
+                      <label className="check-row http-share-request-row" key={option.id}>
+                        <input
+                          checked={selectedShareRequestIdsForWorkspace.has(option.id)}
+                          onChange={() => toggleShareRequestSelection(option.id)}
+                          type="checkbox"
+                        />
+                        <span className="check-row-label">
+                          <span className={methodClass(option.request.method)}>{option.request.method}</span>
+                          <strong>{option.request.name}</strong>
+                          <small>{option.projectName}</small>
+                          <code>{option.request.url || "<未填写 URL>"}</code>
+                        </span>
+                      </label>
+                    ))
+                  ) : (
+                    <div className="http-response-empty compact">
+                      <Icon name="file-text" />
+                      <strong>暂无请求</strong>
+                      <span>JSON 会包含工作区变量和环境。</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="http-share-json-panel">
+                  <TextArea aria-label="导出 JSON" className="http-share-json-textarea" mono readOnly value={shareJson} />
+                </div>
+              </div>
+
+              <div className="http-share-actions">
+                {shareError ? <span className="http-share-error">{shareError}</span> : <span>{shareMessage}</span>}
+                <div>
+                  <Button icon="copy" onClick={copyShareJson} tone="muted">
+                    复制 JSON
+                  </Button>
+                  <Button icon="download" onClick={downloadShareJson} tone="primary">
+                    下载 JSON
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="http-share-import-panel">
+              <div className="http-share-import-options">
+                <div className="http-share-option-group">
+                  <span>导入目标</span>
+                  <div className="http-share-choice-row" role="tablist" aria-label="导入目标">
+                    <Button active={importTarget === "current"} onClick={() => setImportTarget("current")} tone="muted">
+                      当前工作区
+                    </Button>
+                    <Button active={importTarget === "new"} onClick={() => setImportTarget("new")} tone="muted">
+                      新建工作区
+                    </Button>
+                  </div>
+                </div>
+                <div className="http-share-option-group">
+                  <span>同 URL 请求</span>
+                  <div className="http-share-choice-row" role="tablist" aria-label="同 URL 请求处理">
+                    <Button
+                      active={importConflictMode === "overwrite"}
+                      disabled={importTarget !== "current"}
+                      onClick={() => setImportConflictMode("overwrite")}
+                      tone="muted"
+                    >
+                      覆盖
+                    </Button>
+                    <Button
+                      active={importConflictMode === "ignore"}
+                      disabled={importTarget !== "current"}
+                      onClick={() => setImportConflictMode("ignore")}
+                      tone="muted"
+                    >
+                      忽略
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <TextArea
+                aria-label="导入 JSON"
+                className="http-share-import-textarea"
+                mono
+                onChange={(event) => {
+                  setImportJson(event.target.value);
+                  setShareError("");
+                  setShareMessage("");
+                }}
+                placeholder={`{\n  "kind": "${httpWorkspaceShareKind}",\n  "version": ${httpWorkspaceShareVersion},\n  "workspace": {}\n}`}
+                value={importJson}
+              />
+              <div className="http-share-actions">
+                {shareError ? <span className="http-share-error">{shareError}</span> : <span>{shareMessage}</span>}
+                <div>
+                  <Button disabled={!importJson.trim()} icon="upload" onClick={importShareJson} tone="primary">
+                    {importTarget === "current" ? "导入到当前工作区" : "导入为新工作区"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  };
+
   const renderEnvironmentWorkspace = () => {
     const selectedScopeRows = activeVariableRows[selectedVariableScope];
     const selectedScopeIsAvailable = variableScopeAvailable(selectedVariableScope);
@@ -3025,6 +3661,16 @@ export function HttpConsolePanel() {
 	                              return;
 	                            }
 	                            commitVariableDraft(selectedVariableScope);
+	                          }
+	                        : undefined
+	                    }
+	                    onKeyDown={
+	                      isVirtualRow
+	                        ? (event) => {
+	                            if (event.key === "Enter") {
+	                              event.preventDefault();
+	                              commitVariableDraft(selectedVariableScope);
+	                            }
 	                          }
 	                        : undefined
 	                    }
@@ -3138,6 +3784,16 @@ export function HttpConsolePanel() {
               title="变量环境"
             >
               变量环境
+            </Button>
+            <Button
+              active={shareTabOpen && activeMainView === "share"}
+              aria-label="分享导入"
+              icon="upload"
+              onClick={openShareTab}
+              tone="muted"
+              title="分享导入"
+            >
+              分享导入
             </Button>
           </div>
         </div>
@@ -3433,6 +4089,44 @@ export function HttpConsolePanel() {
               </span>
             </Button>
           ) : null}
+          {shareTabOpen ? (
+	            <Button
+	              active={activeMainView === "share"}
+	              className="http-share-main-tab"
+	              onAuxClick={(event) => {
+	                if (event.button === 1) {
+	                  event.preventDefault();
+	                  closeShareTab();
+	                }
+	              }}
+	              onClick={() => setActiveMainView("share")}
+	              tone="muted"
+	            >
+              <Icon name="upload" />
+              <strong>分享</strong>
+              <small aria-hidden="true" className="saved" />
+              <span
+                aria-label="关闭分享"
+                className="http-request-tab-close"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  closeShareTab();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeShareTab();
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                title="关闭分享"
+              >
+                <Icon name="x" />
+              </span>
+            </Button>
+          ) : null}
 	          {openRequestTabs.map((request) => (
 		            <Button
 	              active={activeMainView === "request" && request.id === activeRequest?.id}
@@ -3480,6 +4174,8 @@ export function HttpConsolePanel() {
 
         {activeMainView === "environment" && environmentTabOpen ? (
           renderEnvironmentWorkspace()
+        ) : activeMainView === "share" && shareTabOpen ? (
+          renderShareWorkspace()
         ) : activeMainView === "request" && activeRequest ? (
         <div className="http-workbench" ref={workbenchRef} style={workbenchStyle}>
           <section
