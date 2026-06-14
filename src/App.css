@@ -2309,6 +2309,11 @@ button.tab-main {
   overflow: hidden;
 }
 
+.terminal-workspace.home-empty {
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--app-bg);
+}
+
 .terminal-workspace.split-active {
   gap: 0;
 }
@@ -2346,6 +2351,104 @@ button.tab-main {
 
 .terminal-body-terminal-content {
   background: var(--terminal-bg);
+}
+
+.terminal-home-page {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: clamp(84px, 22vh, 190px) 24px clamp(34px, 8vh, 86px);
+  background: var(--app-bg);
+}
+
+.home-shortcut-list {
+  display: grid;
+  width: min(100%, 336px);
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+}
+
+.home-shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  min-height: 20px;
+}
+
+.home-shortcut-row dt {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-shortcut-row dd {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 130px;
+  margin: 0;
+  color: var(--text-muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.home-shortcut-key-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.terminal-home-page .home-shortcut-row kbd {
+  display: inline-grid;
+  min-width: 25px;
+  height: 18px;
+  place-items: center;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 86%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--button-bg) 82%, #050607);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent),
+    0 1px 0 rgba(0, 0, 0, 0.42);
+  color: var(--text-strong);
+  font: inherit;
+  line-height: 17px;
+}
+
+.home-shortcut-plus {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+@media (max-width: 520px) {
+  .terminal-home-page {
+    justify-items: start;
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .home-shortcut-list {
+    width: min(100%, 292px);
+  }
+
+  .home-shortcut-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .home-shortcut-row dd {
+    justify-content: flex-start;
+    min-width: 0;
+  }
 }
 
 .terminal-body-serial-content {
@@ -5605,88 +5708,8 @@ body.simple-sftp-transfer-resizing {
   width: min(100%, 1120px);
 }
 
-.settings-diagnostics.settings-diagnostics-overview,
-.settings-diagnostics.settings-diagnostics-logs {
-  width: 100%;
-  height: 100%;
-}
-
-.settings-diagnostics {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 0;
-  align-content: start;
-  width: min(100%, 1120px);
-  max-width: none;
-  min-width: 0;
-  min-height: 0;
-}
-
-.diagnostics-panel {
-  display: grid;
-  align-content: start;
-  gap: 0;
-  min-width: 0;
-  min-height: 0;
-}
-
-.diagnostics-panel > .panel {
-  min-width: 0;
-  border: 0;
-  background: transparent;
-}
-
-.diagnostics-overview {
-  grid-template-columns: minmax(0, 1fr);
-  height: 100%;
-}
-
-.settings-diagnostics-overview .connection-launcher,
-.settings-diagnostics-logs .log-panel {
-  height: 100%;
-  min-height: 0;
-}
-
-.settings-diagnostics-overview .connection-launcher {
-  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
-  overflow: hidden;
-  padding-bottom: 0;
-}
-
-.settings-diagnostics-overview .connection-launcher .panel-heading,
-.settings-diagnostics-logs .log-panel .dock-heading {
-  flex: 0 0 auto;
-}
-
-.settings-diagnostics-overview .launcher-section {
-  min-height: 0;
-  overflow: auto;
-  padding-bottom: 12px;
-}
-
-.settings-diagnostics-logs .diagnostics-panel,
-.settings-diagnostics-logs .log-panel {
-  align-content: stretch;
-}
-
-.settings-diagnostics .diagnostics-status,
-.settings-diagnostics .diagnostics-logs {
-  padding: 14px 16px;
-}
-
-.settings-diagnostics-logs .log-panel {
-  grid-template-rows: auto minmax(0, 1fr);
-  max-height: none;
-  overflow: hidden;
-}
-
-.settings-diagnostics-logs .log-list {
-  min-height: 0;
-  overflow: auto;
-}
-
 .application-info-grid,
-.application-privacy-list {
+.application-policy-list {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -5707,7 +5730,7 @@ body.simple-sftp-transfer-resizing {
   white-space: nowrap;
 }
 
-.application-privacy-list span {
+.application-policy-list span {
   min-width: 0;
   border: 1px solid var(--border-faint);
   border-radius: var(--settings-inner-radius, 6px);
@@ -5720,25 +5743,6 @@ body.simple-sftp-transfer-resizing {
   min-width: 0;
   border-color: var(--border-faint);
   background: color-mix(in srgb, var(--panel-solid-bg) 72%, transparent);
-}
-
-.settings-diagnostics .status-dock {
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.8fr);
-  max-height: none;
-  padding: 12px;
-  border: 1px solid var(--border-panel);
-}
-
-.settings-diagnostics .diagnostics-logs .log-panel,
-.settings-diagnostics .diagnostics-status .status-strip {
-  padding: 12px;
-  border: 1px solid var(--border-panel);
-  border-radius: var(--settings-inner-radius, 6px);
-  background: color-mix(in srgb, var(--panel-bg) 88%, var(--app-bg));
-}
-
-.settings-diagnostics:not(.settings-diagnostics-logs) .log-panel {
-  max-height: 360px;
 }
 
 .settings-section-header {
@@ -9309,19 +9313,6 @@ progress {
   border-radius: var(--settings-content-radius);
 }
 
-.app-shell .settings-content > .settings-diagnostics {
-  overflow: auto;
-  border: 1px solid var(--border-panel);
-  border-radius: var(--settings-content-radius);
-  background: color-mix(in srgb, var(--panel-bg) 90%, var(--app-bg));
-}
-
-.app-shell .settings-content > .settings-diagnostics > .settings-section-header {
-  border-bottom: 1px solid var(--border-faint);
-  background: color-mix(in srgb, var(--panel-bg) 94%, var(--app-bg));
-  padding: 14px 16px;
-}
-
 .app-shell .settings-page .connection-launcher,
 .app-shell .settings-page .protocol-matrix,
 .app-shell .settings-page .tunnel-panel,
@@ -9331,47 +9322,7 @@ progress {
   border-radius: var(--settings-inner-radius);
 }
 
-.app-shell .settings-page .diagnostics-status,
-.app-shell .settings-page .diagnostics-logs {
-  padding: 14px 16px;
-}
-
-.app-shell .settings-page .diagnostics-status .status-strip,
-.app-shell .settings-page .diagnostics-logs .log-panel {
-  min-height: 0;
-  border: 1px solid var(--border-faint);
-  background: color-mix(in srgb, var(--panel-solid-bg) 72%, transparent);
-  padding: 12px;
-}
-
-.app-shell .settings-page .diagnostics-status .status-strip {
-  gap: 7px;
-}
-
-.app-shell .settings-page .diagnostics-status .status-strip span,
-.app-shell .settings-page .diagnostics-logs .dock-heading span {
-  color: var(--text-muted);
-}
-
-.app-shell .settings-page .diagnostics-logs .dock-heading {
-  min-height: 34px;
-  border-bottom: 1px solid var(--border-faint);
-  padding-bottom: 10px;
-}
-
-.app-shell .settings-page .diagnostics-logs .dock-heading button {
-  min-height: 28px;
-  border-radius: var(--settings-inner-radius);
-}
-
-.app-shell .settings-page .diagnostics-logs .log-list {
-  gap: 8px;
-  padding-top: 0;
-}
-
-.app-shell .settings-page .application-privacy-list span,
-.app-shell .settings-page .diagnostics-logs .log-panel,
-.app-shell .settings-page .diagnostics-status .status-strip,
+.app-shell .settings-page .application-policy-list span,
 .app-shell .settings-page .settings-block input[type="text"],
 .app-shell .settings-page .settings-block input:not([type]),
 .app-shell .settings-page .settings-block input[type="number"],

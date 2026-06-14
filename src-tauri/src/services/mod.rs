@@ -11,6 +11,7 @@ pub mod secret_store;
 pub mod serial_service;
 pub mod settings_store;
 pub mod ssh_session_service;
+pub mod tcp_terminal_service;
 pub mod terminal_service;
 pub mod transfer_service;
 pub mod tunnel_service;

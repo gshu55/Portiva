@@ -11,6 +11,7 @@ use crate::services::local_shell_service::LocalShellService;
 use crate::services::log_service::LogService;
 use crate::services::serial_service::SerialService;
 use crate::services::ssh_session_service::SshSessionService;
+use crate::services::tcp_terminal_service::TcpTerminalService;
 use crate::services::terminal_service::TerminalService;
 use crate::services::transfer_service::TransferService;
 
@@ -21,6 +22,7 @@ pub async fn connection_open(
     known_hosts: State<'_, KnownHostsStore>,
     ssh_sessions: State<'_, SshSessionService>,
     serial_service: State<'_, SerialService>,
+    tcp_terminals: State<'_, TcpTerminalService>,
     logs: State<'_, LogService>,
 ) -> Result<ConnectionSession, String> {
     let session = if matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp) {
@@ -62,6 +64,14 @@ pub async fn connection_open(
                 let _ = manager.close(&session.id);
                 return Err(error);
             }
+        } else if matches!(
+            profile.r#type,
+            ConnectionType::Telnet | ConnectionType::RawTcp
+        ) {
+            if let Err(error) = tcp_terminals.register_profile(&session.id, profile) {
+                let _ = manager.close(&session.id);
+                return Err(error);
+            }
         }
         session
     };
@@ -83,6 +93,7 @@ pub async fn connection_close(
     transfer_service: State<'_, TransferService>,
     ssh_sessions: State<'_, SshSessionService>,
     serial_service: State<'_, SerialService>,
+    tcp_terminals: State<'_, TcpTerminalService>,
     logs: State<'_, LogService>,
 ) -> Result<(), String> {
     let closed_terminals = terminal_service.close_by_connection(&connection_id)?;
@@ -94,12 +105,13 @@ pub async fn connection_close(
     let cancelled_transfers = transfer_service.cancel_by_connection(&connection_id)?;
     let closed_ssh_session = ssh_sessions.close(&connection_id).await?;
     let closed_serial_terminals = serial_service.close_by_connection(&connection_id)?;
+    let closed_tcp_terminals = tcp_terminals.close_by_connection(&connection_id)?;
     manager.close(&connection_id)?;
     let _ = logs.record(
         LogLevel::Info,
         "connection",
         format!(
-            "closed {connection_id}; released {closed_terminals} terminals, {closed_local_ptys} local ptys, {closed_ssh_ptys} ssh ptys, {closed_serial_terminals} serial terminals, {closed_file_sessions} file sessions, cancelled {cancelled_transfers} transfers, closed ssh session: {closed_ssh_session}"
+            "closed {connection_id}; released {closed_terminals} terminals, {closed_local_ptys} local ptys, {closed_ssh_ptys} ssh ptys, {closed_serial_terminals} serial terminals, {closed_tcp_terminals} tcp terminals, {closed_file_sessions} file sessions, cancelled {cancelled_transfers} transfers, closed ssh session: {closed_ssh_session}"
         ),
     );
     Ok(())

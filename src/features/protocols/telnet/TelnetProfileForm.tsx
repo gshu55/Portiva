@@ -24,7 +24,7 @@ export function TelnetProfileForm({ profile }: TelnetProfileFormProps) {
         换行
         <TextInput readOnly value={profile.lineEnding.toUpperCase()} />
       </label>
-      <p className="todo-note">后续会实现 Telnet 选项协商，并在连接前显示明文风险提醒。</p>
+      <p className="todo-note">Telnet 会处理基础选项协商，连接时请注意明文传输风险。</p>
     </div>
   );
 }

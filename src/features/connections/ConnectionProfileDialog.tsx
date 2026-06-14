@@ -291,7 +291,6 @@ function TelnetFields({
         lineEnding={profile.lineEnding}
         onChange={(patch) => update(patch)}
       />
-      <p className="todo-note">Telnet 后端尚未启用；当前可先保存配置。</p>
     </div>
   );
 }
@@ -326,7 +325,6 @@ function RawTcpFields({
         lineEnding={profile.lineEnding}
         onChange={(patch) => update(patch)}
       />
-      <p className="todo-note">Raw TCP 后端尚未启用；当前可先保存配置。</p>
     </div>
   );
 }

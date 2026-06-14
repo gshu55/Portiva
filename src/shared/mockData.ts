@@ -28,9 +28,9 @@ export const sampleRecentConnections: RecentConnection[] = [];
 export const sampleProtocolDescriptors: ProtocolDescriptor[] = [
   { protocolType: "ssh", label: "SSH", enabled: true, capabilities: capabilitiesByProtocol("ssh") },
   { protocolType: "sftp", label: "SFTP", enabled: true, capabilities: capabilitiesByProtocol("sftp") },
-  { protocolType: "telnet", label: "Telnet", enabled: false, capabilities: capabilitiesByProtocol("telnet") },
+  { protocolType: "telnet", label: "Telnet", enabled: true, capabilities: capabilitiesByProtocol("telnet") },
   { protocolType: "serial", label: "Serial", enabled: true, capabilities: capabilitiesByProtocol("serial") },
-  { protocolType: "raw-tcp", label: "Raw TCP", enabled: false, capabilities: capabilitiesByProtocol("raw-tcp") },
+  { protocolType: "raw-tcp", label: "Raw TCP", enabled: true, capabilities: capabilitiesByProtocol("raw-tcp") },
 ];
 
 export const sampleTransfers: TransferTask[] = [];

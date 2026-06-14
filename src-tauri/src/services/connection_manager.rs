@@ -26,14 +26,18 @@ mod tests {
     use crate::domain::profile::{ConnectionProfile, ConnectionType};
 
     #[test]
-    fn rejects_reserved_protocols_until_enabled() {
+    fn opens_telnet_placeholder_session() {
         let manager = ConnectionManager::default();
         let mut profile = sample_profile(ConnectionType::Telnet);
         profile.host = Some("192.168.0.44".to_string());
 
-        let error = manager.open_placeholder(profile).unwrap_err();
+        let session = manager.open_placeholder(profile).unwrap();
 
-        assert!(error.contains("not enabled"));
+        assert!(session.capabilities.terminal);
+        assert!(matches!(
+            session.transport.unwrap().kind,
+            crate::domain::connection::ConnectionTransportKind::Telnet
+        ));
     }
 
     #[test]
@@ -98,6 +102,7 @@ mod tests {
             username: Some("deploy".to_string()),
             auth_type: Some("password".to_string()),
             private_key_path: None,
+            terminal_type: None,
             port_name: None,
             baud_rate: None,
             data_bits: None,
@@ -170,7 +175,7 @@ impl ConnectionManager {
             ConnectionType::Telnet => {
                 let backend = TelnetBackend;
                 let _protocol_type = backend.protocol_type();
-                return Err("TODO: Telnet backend is reserved but not enabled in v0.1".to_string());
+                backend.connect_placeholder(profile)?
             }
             ConnectionType::Serial => {
                 let backend = SerialBackend;
@@ -180,7 +185,7 @@ impl ConnectionManager {
             ConnectionType::RawTcp => {
                 let backend = RawTcpBackend;
                 let _protocol_type = backend.protocol_type();
-                return Err("TODO: Raw TCP backend is reserved but not enabled in v0.1".to_string());
+                backend.connect_placeholder(profile)?
             }
         };
 

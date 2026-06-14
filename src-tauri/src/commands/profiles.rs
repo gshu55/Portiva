@@ -15,6 +15,7 @@ use crate::services::log_service::LogService;
 use crate::services::profile_store::ProfileStore;
 use crate::services::secret_store::SecretStore;
 use crate::services::serial_service::SerialService;
+use crate::services::tcp_terminal_service::TcpTerminalService;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +113,7 @@ pub async fn profile_test_connection(
     secret: Option<String>,
     known_hosts: State<'_, KnownHostsStore>,
     serial_service: State<'_, SerialService>,
+    tcp_terminals: State<'_, TcpTerminalService>,
 ) -> Result<TestConnectionResult, String> {
     let _declared_capabilities = profile.capabilities();
 
@@ -200,6 +202,32 @@ pub async fn profile_test_connection(
                 message: error,
                 requires_fingerprint_confirmation: false,
                 host: None,
+                fingerprint: None,
+            }),
+        };
+    }
+
+    if matches!(
+        profile.r#type,
+        ConnectionType::Telnet | ConnectionType::RawTcp
+    ) {
+        return match tcp_terminals.test_profile(&profile) {
+            Ok(()) => Ok(TestConnectionResult {
+                ok: true,
+                message: format!(
+                    "TCP 端点 {}:{} 可以连接。",
+                    profile.host.as_deref().unwrap_or("unconfigured-host"),
+                    profile.port.unwrap_or_default()
+                ),
+                requires_fingerprint_confirmation: false,
+                host: profile.host.clone(),
+                fingerprint: None,
+            }),
+            Err(error) => Ok(TestConnectionResult {
+                ok: false,
+                message: error,
+                requires_fingerprint_confirmation: false,
+                host: profile.host.clone(),
                 fingerprint: None,
             }),
         };

@@ -68,6 +68,38 @@ const httpConsoleSessionTab: WorkspaceSessionTab = {
   terminalSnapshot: null,
 };
 
+const getAppSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
+
+function areStringArraysEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function appendMissingTabIds(currentOrder: string[], availableIds: string[]) {
+  const availableIdSet = new Set(availableIds);
+  const retainedIds = currentOrder.filter((id) => availableIdSet.has(id));
+  const retainedIdSet = new Set(retainedIds);
+  return [...retainedIds, ...availableIds.filter((id) => !retainedIdSet.has(id))];
+}
+
+function moveTabIdBefore(currentOrder: string[], sourceTabId: string, targetTabId: string) {
+  if (sourceTabId === targetTabId) {
+    return currentOrder;
+  }
+
+  const sourceIndex = currentOrder.indexOf(sourceTabId);
+  const targetIndex = currentOrder.indexOf(targetTabId);
+
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return currentOrder;
+  }
+
+  const nextOrder = [...currentOrder];
+  const [movedTabId] = nextOrder.splice(sourceIndex, 1);
+  const nextTargetIndex = nextOrder.indexOf(targetTabId);
+  nextOrder.splice(nextTargetIndex, 0, movedTabId);
+  return nextOrder;
+}
+
 type DetachedSessionTargetPayload = Omit<DetachedSessionReattachRequest, "sourceWindowLabel">;
 
 interface DetachedSessionReattachRequest {
@@ -118,6 +150,7 @@ function App() {
   const [reconnectTabId, setReconnectTabId] = useState<string | null>(null);
   const [settingsTabOpen, setSettingsTabOpen] = useState(false);
   const [httpConsoleOpen, setHttpConsoleOpen] = useState(false);
+  const [appTabOrder, setAppTabOrder] = useState<string[]>([]);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
   const detachedTarget = useMemo(() => {
@@ -822,11 +855,41 @@ function App() {
     setHttpConsoleOpen(true);
     setActiveShellTabId(httpConsoleTabId);
   };
-  const appSessionTabs = [
-    ...workspace.sessionTabs,
-    ...(httpConsoleOpen ? [httpConsoleSessionTab] : []),
-    ...(settingsTabOpen ? [settingsSessionTab] : []),
-  ];
+  const appTabSourceIds = useMemo(
+    () => [
+      ...workspace.sessionTabs.map(getAppSessionTabId),
+      ...(httpConsoleOpen ? [httpConsoleTabId] : []),
+      ...(settingsTabOpen ? [settingsTabId] : []),
+    ],
+    [httpConsoleOpen, settingsTabOpen, workspace.sessionTabs],
+  );
+
+  useEffect(() => {
+    setAppTabOrder((current) => {
+      const nextOrder = appendMissingTabIds(current, appTabSourceIds);
+      return areStringArraysEqual(current, nextOrder) ? current : nextOrder;
+    });
+  }, [appTabSourceIds]);
+
+  const appSessionTabs = useMemo(() => {
+    const tabById = new Map<string, WorkspaceSessionTab>();
+
+    workspace.sessionTabs.forEach((tab) => {
+      tabById.set(getAppSessionTabId(tab), tab);
+    });
+
+    if (httpConsoleOpen) {
+      tabById.set(httpConsoleTabId, httpConsoleSessionTab);
+    }
+
+    if (settingsTabOpen) {
+      tabById.set(settingsTabId, settingsSessionTab);
+    }
+
+    return appendMissingTabIds(appTabOrder, appTabSourceIds)
+      .map((tabId) => tabById.get(tabId))
+      .filter((tab): tab is WorkspaceSessionTab => Boolean(tab));
+  }, [appTabOrder, appTabSourceIds, httpConsoleOpen, settingsTabOpen, workspace.sessionTabs]);
   const activeToolTabId =
     activeShellTabId === settingsTabId && settingsTabOpen
       ? settingsTabId
@@ -894,6 +957,11 @@ function App() {
       return;
     }
 
+    setAppTabOrder((current) => {
+      const normalizedOrder = appendMissingTabIds(current, appTabSourceIds);
+      const nextOrder = moveTabIdBefore(normalizedOrder, sourceTabId, targetTabId);
+      return areStringArraysEqual(current, nextOrder) ? current : nextOrder;
+    });
     workspace.reorderSessionTabs(sourceTabId, targetTabId);
   };
   const fileTransferPanel = <ActiveFileTransferPanel workspace={workspace} />;
@@ -966,6 +1034,7 @@ function App() {
           fileTransferPanel={fileTransferPanel}
           sftpSidePanel={renderInlineSftpPanel}
           isFullscreen={terminalFullscreen}
+          keymap={workspace.settings.keymap}
           reattachHintActive={detachedReattachHint}
           profiles={workspace.profiles}
           serialPorts={workspace.serialPorts}
@@ -1040,6 +1109,7 @@ function App() {
             fileTransferPanel={fileTransferPanel}
             sftpSidePanel={settingsTabActive || httpConsoleActive ? undefined : renderInlineSftpPanel}
             isFullscreen={terminalFullscreen}
+            keymap={workspace.settings.keymap}
             reattachHintActive={detachedReattachHint}
             profiles={workspace.profiles}
             serialPorts={workspace.serialPorts}

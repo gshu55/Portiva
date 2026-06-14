@@ -24,7 +24,7 @@ export function RawTcpProfileForm({ profile }: RawTcpProfileFormProps) {
         换行
         <TextInput readOnly value={profile.lineEnding.toUpperCase()} />
       </label>
-      <p className="todo-note">后续会实现超时、重连策略和明确的明文风险提醒。</p>
+      <p className="todo-note">Raw TCP 使用明文 TCP 字节流，支持当前终端的换行和编码设置，可通过标签重连。</p>
     </div>
   );
 }

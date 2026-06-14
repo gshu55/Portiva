@@ -12,6 +12,7 @@ import type {
   ConnectionCapabilities,
   ConnectionSummary,
   ConnectionProfile,
+  AppSettings,
   SerialProfile,
   SerialPortInfo,
   TerminalColorPalette,
@@ -35,6 +36,7 @@ interface TerminalWorkspaceProps {
   fileTransferPanel?: ReactNode;
   sftpSidePanel?: (props: SftpSidePanelRenderProps) => ReactNode;
   emptyStateNotice?: string;
+  keymap?: AppSettings["keymap"];
   terminalConfirmMultilinePaste?: boolean;
   terminalCopyRichText?: boolean;
   terminalRightClickBehavior?: TerminalRightClickBehavior;
@@ -69,6 +71,16 @@ const isFileTransferTab = (tab: WorkspaceSessionTab | null | undefined) =>
   (tab?.kind ?? "terminal") === "file-transfer";
 const isCustomTab = (tab: WorkspaceSessionTab | null | undefined) =>
   (tab?.kind ?? "terminal") === "settings" || (tab?.kind ?? "terminal") === "http-console";
+const homeShortcutHints: Array<{
+  fallback: string;
+  key: keyof AppSettings["keymap"];
+  label: string;
+}> = [
+  { fallback: "Ctrl+N", key: "newProfile", label: "新建连接" },
+  { fallback: "Ctrl+Alt+T", key: "openLocalTerminal", label: "打开本地终端" },
+  { fallback: "Ctrl+Alt+S", key: "openSerialTerminal", label: "打开串口终端" },
+  { fallback: "Ctrl+W", key: "closeTab", label: "关闭当前标签" },
+];
 const isDisconnectedTerminalTab = (
   tab: WorkspaceSessionTab | null | undefined,
 ): tab is WorkspaceSessionTab => {
@@ -92,6 +104,11 @@ const isTerminalShortcutEditableTarget = (target: EventTarget | null) => {
       !target.closest(".terminal-pane"),
   );
 };
+const shortcutParts = (shortcut: string) =>
+  shortcut
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
 
 export function TerminalWorkspace({
   activeTabId,
@@ -100,6 +117,7 @@ export function TerminalWorkspace({
   customTabPanels,
   emptyStateNotice,
   fileTransferPanel,
+  keymap,
   sftpSidePanel,
   profiles = [],
   serialPorts = [],
@@ -206,6 +224,7 @@ export function TerminalWorkspace({
   } as CSSProperties;
   const workspaceClassName = [
     "terminal-workspace",
+    !hasSessionTabs ? "home-empty" : "",
     isTerminalSplitActive ? "split-active" : "",
     isFullscreen ? "fullscreen" : "",
     reattachHintActive ? "reattach-hint-active" : "",
@@ -227,6 +246,19 @@ export function TerminalWorkspace({
     !isCustomTabActive &&
     !capabilities.secureTransport &&
     connection.transport?.kind !== "serial";
+  const homeShortcutRows = useMemo(
+    () =>
+      homeShortcutHints.map((item) => {
+        const configuredShortcut = keymap?.[item.key]?.trim();
+        const shortcut = configuredShortcut || item.fallback;
+        return {
+          ...item,
+          parts: shortcutParts(shortcut),
+          shortcut,
+        };
+      }),
+    [keymap],
+  );
   const selectSessionTab = (tabId: string) => {
     if (isTerminalSplitActive && tabId === rightSplitTabId) {
       setSplitFocusedPane("right");
@@ -878,7 +910,7 @@ export function TerminalWorkspace({
 
         {shouldShowRiskBanner ? (
           <div className="risk-banner">
-            当前连接未加密。Telnet 和 Raw TCP 连接前需要显示该提醒。
+            当前连接使用明文传输。用户名、密码、命令和输出可能被网络中间节点看到，仅建议在可信内网或实验环境使用。
           </div>
         ) : null}
 
@@ -1019,6 +1051,26 @@ export function TerminalWorkspace({
             <div className="terminal-blank-page" aria-label={isFileTransferTabActive ? "SFTP 文件管理加载中" : "空白终端页"} />
           ) : null
         ) : null}
+        </div>
+      ) : null}
+
+      {!hasSessionTabs ? (
+        <div className="terminal-home-page" aria-label="首页快捷键提示">
+          <dl className="home-shortcut-list">
+            {homeShortcutRows.map((item) => (
+              <div className="home-shortcut-row" key={item.key}>
+                <dt>{item.label}</dt>
+                <dd aria-label={`${item.label}：${item.shortcut}`}>
+                  {item.parts.map((part, index) => (
+                    <span className="home-shortcut-key-group" key={`${item.key}-${part}-${index}`}>
+                      {index > 0 ? <span className="home-shortcut-plus">+</span> : null}
+                      <kbd>{part}</kbd>
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </div>
       ) : null}
 

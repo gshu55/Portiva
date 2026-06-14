@@ -31,6 +31,7 @@ pub fn run() {
         .manage(services::ssh_session_service::SshSessionService::default())
         .manage(services::local_shell_service::LocalShellService::default())
         .manage(services::terminal_service::TerminalService::default())
+        .manage(services::tcp_terminal_service::TcpTerminalService::default())
         .manage(services::file_transfer_service::FileTransferService::default())
         .manage(services::transfer_service::TransferService::default())
         .manage(services::http_request_service::HttpRequestService::default())

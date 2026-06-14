@@ -297,6 +297,29 @@ fn validate_profile(profile: &ConnectionProfile) -> Result<(), String> {
             {
                 return Err("private key path is required".to_string());
             }
+
+            if matches!(
+                profile.r#type,
+                ConnectionType::Telnet | ConnectionType::RawTcp
+            ) {
+                match profile.encoding.as_deref().unwrap_or("utf-8") {
+                    "ascii" | "utf-8" | "gbk" | "big5" | "shift-jis" | "euc-kr" | "utf-16le"
+                    | "utf-16be" | "latin1" => {}
+                    _ => return Err("unsupported TCP encoding".to_string()),
+                }
+
+                match profile.line_ending.as_deref().unwrap_or("crlf") {
+                    "crlf" | "cr" | "lf" => {}
+                    _ => return Err("unsupported TCP line ending".to_string()),
+                }
+            }
+
+            if matches!(profile.r#type, ConnectionType::Telnet) {
+                match profile.terminal_type.as_deref().unwrap_or("xterm") {
+                    "xterm" | "vt100" | "vt220" => {}
+                    _ => return Err("unsupported Telnet terminal type".to_string()),
+                }
+            }
         }
         ConnectionType::Serial => {
             if profile
@@ -367,6 +390,7 @@ fn sample_ssh_profile() -> ConnectionProfile {
         username: Some("deploy".to_string()),
         auth_type: Some("password".to_string()),
         private_key_path: None,
+        terminal_type: None,
         port_name: None,
         baud_rate: None,
         data_bits: None,

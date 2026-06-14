@@ -1071,7 +1071,7 @@ export function usePortivaWorkspace() {
           terminal = attached.terminal;
           initialTerminalSnapshot = attached.snapshot;
         } catch (error) {
-          if (profile.type === "serial") {
+          if (profile.type === "serial" || profile.type === "telnet" || profile.type === "raw-tcp") {
             await connectionClose(session.id).catch(() => undefined);
             throw error;
           }
@@ -1462,7 +1462,7 @@ export function usePortivaWorkspace() {
           terminal = attached.terminal;
           initialTerminalSnapshot = attached.snapshot;
         } catch (error) {
-          if (profile.type === "serial") {
+          if (profile.type === "serial" || profile.type === "telnet" || profile.type === "raw-tcp") {
             await connectionClose(session.id).catch(() => undefined);
             throw error;
           }

@@ -14,9 +14,9 @@ impl ProtocolRegistry {
         vec![
             descriptor(SshBackend, "SSH", true),
             descriptor(SftpBackend, "SFTP", true),
-            descriptor(TelnetBackend, "Telnet", false),
+            descriptor(TelnetBackend, "Telnet", true),
             descriptor(SerialBackend, "Serial", true),
-            descriptor(RawTcpBackend, "Raw TCP", false),
+            descriptor(RawTcpBackend, "Raw TCP", true),
         ]
     }
 
