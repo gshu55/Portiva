@@ -135,6 +135,7 @@ interface DetachedSessionTabResult {
   terminalSnapshot: TerminalSnapshot | null;
 }
 const terminalSnapshotEvent = "portiva://terminal-snapshot";
+const terminalPreviewMaxChars = 256 * 1024;
 
 const localRootsPath = "portiva://local-roots";
 const remoteRootPath = "/";
@@ -176,6 +177,38 @@ const defaultTerminalSize = {
   heightPx: 720,
 };
 const serialTabTitle = "[SERIAL]";
+
+function truncateTerminalPreview(value: string) {
+  if (value.length <= terminalPreviewMaxChars) {
+    return value;
+  }
+
+  return value.slice(value.length - terminalPreviewMaxChars);
+}
+
+function mergeTerminalSnapshot(
+  previous: TerminalSnapshot | null | undefined,
+  incoming: TerminalSnapshot,
+): TerminalSnapshot {
+  if (incoming.bufferPreview) {
+    return {
+      ...incoming,
+      bufferPreview: truncateTerminalPreview(incoming.bufferPreview),
+    };
+  }
+
+  if (!incoming.outputChunk) {
+    return {
+      ...incoming,
+      bufferPreview: previous?.bufferPreview ?? "",
+    };
+  }
+
+  return {
+    ...incoming,
+    bufferPreview: truncateTerminalPreview(`${previous?.bufferPreview ?? ""}${incoming.outputChunk}`),
+  };
+}
 
 function serialTabTitleForPort(portName: string) {
   const trimmedPortName = portName.trim();
@@ -286,6 +319,8 @@ export function usePortivaWorkspace() {
   const [activeFileTransferSession, setActiveFileTransferSession] = useState<FileTransferSession | null>(null);
   const [activeTerminal, setActiveTerminal] = useState<TerminalSession | null>(null);
   const activeTerminalIdRef = useRef<string | null>(null);
+  const pendingTerminalSnapshotsRef = useRef<Map<string, TerminalSnapshot>>(new Map());
+  const terminalSnapshotFrameRef = useRef<number | null>(null);
   const closingTerminalIdsRef = useRef<Set<string>>(new Set());
   const lastDetectedSerialPortNamesRef = useRef<Set<string>>(new Set(sampleSerialPorts.map((port) => port.portName)));
   const sessionTabsRef = useRef<WorkspaceSessionTab[]>([]);
@@ -762,41 +797,86 @@ export function usePortivaWorkspace() {
     let disposed = false;
     let unlisten: (() => void) | null = null;
 
-    void listen<TerminalSnapshot>(terminalSnapshotEvent, (event) => {
-      const snapshot = event.payload;
+    const mergePendingSnapshot = (previous: TerminalSnapshot | undefined, incoming: TerminalSnapshot) => {
+      if (!previous) {
+        return incoming;
+      }
+
+      if (incoming.bufferPreview) {
+        return incoming;
+      }
+
+      if (previous.bufferPreview) {
+        return {
+          ...incoming,
+          bufferPreview: truncateTerminalPreview(`${previous.bufferPreview}${incoming.outputChunk ?? ""}`),
+          outputChunk: `${previous.outputChunk ?? ""}${incoming.outputChunk ?? ""}`,
+        };
+      }
+
+      return {
+        ...incoming,
+        outputChunk: `${previous.outputChunk ?? ""}${incoming.outputChunk ?? ""}`,
+      };
+    };
+
+    const flushPendingSnapshots = () => {
+      terminalSnapshotFrameRef.current = null;
+      const pendingSnapshots = pendingTerminalSnapshotsRef.current;
+      if (pendingSnapshots.size === 0) {
+        return;
+      }
+
+      const snapshots = new Map(pendingSnapshots);
+      pendingSnapshots.clear();
 
       setSessionTabs((current) =>
         current.map((tab) => {
-          const nextTab = { ...tab };
-          let changed = false;
-
-          if (tab.terminal?.id === snapshot.terminalId) {
-            nextTab.terminalSnapshot = snapshot;
-            if (tab.terminal.status !== snapshot.status) {
-              nextTab.terminal = {
-                ...tab.terminal,
-                status: snapshot.status,
-              };
-            }
-            changed = true;
+          const incomingSnapshot = tab.terminal ? snapshots.get(tab.terminal.id) : null;
+          if (!incomingSnapshot || !tab.terminal) {
+            return tab;
           }
 
-          return changed ? nextTab : tab;
+          const snapshot = mergeTerminalSnapshot(tab.terminalSnapshot, incomingSnapshot);
+          return {
+            ...tab,
+            terminal: tab.terminal.status !== snapshot.status
+              ? {
+                  ...tab.terminal,
+                  status: snapshot.status,
+                }
+              : tab.terminal,
+            terminalSnapshot: snapshot,
+          };
         }),
       );
 
-      if (activeTerminalIdRef.current === snapshot.terminalId) {
-        setTerminalSnapshotState(snapshot);
+      const activeTerminalId = activeTerminalIdRef.current;
+      const activeSnapshot = activeTerminalId ? snapshots.get(activeTerminalId) : null;
+      if (activeSnapshot) {
+        setTerminalSnapshotState((current) => mergeTerminalSnapshot(current, activeSnapshot));
         setActiveTerminal((current) =>
-          current && current.id === snapshot.terminalId && current.status !== snapshot.status
+          current && current.id === activeSnapshot.terminalId && current.status !== activeSnapshot.status
             ? {
                 ...current,
-                status: snapshot.status,
+                status: activeSnapshot.status,
               }
             : current,
         );
       }
+    };
 
+    void listen<TerminalSnapshot>(terminalSnapshotEvent, (event) => {
+      const incomingSnapshot = event.payload;
+      const pendingSnapshots = pendingTerminalSnapshotsRef.current;
+      pendingSnapshots.set(
+        incomingSnapshot.terminalId,
+        mergePendingSnapshot(pendingSnapshots.get(incomingSnapshot.terminalId), incomingSnapshot),
+      );
+
+      if (terminalSnapshotFrameRef.current === null) {
+        terminalSnapshotFrameRef.current = window.requestAnimationFrame(flushPendingSnapshots);
+      }
     })
       .then((dispose) => {
         if (disposed) {
@@ -812,6 +892,11 @@ export function usePortivaWorkspace() {
 
     return () => {
       disposed = true;
+      if (terminalSnapshotFrameRef.current !== null) {
+        window.cancelAnimationFrame(terminalSnapshotFrameRef.current);
+        terminalSnapshotFrameRef.current = null;
+      }
+      pendingTerminalSnapshotsRef.current.clear();
       if (unlisten) {
         void unlisten();
       }

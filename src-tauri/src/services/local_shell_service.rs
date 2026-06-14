@@ -3,6 +3,7 @@ use std::env;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use portable_pty::{
     native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize, PtySystem,
@@ -10,9 +11,13 @@ use portable_pty::{
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::terminal::{TerminalRenderPolicy, TerminalSessionStatus, TerminalSize};
-use crate::services::terminal_service::{terminal_disconnect_notice, TerminalService};
+use crate::services::terminal_service::{
+    drain_utf8_terminal_output, terminal_disconnect_notice, TerminalService,
+};
 
 const TERMINAL_SNAPSHOT_EVENT: &str = "portiva://terminal-snapshot";
+const TERMINAL_OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
+const TERMINAL_OUTPUT_MAX_CHUNK_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -278,22 +283,50 @@ fn spawn_local_shell_reader(
 ) {
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
+        let mut pending_bytes = Vec::new();
+        let mut last_flush = Instant::now()
+            .checked_sub(TERMINAL_OUTPUT_FLUSH_INTERVAL)
+            .unwrap_or_else(Instant::now);
         let mut disconnect_reason = "本地终端进程已退出".to_string();
 
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(byte_count) => {
-                    let output = String::from_utf8_lossy(&buffer[..byte_count]).to_string();
-                    emit_terminal_snapshot(&app_handle, &terminal_id, &output);
+                    pending_bytes.extend_from_slice(&buffer[..byte_count]);
+                    if pending_bytes.len() >= TERMINAL_OUTPUT_MAX_CHUNK_BYTES
+                        || last_flush.elapsed() >= TERMINAL_OUTPUT_FLUSH_INTERVAL
+                    {
+                        flush_terminal_output(
+                            &app_handle,
+                            &terminal_id,
+                            &mut pending_bytes,
+                            &mut last_flush,
+                            false,
+                        );
+                    }
                 }
                 Err(error) => {
+                    flush_terminal_output(
+                        &app_handle,
+                        &terminal_id,
+                        &mut pending_bytes,
+                        &mut last_flush,
+                        true,
+                    );
                     disconnect_reason = format!("读取本地终端输出失败：{error}");
                     break;
                 }
             }
         }
 
+        flush_terminal_output(
+            &app_handle,
+            &terminal_id,
+            &mut pending_bytes,
+            &mut last_flush,
+            true,
+        );
         emit_terminal_disconnected(&app_handle, &terminal_id, &disconnect_reason);
         let local_shells = app_handle.state::<LocalShellService>();
         let _ = local_shells.close_pty_by_terminal(&terminal_id);
@@ -324,25 +357,41 @@ fn spawn_local_shell_exit_watcher(
     });
 }
 
+fn flush_terminal_output(
+    app_handle: &AppHandle,
+    terminal_id: &str,
+    pending_bytes: &mut Vec<u8>,
+    last_flush: &mut Instant,
+    force: bool,
+) {
+    if pending_bytes.is_empty() {
+        return;
+    }
+
+    let output = drain_utf8_terminal_output(pending_bytes, force);
+    if output.is_empty() {
+        return;
+    }
+
+    *last_flush = Instant::now();
+    emit_terminal_snapshot(app_handle, terminal_id, &output);
+}
+
 fn emit_terminal_snapshot(app_handle: &AppHandle, terminal_id: &str, output: &str) {
     if output.is_empty() {
         return;
     }
 
     let terminal_service = app_handle.state::<TerminalService>();
-    if terminal_service.append_output(terminal_id, output).is_err() {
-        return;
-    }
-
-    if let Ok(snapshot) = terminal_service.snapshot(terminal_id) {
+    if let Ok(metadata) = terminal_service.append_output_metadata(terminal_id, output) {
         let _ = app_handle.emit(
             TERMINAL_SNAPSHOT_EVENT,
             TerminalOutputEvent {
-                terminal_id: snapshot.terminal_id,
-                status: snapshot.status,
-                buffered_bytes: snapshot.buffered_bytes,
-                buffer_preview: snapshot.buffer_preview,
-                render_policy: snapshot.render_policy,
+                terminal_id: terminal_id.to_string(),
+                status: metadata.status,
+                buffered_bytes: metadata.buffered_bytes,
+                buffer_preview: String::new(),
+                render_policy: metadata.render_policy,
                 output_chunk: output.to_string(),
             },
         );

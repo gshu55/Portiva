@@ -5,6 +5,12 @@ use crate::domain::terminal::{
     TerminalRenderPolicy, TerminalSession, TerminalSessionStatus, TerminalSize, TerminalSnapshot,
 };
 
+pub struct TerminalOutputMetadata {
+    pub status: TerminalSessionStatus,
+    pub buffered_bytes: usize,
+    pub render_policy: TerminalRenderPolicy,
+}
+
 #[derive(Default)]
 pub struct TerminalService {
     sessions: Mutex<HashMap<String, TerminalSession>>,
@@ -132,7 +138,26 @@ impl TerminalService {
     }
 
     pub fn append_output(&self, terminal_id: &str, output: &str) -> Result<(), String> {
-        self.session(terminal_id)?;
+        self.append_output_metadata(terminal_id, output).map(|_| ())
+    }
+
+    pub fn append_output_metadata(
+        &self,
+        terminal_id: &str,
+        output: &str,
+    ) -> Result<TerminalOutputMetadata, String> {
+        let (status, render_policy) = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "terminal service lock poisoned".to_string())?;
+            let session = sessions
+                .get(terminal_id)
+                .ok_or_else(|| format!("terminal not found: {terminal_id}"))?;
+
+            (session.status.clone(), session.render_policy.clone())
+        };
+
         let mut buffers = self
             .buffers
             .lock()
@@ -140,7 +165,12 @@ impl TerminalService {
         let buffer = buffers.entry(terminal_id.to_string()).or_default();
         buffer.push_str(output);
         truncate_terminal_buffer(buffer);
-        Ok(())
+
+        Ok(TerminalOutputMetadata {
+            status,
+            buffered_bytes: buffer.len(),
+            render_policy,
+        })
     }
 
     pub fn close_by_connection(&self, connection_id: &str) -> Result<usize, String> {
@@ -216,9 +246,37 @@ pub fn terminal_disconnect_notice(reason: &str) -> String {
     )
 }
 
+pub fn drain_utf8_terminal_output(pending_bytes: &mut Vec<u8>, force: bool) -> String {
+    if pending_bytes.is_empty() {
+        return String::new();
+    }
+
+    match std::str::from_utf8(pending_bytes) {
+        Ok(output) => {
+            let output = output.to_string();
+            pending_bytes.clear();
+            output
+        }
+        Err(error) if !force && error.error_len().is_none() => {
+            let valid_up_to = error.valid_up_to();
+            if valid_up_to == 0 {
+                return String::new();
+            }
+
+            let output = String::from_utf8_lossy(&pending_bytes[..valid_up_to]).to_string();
+            pending_bytes.drain(..valid_up_to);
+            output
+        }
+        Err(_) => {
+            let bytes = std::mem::take(pending_bytes);
+            String::from_utf8_lossy(&bytes).to_string()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TerminalService;
+    use super::{drain_utf8_terminal_output, TerminalService};
     use crate::domain::terminal::{TerminalSessionStatus, TerminalSize};
 
     #[test]
@@ -329,5 +387,25 @@ mod tests {
         assert_eq!(snapshot.buffer_preview.matches("终端连接已断开").count(), 1);
         assert!(snapshot.buffer_preview.contains("SSH keepalive 超时"));
         assert!(!snapshot.buffer_preview.contains("重复断开事件"));
+    }
+
+    #[test]
+    fn utf8_terminal_output_keeps_incomplete_tail_for_next_flush() {
+        let mut pending = "中".as_bytes().to_vec();
+        let tail = pending.pop().unwrap();
+
+        assert_eq!(drain_utf8_terminal_output(&mut pending, false), "");
+
+        pending.push(tail);
+        assert_eq!(drain_utf8_terminal_output(&mut pending, false), "中");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn utf8_terminal_output_forces_remaining_bytes_on_close() {
+        let mut pending = vec![0xe4, 0xb8];
+
+        assert_eq!(drain_utf8_terminal_output(&mut pending, true), "�");
+        assert!(pending.is_empty());
     }
 }

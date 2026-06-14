@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::agent::AgentIdentity;
@@ -18,7 +18,9 @@ use crate::domain::profile::ConnectionProfile;
 use crate::domain::terminal::{TerminalRenderPolicy, TerminalSessionStatus, TerminalSize};
 use crate::security::fingerprint::display_fingerprint;
 use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
-use crate::services::terminal_service::{terminal_disconnect_notice, TerminalService};
+use crate::services::terminal_service::{
+    drain_utf8_terminal_output, terminal_disconnect_notice, TerminalService,
+};
 use crate::utils::remote_path::{join_remote_path, normalize_remote_path};
 
 const TERMINAL_SNAPSHOT_EVENT: &str = "portiva://terminal-snapshot";
@@ -26,6 +28,8 @@ const SFTP_REQUEST_TIMEOUT_SECS: u64 = 60;
 const SSH_CONNECT_TIMEOUT_SECS: u64 = 5;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 15;
 const SSH_KEEPALIVE_MAX_MISSES: usize = 2;
+const TERMINAL_OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
+const TERMINAL_OUTPUT_MAX_CHUNK_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1047,30 +1051,86 @@ fn spawn_pty_output_reader(
     mut read_half: ChannelReadHalf,
 ) {
     tauri::async_runtime::spawn(async move {
+        let mut pending_bytes = Vec::new();
+        let mut last_flush = Instant::now();
         let mut disconnect_reason = "SSH 终端通道已关闭".to_string();
 
-        while let Some(message) = read_half.wait().await {
-            match message {
-                ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                    let output = String::from_utf8_lossy(&data).to_string();
-                    emit_terminal_snapshot(&app_handle, &terminal_id, &output);
+        loop {
+            tokio::select! {
+                message = read_half.wait() => {
+                    let Some(message) = message else {
+                        break;
+                    };
+
+                    match message {
+                        ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                            pending_bytes.extend_from_slice(&data);
+                            if pending_bytes.len() >= TERMINAL_OUTPUT_MAX_CHUNK_BYTES
+                                || last_flush.elapsed() >= TERMINAL_OUTPUT_FLUSH_INTERVAL
+                            {
+                                flush_terminal_output(
+                                    &app_handle,
+                                    &terminal_id,
+                                    &mut pending_bytes,
+                                    &mut last_flush,
+                                    false,
+                                );
+                            }
+                        }
+                        ChannelMsg::Close => {
+                            disconnect_reason = "远端主机已关闭 SSH 终端通道".to_string();
+                            break;
+                        }
+                        ChannelMsg::Eof => {
+                            disconnect_reason = "SSH 终端通道已到达 EOF".to_string();
+                            break;
+                        }
+                        _ => {}
+                    }
                 }
-                ChannelMsg::Close => {
-                    disconnect_reason = "远端主机已关闭 SSH 终端通道".to_string();
-                    break;
+                _ = tokio::time::sleep(TERMINAL_OUTPUT_FLUSH_INTERVAL), if !pending_bytes.is_empty() => {
+                    flush_terminal_output(
+                        &app_handle,
+                        &terminal_id,
+                        &mut pending_bytes,
+                        &mut last_flush,
+                        false,
+                    );
                 }
-                ChannelMsg::Eof => {
-                    disconnect_reason = "SSH 终端通道已到达 EOF".to_string();
-                    break;
-                }
-                _ => {}
             }
         }
 
+        flush_terminal_output(
+            &app_handle,
+            &terminal_id,
+            &mut pending_bytes,
+            &mut last_flush,
+            true,
+        );
         emit_terminal_disconnected(&app_handle, &terminal_id, &disconnect_reason);
         let ssh_sessions = app_handle.state::<SshSessionService>();
         let _ = ssh_sessions.close_pty_by_terminal(&terminal_id).await;
     });
+}
+
+fn flush_terminal_output(
+    app_handle: &AppHandle,
+    terminal_id: &str,
+    pending_bytes: &mut Vec<u8>,
+    last_flush: &mut Instant,
+    force: bool,
+) {
+    if pending_bytes.is_empty() {
+        return;
+    }
+
+    let output = drain_utf8_terminal_output(pending_bytes, force);
+    if output.is_empty() {
+        return;
+    }
+
+    *last_flush = Instant::now();
+    emit_terminal_snapshot(app_handle, terminal_id, &output);
 }
 
 fn emit_terminal_snapshot(app_handle: &AppHandle, terminal_id: &str, output: &str) {
@@ -1079,19 +1139,15 @@ fn emit_terminal_snapshot(app_handle: &AppHandle, terminal_id: &str, output: &st
     }
 
     let terminal_service = app_handle.state::<TerminalService>();
-    if terminal_service.append_output(terminal_id, output).is_err() {
-        return;
-    }
-
-    if let Ok(snapshot) = terminal_service.snapshot(terminal_id) {
+    if let Ok(metadata) = terminal_service.append_output_metadata(terminal_id, output) {
         let _ = app_handle.emit(
             TERMINAL_SNAPSHOT_EVENT,
             TerminalOutputEvent {
-                terminal_id: snapshot.terminal_id,
-                status: snapshot.status,
-                buffered_bytes: snapshot.buffered_bytes,
-                buffer_preview: snapshot.buffer_preview,
-                render_policy: snapshot.render_policy,
+                terminal_id: terminal_id.to_string(),
+                status: metadata.status,
+                buffered_bytes: metadata.buffered_bytes,
+                buffer_preview: String::new(),
+                render_policy: metadata.render_policy,
                 output_chunk: output.to_string(),
             },
         );

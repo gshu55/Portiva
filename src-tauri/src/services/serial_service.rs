@@ -785,19 +785,15 @@ fn emit_terminal_snapshot(app_handle: &AppHandle, terminal_id: &str, output: &st
     }
 
     let terminal_service = app_handle.state::<TerminalService>();
-    if terminal_service.append_output(terminal_id, output).is_err() {
-        return;
-    }
-
-    if let Ok(snapshot) = terminal_service.snapshot(terminal_id) {
+    if let Ok(metadata) = terminal_service.append_output_metadata(terminal_id, output) {
         let _ = app_handle.emit(
             TERMINAL_SNAPSHOT_EVENT,
             TerminalOutputEvent {
-                terminal_id: snapshot.terminal_id,
-                status: snapshot.status,
-                buffered_bytes: snapshot.buffered_bytes,
-                buffer_preview: snapshot.buffer_preview,
-                render_policy: snapshot.render_policy,
+                terminal_id: terminal_id.to_string(),
+                status: metadata.status,
+                buffered_bytes: metadata.buffered_bytes,
+                buffer_preview: String::new(),
+                render_policy: metadata.render_policy,
                 output_chunk: output.to_string(),
             },
         );

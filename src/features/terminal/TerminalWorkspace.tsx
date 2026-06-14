@@ -414,6 +414,7 @@ export function TerminalWorkspace({
     tab: WorkspaceSessionTab,
     isActivePane: boolean,
     reportSizeWhenVisible = false,
+    outputPaused = false,
   ) => {
     const serialProfile = serialProfileForTab(tab);
 
@@ -443,6 +444,7 @@ export function TerminalWorkspace({
     return (
       <TerminalPane
         isActive={isActivePane}
+        outputPaused={outputPaused}
         reportSizeWhenVisible={reportSizeWhenVisible}
         terminal={tab.terminal}
         terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
@@ -461,8 +463,9 @@ export function TerminalWorkspace({
     tab: WorkspaceSessionTab,
     isActivePane: boolean,
     reportSizeWhenVisible = false,
+    outputPaused = false,
   ) => {
-    const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible);
+    const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible, outputPaused);
 
     if (!sftpSidePanel || !isActivePane || isTerminalSplitActive) {
       return terminalPane;
@@ -924,7 +927,12 @@ export function TerminalWorkspace({
                           .join(" ")}
                         key={tabId}
                       >
-                        {renderTerminalContent(tab, isActivePane && splitFocusedPane === "left", true)}
+                        {renderTerminalContent(
+                          tab,
+                          isActivePane && splitFocusedPane === "left",
+                          true,
+                          !isActivePane,
+                        )}
                       </div>
                     );
                   })}
@@ -959,7 +967,7 @@ export function TerminalWorkspace({
               }}
             >
               {isRightTerminalTabActive ? (
-                renderTerminalContent(splitRightTab, splitFocusedPane === "right", true)
+                renderTerminalContent(splitRightTab, splitFocusedPane === "right", true, false)
               ) : isRightFileTransferTabActive && resolvedActiveTabId === rightSplitTabId && fileTransferPanel ? (
                 <div className="terminal-file-tab">{fileTransferPanel}</div>
               ) : (
@@ -988,7 +996,7 @@ export function TerminalWorkspace({
                     .join(" ")}
                   key={tabId}
                 >
-                  {renderTerminalContent(tab, isActivePane)}
+                  {renderTerminalContent(tab, isActivePane, false, !isActivePane)}
                 </div>
               );
             })}

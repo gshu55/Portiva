@@ -153,6 +153,8 @@ export function TerminalPane({
   const pasteTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastBufferRef = useRef("");
   const lastClearRevisionRef = useRef(clearRevision);
+  const pendingOutputRef = useRef("");
+  const outputFrameRef = useRef<number | null>(null);
   const lastReportedSizeRef = useRef<TerminalSize | null>(null);
   const autoScrollRef = useRef(autoScroll);
   const outputPausedRef = useRef(outputPaused);
@@ -180,13 +182,19 @@ export function TerminalPane({
   const terminalStatus = terminal?.status ?? terminalSnapshot?.status ?? null;
   const normalizedSearchQuery = searchQuery.trim();
   const searchMatchCount = useMemo(
-    () => countSearchMatches(
-      terminalBuffer,
-      normalizedSearchQuery,
-      searchCaseSensitive,
-      searchWholeWord,
-    ),
-    [terminalBuffer, normalizedSearchQuery, searchCaseSensitive, searchWholeWord],
+    () => {
+      if (!isSearchOpen || !normalizedSearchQuery) {
+        return 0;
+      }
+
+      return countSearchMatches(
+        terminalBuffer,
+        normalizedSearchQuery,
+        searchCaseSensitive,
+        searchWholeWord,
+      );
+    },
+    [isSearchOpen, terminalBuffer, normalizedSearchQuery, searchCaseSensitive, searchWholeWord],
   );
   const emphasizeSearchSelection = isSearchOpen && searchStatus === "found";
   const pasteText = pasteDraft ?? "";
@@ -218,6 +226,13 @@ export function TerminalPane({
 
   useEffect(() => {
     outputPausedRef.current = outputPaused;
+    if (outputPaused) {
+      pendingOutputRef.current = "";
+      if (outputFrameRef.current !== null) {
+        window.cancelAnimationFrame(outputFrameRef.current);
+        outputFrameRef.current = null;
+      }
+    }
   }, [outputPaused]);
 
   const enqueueInput = (data: string, terminalId: string) => {
@@ -227,6 +242,49 @@ export function TerminalPane({
         console.warn("终端输入发送失败", error);
       });
     return inputQueueRef.current;
+  };
+
+  const shouldKeepScrollAtBottom = (instance: Terminal) => {
+    if (!autoScrollRef.current || instance.buffer.active.type === "alternate") {
+      return false;
+    }
+
+    return instance.buffer.active.baseY - instance.buffer.active.viewportY <= 1;
+  };
+
+  const writeOutput = (instance: Terminal, output: string) => {
+    const keepScrollAtBottom = shouldKeepScrollAtBottom(instance);
+    instance.write(output, () => {
+      if (keepScrollAtBottom && instance.buffer.active.type !== "alternate") {
+        instance.scrollToBottom();
+      }
+    });
+  };
+
+  const flushPendingOutput = () => {
+    outputFrameRef.current = null;
+    const instance = xtermRef.current;
+    const output = pendingOutputRef.current;
+
+    if (!instance || !output || outputPausedRef.current) {
+      return;
+    }
+
+    pendingOutputRef.current = "";
+    writeOutput(instance, output);
+  };
+
+  const enqueueOutput = (output: string) => {
+    if (!output) {
+      return;
+    }
+
+    pendingOutputRef.current += output;
+    if (outputFrameRef.current !== null) {
+      return;
+    }
+
+    outputFrameRef.current = window.requestAnimationFrame(flushPendingOutput);
   };
 
   const openSearch = () => {
@@ -520,6 +578,11 @@ export function TerminalPane({
         resizeTimerRef.current = null;
       }
       instance.dispose();
+      if (outputFrameRef.current !== null) {
+        window.cancelAnimationFrame(outputFrameRef.current);
+        outputFrameRef.current = null;
+      }
+      pendingOutputRef.current = "";
       if (xtermRef.current === instance) {
         xtermRef.current = null;
         fitAddonRef.current = null;
@@ -568,34 +631,27 @@ export function TerminalPane({
       return;
     }
 
-    const previous = lastBufferRef.current;
+    const previousBuffer = lastBufferRef.current;
+    const canAppendChunk =
+      terminalOutputChunk && terminalBuffer === `${previousBuffer}${terminalOutputChunk}`;
 
-    if (!terminalBuffer) {
-      if (previous) {
-        instance.clear();
-        lastBufferRef.current = "";
-      }
+    if (canAppendChunk) {
+      enqueueOutput(terminalOutputChunk);
+      lastBufferRef.current = terminalBuffer;
       return;
     }
 
-    if (terminalBuffer.startsWith(previous)) {
-      const nextChunk = terminalBuffer.slice(previous.length);
-      instance.write(
-        terminalOutputChunk && nextChunk === terminalOutputChunk
-          ? terminalOutputChunk
-          : nextChunk,
-      );
-    } else {
+    if (terminalBuffer !== previousBuffer) {
+      pendingOutputRef.current = "";
+      if (outputFrameRef.current !== null) {
+        window.cancelAnimationFrame(outputFrameRef.current);
+        outputFrameRef.current = null;
+      }
       instance.reset();
-      instance.write(terminalBuffer);
+      writeOutput(instance, terminalBuffer);
+      lastBufferRef.current = terminalBuffer;
     }
-
-    if (autoScrollRef.current) {
-      instance.scrollToBottom();
-    }
-
-    lastBufferRef.current = terminalBuffer;
-  }, [terminal, terminalBuffer, terminalOutputChunk, outputPaused]);
+  }, [terminal, terminalBuffer, terminalOutputChunk, terminalSnapshot, outputPaused]);
 
   useEffect(() => {
     if (lastClearRevisionRef.current === clearRevision) {
@@ -603,6 +659,11 @@ export function TerminalPane({
     }
 
     lastClearRevisionRef.current = clearRevision;
+    pendingOutputRef.current = "";
+    if (outputFrameRef.current !== null) {
+      window.cancelAnimationFrame(outputFrameRef.current);
+      outputFrameRef.current = null;
+    }
     xtermRef.current?.reset();
     lastBufferRef.current = terminalBuffer;
   }, [clearRevision, terminalBuffer]);
