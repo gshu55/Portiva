@@ -670,7 +670,7 @@ export function SerialTerminalPanel({
   const removeSendSlot = (slotId: string) => {
     setSendSlots((current) => {
       if (current.length <= 1) {
-        return current.map((slot) => (slot.id === slotId ? { ...slot, content: "" } : slot));
+        return current;
       }
 
       return current.filter((slot) => slot.id !== slotId);
@@ -682,7 +682,7 @@ export function SerialTerminalPanel({
     void sendDraft(slotId);
   };
 
-  const handleInputKeyDown = (slotId: string, event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleInputKeyDown = (slotId: string, event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowUp") {
       event.preventDefault();
       const current = historyIndexRef.current;
@@ -861,13 +861,14 @@ export function SerialTerminalPanel({
             <div className="serial-send-slots">
               {sendSlots.map((slot, index) => (
                 <form className="serial-send-form" key={slot.id} noValidate onSubmit={(event) => handleSubmit(slot.id, event)}>
-                  <textarea
+                  <input
                     aria-label={`串口发送内容 ${index + 1}`}
                     autoComplete="off"
+                    className="serial-send-input"
                     disabled={!terminalReady}
                     placeholder={slot.mode === "hex" ? "01 03 00 00 FF" : "AT"}
-                    rows={1}
                     spellCheck={false}
+                    type="text"
                     value={slot.content}
                     onChange={(event) => {
                       updateSendSlot(slot.id, { content: event.currentTarget.value });
@@ -876,76 +877,80 @@ export function SerialTerminalPanel({
                     }}
                     onKeyDown={(event) => handleInputKeyDown(slot.id, event)}
                   />
-                  <div className="serial-send-row-actions">
-                    <span>{index + 1}</span>
-                    <div
-                      className={`serial-send-mode ${slot.mode === "hex" ? "mode-hex" : "mode-text"}`}
-                      role="group"
-                      aria-label={`串口发送模式 ${index + 1}`}
+                  <span className="serial-send-index">{index + 1}</span>
+                  <div
+                    className={`serial-send-mode ${slot.mode === "hex" ? "mode-hex" : "mode-text"}`}
+                    role="group"
+                    aria-label={`串口发送模式 ${index + 1}`}
+                  >
+                    <button
+                      aria-pressed={slot.mode === "text"}
+                      className={slot.mode === "text" ? "active" : ""}
+                      type="button"
+                      onClick={() => {
+                        updateSendSlot(slot.id, { mode: "text" });
+                        setHexError("");
+                      }}
                     >
-                      <button
-                        aria-pressed={slot.mode === "text"}
-                        className={slot.mode === "text" ? "active" : ""}
-                        type="button"
-                        onClick={() => {
-                          updateSendSlot(slot.id, { mode: "text" });
-                          setHexError("");
-                        }}
-                      >
-                        TEXT
-                      </button>
-                      <button
-                        aria-pressed={slot.mode === "hex"}
-                        className={slot.mode === "hex" ? "active" : ""}
-                        type="button"
-                        onClick={() => {
-                          updateSendSlot(slot.id, { mode: "hex" });
-                          setHexError("");
-                        }}
-                      >
-                        HEX
-                      </button>
-                    </div>
-                    <Select
-                      aria-label={`发送结束符 ${index + 1}`}
-                      className="serial-send-ending-select"
-                      disabled={slot.mode === "hex"}
-                      menuWidth={124}
-                      style={{ width: 124 }}
-                      value={slot.sendEnding}
-                      options={[
-                        { label: `+${serialLineEndingLabel(configuredEnding)}`, value: "configured" },
-                        { label: "无结束符", value: "none" },
-                      ]}
-                      onChange={(sendEnding) => updateSendSlot(slot.id, { sendEnding: sendEnding as SerialSendEnding })}
-                    />
-                    <label className={["serial-timed-send", slot.timedSendEnabled ? "active" : ""].join(" ")}>
-                      <input
-                        checked={slot.timedSendEnabled}
-                        disabled={!terminalReady}
-                        type="checkbox"
-                        onChange={(event) => updateSendSlot(slot.id, { timedSendEnabled: event.currentTarget.checked })}
-                      />
-                      <span>定时</span>
-                      <input
-                        aria-label={`定时发送间隔 ${index + 1}（毫秒）`}
-                        max={maxTimedSendIntervalMs}
-                        min={minTimedSendIntervalMs}
-                        step={50}
-                        type="number"
-                        value={slot.timedSendIntervalMs}
-                        onChange={(event) => updateSendSlot(slot.id, { timedSendIntervalMs: clampTimedSendInterval(event.currentTarget.valueAsNumber) })}
-                      />
-                      <span>ms</span>
-                    </label>
-                    <button disabled={!terminalReady || !slot.content.trim()} type="submit">
-                      <Icon name="terminal" />
-                      <span>发送</span>
+                      TEXT
                     </button>
-                    <button title={sendSlots.length <= 1 ? "清空输入" : "删除输入"} type="button" onClick={() => removeSendSlot(slot.id)}>
-                      <Icon name={sendSlots.length <= 1 ? "trash" : "x"} />
+                    <button
+                      aria-pressed={slot.mode === "hex"}
+                      className={slot.mode === "hex" ? "active" : ""}
+                      type="button"
+                      onClick={() => {
+                        updateSendSlot(slot.id, { mode: "hex" });
+                        setHexError("");
+                      }}
+                    >
+                      HEX
                     </button>
                   </div>
+                  <Select
+                    aria-label={`发送结束符 ${index + 1}`}
+                    className="serial-send-ending-select"
+                    disabled={slot.mode === "hex"}
+                    menuWidth={112}
+                    style={{ width: 112 }}
+                    value={slot.sendEnding}
+                    options={[
+                      { label: `+${serialLineEndingLabel(configuredEnding)}`, value: "configured" },
+                      { label: "无结束符", value: "none" },
+                    ]}
+                    onChange={(sendEnding) => updateSendSlot(slot.id, { sendEnding: sendEnding as SerialSendEnding })}
+                  />
+                  <label className={["serial-timed-send", slot.timedSendEnabled ? "active" : ""].join(" ")}>
+                    <input
+                      checked={slot.timedSendEnabled}
+                      disabled={!terminalReady}
+                      type="checkbox"
+                      onChange={(event) => updateSendSlot(slot.id, { timedSendEnabled: event.currentTarget.checked })}
+                    />
+                    <span>定时</span>
+                    <input
+                      aria-label={`定时发送间隔 ${index + 1}（毫秒）`}
+                      max={maxTimedSendIntervalMs}
+                      min={minTimedSendIntervalMs}
+                      step={50}
+                      type="number"
+                      value={slot.timedSendIntervalMs}
+                      onChange={(event) => updateSendSlot(slot.id, { timedSendIntervalMs: clampTimedSendInterval(event.currentTarget.valueAsNumber) })}
+                    />
+                    <span>ms</span>
+                  </label>
+                  <button className="serial-send-submit" disabled={!terminalReady || !slot.content.trim()} type="submit">
+                    <Icon name="terminal" />
+                    <span>发送</span>
+                  </button>
+                  <button
+                    className="serial-send-delete"
+                    disabled={sendSlots.length <= 1}
+                    title={sendSlots.length <= 1 ? "至少保留一个输入" : "删除输入"}
+                    type="button"
+                    onClick={() => removeSendSlot(slot.id)}
+                  >
+                    <Icon name="x" />
+                  </button>
                 </form>
               ))}
             </div>

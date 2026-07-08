@@ -453,12 +453,12 @@ button > .icon:only-child {
   min-height: 36px;
   border: 2px solid transparent;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent, #78d9c4) 52%, var(--text-muted, #55606a));
+  background: color-mix(in srgb, var(--accent, #409EFF) 52%, var(--text-muted, #55606a));
   background-clip: content-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--accent, #78d9c4) 70%, var(--text-strong, #7d8790));
+  background: color-mix(in srgb, var(--accent, #409EFF) 70%, var(--text-strong, #7d8790));
   background-clip: content-box;
 }
 
@@ -474,19 +474,17 @@ button > .icon:only-child {
 
 @supports not selector(::-webkit-scrollbar) {
   * {
-    scrollbar-color: rgba(120, 217, 196, 0.46) rgba(255, 255, 255, 0.045);
+    scrollbar-color: rgba(64, 158, 255, 0.46) rgba(255, 255, 255, 0.045);
     scrollbar-width: thin;
   }
 }
 
 .app-shell {
   --app-bg: #101317;
-  --grid-line-x: rgba(255, 255, 255, 0.035);
-  --grid-line-y: rgba(255, 255, 255, 0.03);
-  --sidebar-bg: rgba(9, 11, 14, 0.86);
-  --toolbar-bg: rgba(16, 19, 23, 0.84);
-  --dock-bg: #15191e;
-  --panel-bg: rgba(22, 26, 31, 0.92);
+  --sidebar-bg: rgba(11, 15, 18, 0.86);
+  --toolbar-bg: rgba(17, 22, 26, 0.84);
+  --dock-bg: #151d22;
+  --panel-bg: rgba(22, 28, 32, 0.92);
   --panel-solid-bg: #11161b;
   --button-bg: #20252b;
   --button-muted-bg: #15191e;
@@ -506,9 +504,9 @@ button > .icon:only-child {
   --tab-hover-border: color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.085));
   --tab-active-border: color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.095));
   --tab-active-top-border: color-mix(in srgb, var(--accent) 38%, transparent);
-  --accent: #78d9c4;
-  --accent-bg: #21342f;
-  --accent-strong: #d7fb74;
+  --accent: #409EFF;
+  --accent-bg: #102f4f;
+  --accent-strong: #79bbff;
   --danger: #e9835b;
   --danger-bg: rgba(233, 131, 91, 0.14);
   display: grid;
@@ -520,11 +518,7 @@ button > .icon:only-child {
   min-height: 640px;
   overflow: hidden;
   color: var(--text-main);
-  background:
-    linear-gradient(90deg, var(--grid-line-x) 1px, transparent 1px),
-    linear-gradient(180deg, var(--grid-line-y) 1px, transparent 1px),
-    var(--app-bg);
-  background-size: 32px 32px;
+  background: var(--app-bg);
 }
 
 .app-shell.detached-shell {
@@ -640,7 +634,7 @@ button > .icon:only-child {
 }
 
 .app-titlebar.window-controls-macos {
-  grid-template-columns: 72px minmax(0, auto) minmax(12px, 1fr) minmax(0, auto);
+  grid-template-columns: 84px minmax(12px, 1fr) minmax(0, auto);
 }
 
 .app-titlebar-brand {
@@ -669,6 +663,14 @@ button > .icon:only-child {
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.native-window-spacer {
+  grid-column: 1;
+  grid-row: 1;
+  width: 84px;
+  height: 100%;
+  pointer-events: none;
 }
 
 .app-titlebar-drag-region {
@@ -726,19 +728,6 @@ button > .icon:only-child {
   margin-left: 6px;
 }
 
-.window-controls.macos {
-  grid-column: 1;
-  grid-row: 1;
-  grid-template-columns: repeat(3, 12px);
-  align-self: center;
-  justify-self: start;
-  align-items: center;
-  gap: 8px;
-  min-width: 72px;
-  height: 100%;
-  padding-left: 12px;
-}
-
 .window-control {
   display: grid;
   width: 44px;
@@ -758,40 +747,6 @@ button > .icon:only-child {
 .window-control .icon {
   width: 13px;
   height: 13px;
-}
-
-.window-controls.macos .window-control {
-  width: 12px;
-  height: 12px;
-  min-height: 12px;
-  border: 0;
-  border-radius: 999px;
-  color: rgba(0, 0, 0, 0.58);
-  padding: 0;
-}
-
-.window-controls.macos .window-control.close {
-  background: #ff5f57;
-}
-
-.window-controls.macos .window-control.minimize {
-  background: #febc2e;
-}
-
-.window-controls.macos .window-control.maximize {
-  background: #28c840;
-}
-
-.window-controls.macos .window-control .icon {
-  width: 8px;
-  height: 8px;
-  opacity: 0;
-  stroke-width: 3;
-}
-
-.window-controls.macos:hover .window-control .icon,
-.window-controls.macos .window-control:focus-visible .icon {
-  opacity: 0.72;
 }
 
 .window-control:hover {
@@ -817,16 +772,6 @@ button > .icon:only-child {
   border-radius: 0;
   background: #c42b1c;
   color: #ffffff;
-}
-
-.window-controls.macos .window-control:hover {
-  filter: brightness(0.96);
-}
-
-.window-controls.macos .window-control.close:hover,
-.window-controls.macos .window-control.close:focus-visible {
-  background: #ff5f57;
-  color: rgba(0, 0, 0, 0.72);
 }
 
 @media (max-width: 420px) {
@@ -899,16 +844,14 @@ button > .icon:only-child {
 }
 
 .app-shell[data-theme="light"] {
-  --app-bg: #eef2f4;
-  --grid-line-x: rgba(24, 36, 42, 0.055);
-  --grid-line-y: rgba(24, 36, 42, 0.045);
-  --sidebar-bg: rgba(246, 248, 249, 0.94);
-  --toolbar-bg: rgba(248, 250, 251, 0.9);
-  --dock-bg: #e1e8eb;
+  --app-bg: #f3f9ff;
+  --sidebar-bg: rgba(248, 252, 255, 0.94);
+  --toolbar-bg: rgba(247, 251, 255, 0.9);
+  --dock-bg: #e8f3fb;
   --panel-bg: rgba(255, 255, 255, 0.94);
-  --panel-solid-bg: #f7fafb;
-  --button-bg: #e6edf0;
-  --button-muted-bg: #f2f6f7;
+  --panel-solid-bg: #f8fcff;
+  --button-bg: #e8f2fb;
+  --button-muted-bg: #f3f9ff;
   --field-bg: #ffffff;
   --terminal-bg: #0f1518;
   --terminal-fg: #c8f45f;
@@ -924,25 +867,23 @@ button > .icon:only-child {
   --tab-hover-border: color-mix(in srgb, var(--accent) 24%, rgba(20, 32, 39, 0.14));
   --tab-active-border: color-mix(in srgb, var(--accent) 34%, rgba(20, 32, 39, 0.15));
   --tab-active-top-border: color-mix(in srgb, var(--accent) 50%, transparent);
-  --accent: #147d70;
-  --accent-bg: #d7eee9;
-  --accent-strong: #607a00;
+  --accent: #409EFF;
+  --accent-bg: #ecf5ff;
+  --accent-strong: #337ecc;
   --danger: #b14b28;
   --danger-bg: rgba(177, 75, 40, 0.12);
 }
 
 @media (prefers-color-scheme: light) {
   .app-shell[data-theme="system"] {
-    --app-bg: #eef2f4;
-    --grid-line-x: rgba(24, 36, 42, 0.055);
-    --grid-line-y: rgba(24, 36, 42, 0.045);
-    --sidebar-bg: rgba(246, 248, 249, 0.94);
-    --toolbar-bg: rgba(248, 250, 251, 0.9);
-    --dock-bg: #e1e8eb;
+    --app-bg: #f3f9ff;
+    --sidebar-bg: rgba(248, 252, 255, 0.94);
+    --toolbar-bg: rgba(247, 251, 255, 0.9);
+    --dock-bg: #e8f3fb;
     --panel-bg: rgba(255, 255, 255, 0.94);
-    --panel-solid-bg: #f7fafb;
-    --button-bg: #e6edf0;
-    --button-muted-bg: #f2f6f7;
+    --panel-solid-bg: #f8fcff;
+    --button-bg: #e8f2fb;
+    --button-muted-bg: #f3f9ff;
     --field-bg: #ffffff;
     --terminal-bg: #0f1518;
     --terminal-fg: #c8f45f;
@@ -958,9 +899,9 @@ button > .icon:only-child {
     --tab-hover-border: color-mix(in srgb, var(--accent) 24%, rgba(20, 32, 39, 0.14));
     --tab-active-border: color-mix(in srgb, var(--accent) 34%, rgba(20, 32, 39, 0.15));
     --tab-active-top-border: color-mix(in srgb, var(--accent) 50%, transparent);
-    --accent: #147d70;
-    --accent-bg: #d7eee9;
-    --accent-strong: #607a00;
+    --accent: #409EFF;
+    --accent-bg: #ecf5ff;
+    --accent-strong: #337ecc;
     --danger: #b14b28;
     --danger-bg: rgba(177, 75, 40, 0.12);
   }
@@ -1025,8 +966,8 @@ button > .icon:only-child {
 
 .primary-action {
   width: 100%;
-  background: #d7fb74;
-  color: #121512;
+  background: var(--accent);
+  color: #06111f;
   font-weight: 800;
 }
 
@@ -1114,7 +1055,7 @@ button > .icon:only-child {
 }
 
 .launcher-grid button.enabled {
-  border-color: rgba(120, 217, 196, 0.48);
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
   color: #f5f8fb;
 }
 
@@ -1190,7 +1131,7 @@ button > .icon:only-child {
 }
 
 .profile-protocol {
-  color: #78d9c4;
+  color: var(--accent);
   font-size: 11px;
   font-weight: 800;
 }
@@ -1501,8 +1442,8 @@ button > .icon:only-child {
 }
 
 .profile-dialog-note.attention {
-  border-color: rgba(120, 217, 196, 0.45);
-  background: rgba(120, 217, 196, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--text-main);
 }
 
@@ -1529,8 +1470,8 @@ button > .icon:only-child {
 }
 
 .profile-trust-card.attention {
-  border-color: rgba(120, 217, 196, 0.45);
-  background: rgba(120, 217, 196, 0.08);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .profile-trust-card > div:first-child {
@@ -1584,9 +1525,9 @@ button > .icon:only-child {
 
 .profile-trust-card button {
   min-height: 30px;
-  border: 1px solid rgba(120, 217, 196, 0.5);
-  background: rgba(120, 217, 196, 0.1);
-  color: #aef4e4;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong);
   padding: 0 10px;
   cursor: pointer;
 }
@@ -1791,11 +1732,10 @@ button > .icon:only-child {
   min-width: 0;
   min-height: 36px;
   border: 1px solid var(--border-faint);
-  border-top: 0;
-  border-bottom: 0;
-  border-radius: 4px 4px 0 0;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--panel-solid-bg) 92%, var(--app-bg));
   box-shadow: none;
+  margin-bottom: 6px;
 }
 
 .tab-bar.split-tab-bar {
@@ -1834,18 +1774,25 @@ button > .icon:only-child {
 
 .tabs {
   display: flex;
-  gap: 0;
+  gap: 4px;
   min-width: 0;
   min-height: 100%;
   align-items: stretch;
   overflow-x: auto;
-  padding: 0;
+  padding: 4px;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .tab-bar.split-tab-bar .tabs {
   min-width: 0;
   min-height: 30px;
-  align-items: end;
+  align-items: stretch;
 }
 
 .tab {
@@ -1853,14 +1800,13 @@ button > .icon:only-child {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   align-self: stretch;
-  flex: 1 1 138px;
+  flex: 0 1 180px;
   min-width: 88px;
-  max-width: 220px;
+  max-width: 180px;
   min-height: 100%;
   border: 1px solid var(--tab-border);
   border-top: 2px solid transparent;
-  border-bottom: 0;
-  border-radius: 4px 4px 0 0;
+  border-radius: 6px;
   background: var(--button-muted-bg);
   color: #aeb9c3;
   text-align: left;
@@ -1868,8 +1814,7 @@ button > .icon:only-child {
 }
 
 .app-shell .tab {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
+  border-radius: 6px;
 }
 
 .tab.drag-over {
@@ -1885,11 +1830,6 @@ button > .icon:only-child {
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg)), var(--panel-solid-bg));
   color: #f5f8fb;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
-.tab.custom-page-tab {
-  flex-basis: 128px;
-  min-width: 88px;
 }
 
 .tab-main {
@@ -2342,8 +2282,7 @@ button.tab-main {
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--content-border);
-  border-top: 0;
-  border-radius: 0 0 4px 4px;
+  border-radius: 8px;
   background: var(--app-bg);
   overflow: hidden;
   box-shadow: none;
@@ -2457,6 +2396,11 @@ button.tab-main {
 
 .terminal-body-app-content {
   background: var(--app-bg);
+}
+
+.terminal-body-http-content {
+  border: 0;
+  border-radius: 0;
 }
 
 .terminal-workspace.split-active .terminal-body {
@@ -2736,7 +2680,7 @@ body.terminal-sftp-resizing {
   height: 100%;
   min-width: 0;
   min-height: 0;
-  border: 1px solid rgba(120, 217, 196, 0.18);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
   background: #080a0c;
 }
 
@@ -2924,10 +2868,11 @@ body.terminal-sftp-resizing {
 
 .serial-send-form {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) max-content;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr) 28px 88px 112px 150px 78px 30px;
+  align-items: center;
   gap: 6px;
-  min-width: 0;
+  width: 100%;
+  min-width: 618px;
 }
 
 .serial-config-panel {
@@ -3145,6 +3090,7 @@ body.terminal-sftp-resizing {
   position: relative;
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 88px;
   height: 30px;
   min-width: 0;
   overflow: hidden;
@@ -3172,21 +3118,26 @@ body.terminal-sftp-resizing {
   transform: translateX(100%);
 }
 
-.serial-send-form > textarea {
+.serial-send-input {
   width: 100%;
+  height: 30px;
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
   background: color-mix(in srgb, var(--field-bg) 82%, var(--app-bg));
   color: var(--text-strong);
   font-family: var(--terminal-font-family), "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
-.serial-send-row-actions .serial-send-ending-select .ui-select-trigger {
+.serial-send-ending-select .ui-select-trigger {
+  width: 112px;
   height: 30px;
   min-height: 30px;
   max-height: 30px;
-  padding: 0 8px;
+  padding: 0 7px;
   border-color: color-mix(in srgb, var(--border-subtle) 82%, transparent);
   background: color-mix(in srgb, var(--field-bg) 82%, var(--app-bg));
   color: var(--text-strong);
@@ -3204,37 +3155,15 @@ body.terminal-sftp-resizing {
   padding-right: 2px;
 }
 
-.serial-send-form > textarea {
-  min-height: 30px;
-  max-height: 220px;
-  padding: 5px 9px;
-  line-height: 1.45;
-  resize: vertical;
+.serial-send-input {
+  padding: 0 9px;
+  line-height: 30px;
 }
 
-.serial-send-row-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 6px;
-  width: max-content;
-  min-width: 0;
-  overflow-x: hidden;
-  overflow-y: visible;
-  scrollbar-width: none;
-}
-
-.serial-send-row-actions::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-.serial-send-row-actions > span {
+.serial-send-index {
   display: grid;
-  flex: 0 0 30px;
-  width: 30px;
-  min-width: 30px;
+  width: 28px;
+  min-width: 28px;
   height: 30px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
@@ -3245,7 +3174,8 @@ body.terminal-sftp-resizing {
   font-size: 11px;
 }
 
-.serial-send-row-actions > button,
+.serial-send-submit,
+.serial-send-delete,
 .serial-monitor-actions button {
   display: inline-flex;
   align-items: center;
@@ -3301,43 +3231,23 @@ body.terminal-sftp-resizing {
   color: var(--accent);
 }
 
-.serial-send-form > button {
-  width: 100%;
-  min-width: 74px;
-  padding: 0 10px;
-  color: var(--text-strong);
-}
-
-.serial-send-row-actions > button {
-  flex: 0 0 auto;
-  padding: 0 8px;
-}
-
-.serial-send-row-actions .serial-send-mode {
-  flex: 0 0 112px;
-}
-
-.serial-send-row-actions .serial-send-ending-select {
-  flex: 0 0 124px;
-  width: 124px;
-  min-width: 124px;
-  max-width: 124px;
-}
-
-.serial-send-row-actions .serial-send-ending-select .ui-select-trigger {
-  width: 124px;
-  min-width: 124px;
-  max-width: 124px;
+.serial-send-ending-select,
+.serial-send-ending-select .ui-select-trigger {
+  width: 112px;
+  min-width: 112px;
+  max-width: 112px;
   box-sizing: border-box;
 }
 
-.serial-send-row-actions .serial-timed-send {
-  flex: 0 0 156px;
+.serial-send-submit {
+  width: 78px;
+  padding: 0 7px;
+  white-space: nowrap;
 }
 
-.serial-send-row-actions > button:last-child {
-  flex-basis: 30px;
+.serial-send-delete {
   width: 30px;
+  min-width: 30px;
   padding: 0;
 }
 
@@ -3362,10 +3272,11 @@ body.terminal-sftp-resizing {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 4px;
+  width: 150px;
   height: 30px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 6px;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
   border-radius: 6px;
   background: color-mix(in srgb, var(--button-muted-bg) 76%, var(--app-bg));
@@ -3388,7 +3299,7 @@ body.terminal-sftp-resizing {
 }
 
 .serial-timed-send input[type="number"] {
-  width: 64px;
+  width: 66px;
   height: 22px;
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
@@ -3811,7 +3722,7 @@ body.terminal-sftp-resizing {
   }
 
   .serial-send-form {
-    grid-template-columns: minmax(160px, 1fr) max-content;
+    align-items: center;
   }
 
   .serial-send-history-list {
@@ -3842,35 +3753,13 @@ body.terminal-sftp-resizing {
   }
 
   .serial-send-form {
-    grid-template-columns: minmax(160px, 1fr) max-content;
-  }
-
-  .serial-send-row-actions {
-    gap: 5px;
-  }
-
-  .serial-send-row-actions .serial-send-mode {
-    flex-basis: 88px;
-  }
-
-  .serial-send-row-actions .serial-send-ending-select {
-    flex-basis: 124px;
-    width: 124px;
-    min-width: 124px;
-    max-width: 124px;
-  }
-
-  .serial-send-row-actions .serial-timed-send {
-    flex-basis: 148px;
+    align-items: center;
   }
 
   .serial-send-error {
     grid-column: auto;
   }
 
-  .serial-send-form > button {
-    width: 100%;
-  }
 }
 
 .terminal-context-menu {
@@ -4183,7 +4072,7 @@ body.terminal-sftp-resizing {
 }
 
 .terminal-pane pre:focus {
-  box-shadow: inset 0 0 0 1px rgba(120, 217, 196, 0.34);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .terminal-pane pre span {
@@ -4232,9 +4121,9 @@ body.terminal-sftp-resizing {
 }
 
 .capability-list span {
-  border: 1px solid rgba(120, 217, 196, 0.28);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   padding: 5px 8px;
-  color: #78d9c4;
+  color: var(--accent);
   font-size: 12px;
 }
 
@@ -4280,8 +4169,8 @@ body.terminal-sftp-resizing {
 }
 
 .protocol-caps small {
-  border: 1px solid rgba(120, 217, 196, 0.2);
-  color: #78d9c4;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
   padding: 3px 6px;
 }
 
@@ -4545,7 +4434,7 @@ body.terminal-sftp-resizing {
 }
 
 .file-browser-row:hover:not(:disabled) {
-  background: rgba(120, 217, 196, 0.07);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .parent-directory-row {
@@ -4634,7 +4523,7 @@ body.terminal-sftp-resizing {
   height: 13px;
   margin-top: 3px;
   border-color: color-mix(in srgb, var(--accent) 76%, #ffffff);
-  background: rgba(120, 217, 196, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .file-browser-row.is-directory .file-browser-icon::before {
@@ -4645,7 +4534,7 @@ body.terminal-sftp-resizing {
   height: 4px;
   border: 1px solid color-mix(in srgb, var(--accent) 76%, #ffffff);
   border-bottom: 0;
-  background: rgba(120, 217, 196, 0.12);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   content: "";
 }
 
@@ -4905,7 +4794,7 @@ body.terminal-sftp-resizing {
 }
 
 .simple-sftp-row:hover:not(:disabled):not([aria-disabled="true"]) {
-  background: rgba(120, 217, 196, 0.07);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .simple-sftp-row[aria-disabled="true"] {
@@ -5347,7 +5236,7 @@ body.simple-sftp-transfer-resizing {
 }
 
 .simple-directory-list button:hover {
-  background: rgba(120, 217, 196, 0.07);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .simple-directory-list strong {
@@ -5440,7 +5329,7 @@ body.simple-sftp-transfer-resizing {
 }
 
 .tunnel-row small {
-  color: #78d9c4;
+  color: var(--accent);
   text-align: right;
 }
 
@@ -5525,7 +5414,7 @@ body.simple-sftp-transfer-resizing {
 }
 
 .serial-port-row small {
-  color: #78d9c4;
+  color: var(--accent);
   text-align: right;
 }
 
@@ -7327,7 +7216,6 @@ body.http-workbench-resizing {
   gap: 12px;
   border: 0;
   background: color-mix(in srgb, var(--app-bg) 90%, var(--panel-solid-bg));
-  padding: 12px;
 }
 
 .http-console-sidebar {
@@ -8253,6 +8141,7 @@ body.http-workbench-resizing {
   gap: 6px;
   align-items: center;
   border: 1px solid var(--border-panel);
+  border-radius: 8px;
   background: color-mix(in srgb, var(--panel-bg) 84%, var(--app-bg));
   padding: 5px;
   overflow-x: auto;
@@ -9003,7 +8892,7 @@ kbd {
 }
 
 .log-row.info span:first-child {
-  color: #78d9c4;
+  color: var(--accent);
 }
 
 .log-row.warn span:first-child {
@@ -9026,7 +8915,7 @@ kbd {
 
 progress {
   width: 100%;
-  accent-color: #78d9c4;
+  accent-color: var(--accent);
 }
 
 .app-shell .brand p,
@@ -9193,7 +9082,7 @@ progress {
 }
 
 .app-shell .tab {
-  border-radius: 4px 4px 0 0;
+  border-radius: 6px;
 }
 
 .app-shell button:hover:not(:disabled),
@@ -9274,29 +9163,6 @@ progress {
   border-radius: 0;
   background-color: #c42b1c;
   color: #ffffff;
-}
-
-.app-shell .window-controls.macos .window-control,
-.app-shell .window-controls.macos .window-control:hover:not(:disabled) {
-  border-radius: 999px;
-}
-
-.app-shell .window-controls.macos .window-control.close {
-  background-color: #ff5f57;
-}
-
-.app-shell .window-controls.macos .window-control.minimize {
-  background-color: #febc2e;
-}
-
-.app-shell .window-controls.macos .window-control.maximize {
-  background-color: #28c840;
-}
-
-.app-shell .window-controls.macos .window-control.close:hover:not(:disabled),
-.app-shell .window-controls.macos .window-control.minimize:hover:not(:disabled),
-.app-shell .window-controls.macos .window-control.maximize:hover:not(:disabled) {
-  color: rgba(0, 0, 0, 0.72);
 }
 
 .app-shell .window-control:active:not(:disabled) {

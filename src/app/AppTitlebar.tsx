@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Icon, type IconName } from "../shared/Icon";
 import { PortivaLogo } from "../shared/PortivaLogo";
 
@@ -60,6 +60,10 @@ function detectWindowControlPlatform(): WindowControlPlatform {
   return "windows";
 }
 
+function isTitlebarInteractiveTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest("button, a, input, select, textarea"));
+}
+
 export function AppTitlebar({
   httpConsoleActive,
   savedConnectionsOpen,
@@ -72,6 +76,7 @@ export function AppTitlebar({
   onOpenSettings,
 }: AppTitlebarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
+  const suppressNextDoubleClickRef = useRef(false);
 
   useEffect(() => {
     void readWindowMaximized().then(setIsMaximized);
@@ -83,51 +88,61 @@ export function AppTitlebar({
   };
 
   const startTitlebarDrag = (event: MouseEvent<HTMLElement>) => {
-    if (
-      event.button !== 0 ||
-      event.detail > 1 ||
-      (event.target instanceof HTMLElement && event.target.closest("button"))
-    ) {
+    if (event.button !== 0 || isTitlebarInteractiveTarget(event.target)) {
+      return;
+    }
+
+    if (event.detail === 2) {
+      suppressNextDoubleClickRef.current = true;
+      event.preventDefault();
+      event.stopPropagation();
+      void toggleWindowMaximize();
+      return;
+    }
+
+    if (event.detail > 2) {
       return;
     }
 
     void runWindowAction("drag");
   };
   const toggleTitlebarMaximize = (event: MouseEvent<HTMLElement>) => {
-    if (event.target instanceof HTMLElement && event.target.closest("button")) {
+    if (isTitlebarInteractiveTarget(event.target)) {
+      return;
+    }
+
+    if (suppressNextDoubleClickRef.current) {
+      suppressNextDoubleClickRef.current = false;
       return;
     }
 
     void toggleWindowMaximize();
   };
   const windowControlPlatform = detectWindowControlPlatform();
+  const isMacWindow = windowControlPlatform === "macos";
   const maximizeIcon: IconName = isMaximized ? "restore" : "maximize";
   const maximizeLabel = isMaximized ? "还原" : "最大化";
-  const windowControls =
-    windowControlPlatform === "macos"
-      ? [
-          { action: "close" as const, className: "close", icon: "x" as const, label: "关闭", title: "关闭" },
-          { action: "minimize" as const, className: "minimize", icon: "minus" as const, label: "最小化", title: "最小化" },
-          { action: "toggle-maximize" as const, className: "maximize", icon: maximizeIcon, label: maximizeLabel, title: maximizeLabel },
-        ]
-      : [
-          { action: "minimize" as const, className: "minimize", icon: "minus" as const, label: "最小化", title: "最小化" },
-          { action: "toggle-maximize" as const, className: "maximize", icon: maximizeIcon, label: maximizeLabel, title: maximizeLabel },
-          { action: "close" as const, className: "close", icon: "x" as const, label: "关闭", title: "关闭" },
-        ];
+  const nonMacWindowControls = [
+    { action: "minimize" as const, className: "minimize", icon: "minus" as const, label: "最小化", title: "最小化" },
+    { action: "toggle-maximize" as const, className: "maximize", icon: maximizeIcon, label: maximizeLabel, title: maximizeLabel },
+    { action: "close" as const, className: "close", icon: "x" as const, label: "关闭", title: "关闭" },
+  ];
 
   return (
     <header
       className={`app-titlebar window-controls-${windowControlPlatform}`}
-      data-tauri-drag-region
       onDoubleClick={toggleTitlebarMaximize}
       onMouseDown={startTitlebarDrag}
     >
-      <div className="app-titlebar-brand" data-tauri-drag-region>
-        <PortivaLogo className="app-titlebar-logo" />
-        <strong>Portiva</strong>
-      </div>
-      <div className="app-titlebar-drag-region" data-tauri-drag-region />
+      {isMacWindow ? (
+        <div className="native-window-spacer" aria-hidden="true" />
+      ) : (
+        <div className="app-titlebar-brand">
+          <PortivaLogo className="app-titlebar-logo" />
+          <strong>Portiva</strong>
+        </div>
+      )}
+      <div className="app-titlebar-drag-region" />
       <nav className="app-titlebar-actions" aria-label="主页工具栏">
         <button
           type="button"
@@ -166,27 +181,29 @@ export function AppTitlebar({
           <Icon name="settings" />
         </button>
       </nav>
-      <div className={`window-controls ${windowControlPlatform}`} aria-label="窗口控制">
-        {windowControls.map((control) => (
-          <button
-            type="button"
-            className={`window-control ${control.className}`}
-            title={control.title}
-            aria-label={control.label}
-            key={control.action}
-            onClick={() => {
-              if (control.action === "toggle-maximize") {
-                void toggleWindowMaximize();
-                return;
-              }
+      {!isMacWindow ? (
+        <div className={`window-controls ${windowControlPlatform}`} aria-label="窗口控制">
+          {nonMacWindowControls.map((control) => (
+            <button
+              type="button"
+              className={`window-control ${control.className}`}
+              title={control.title}
+              aria-label={control.label}
+              key={control.action}
+              onClick={() => {
+                if (control.action === "toggle-maximize") {
+                  void toggleWindowMaximize();
+                  return;
+                }
 
-              void runWindowAction(control.action);
-            }}
-          >
-            <Icon name={control.icon} />
-          </button>
-        ))}
-      </div>
+                void runWindowAction(control.action);
+              }}
+            >
+              <Icon name={control.icon} />
+            </button>
+          ))}
+        </div>
+      ) : null}
     </header>
   );
 }

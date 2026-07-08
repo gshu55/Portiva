@@ -9,19 +9,10 @@
     "preview": "vite preview",
     "clean": "rimraf dist src-tauri/target",
     "tauri": "tauri",
-    "build:desktop": "tauri build",
-    "build:windows": "tauri build --bundles nsis",
-    "build:windows:single": "tauri build --no-bundle",
-    "build:windows:exe": "tauri build --bundles nsis",
-    "build:windows:nsis": "tauri build --bundles nsis",
-    "build:windows:msi": "tauri build --bundles msi",
-    "build:macos": "tauri build --bundles app,dmg",
-    "build:macos:app": "tauri build --bundles app",
-    "build:macos:dmg": "tauri build --bundles dmg",
-    "build:linux": "tauri build --bundles deb,rpm,appimage",
-    "build:linux:deb": "tauri build --bundles deb",
-    "build:linux:rpm": "tauri build --bundles rpm",
-    "build:linux:appimage": "tauri build --bundles appimage"
+    "build:win:exe": "tauri build --bundles nsis",
+    "build:win:portable": "tauri build --no-bundle",
+    "build:mac:dmg": "tauri build --bundles dmg",
+    "build:linux:deb": "tauri build --bundles deb"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

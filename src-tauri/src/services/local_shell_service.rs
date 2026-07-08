@@ -17,7 +17,6 @@ use crate::services::terminal_service::{
 
 const TERMINAL_SNAPSHOT_EVENT: &str = "portiva://terminal-snapshot";
 const TERMINAL_OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
-const TERMINAL_OUTPUT_MAX_CHUNK_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -294,9 +293,11 @@ fn spawn_local_shell_reader(
                 Ok(0) => break,
                 Ok(byte_count) => {
                     pending_bytes.extend_from_slice(&buffer[..byte_count]);
-                    if pending_bytes.len() >= TERMINAL_OUTPUT_MAX_CHUNK_BYTES
-                        || last_flush.elapsed() >= TERMINAL_OUTPUT_FLUSH_INTERVAL
-                    {
+                    if should_flush_local_shell_output_after_read(
+                        pending_bytes.len(),
+                        last_flush,
+                        TERMINAL_OUTPUT_FLUSH_INTERVAL,
+                    ) {
                         flush_terminal_output(
                             &app_handle,
                             &terminal_id,
@@ -331,6 +332,14 @@ fn spawn_local_shell_reader(
         let local_shells = app_handle.state::<LocalShellService>();
         let _ = local_shells.close_pty_by_terminal(&terminal_id);
     });
+}
+
+fn should_flush_local_shell_output_after_read(
+    pending_byte_count: usize,
+    _last_flush: Instant,
+    _flush_interval: Duration,
+) -> bool {
+    pending_byte_count > 0
 }
 
 fn spawn_local_shell_exit_watcher(
@@ -533,5 +542,21 @@ fn home_dir() -> Option<String> {
         env::var("HOME")
             .ok()
             .filter(|value| !value.trim().is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_shell_flushes_each_read_so_prompt_is_not_stuck_pending() {
+        let just_flushed = Instant::now();
+
+        assert!(should_flush_local_shell_output_after_read(
+            32,
+            just_flushed,
+            TERMINAL_OUTPUT_FLUSH_INTERVAL,
+        ));
     }
 }

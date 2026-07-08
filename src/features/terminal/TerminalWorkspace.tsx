@@ -238,6 +238,7 @@ export function TerminalWorkspace({
       : isTerminalSplitActive || isTerminalTabActive
         ? "terminal-body-terminal-content"
         : "terminal-body-app-content",
+    activeTab?.kind === "http-console" ? "terminal-body-http-content" : "",
   ]
     .filter(Boolean)
     .join(" ");
