@@ -16,7 +16,6 @@ pub fn settings_update(
     settings_store: State<'_, SettingsStore>,
     logs: State<'_, LogService>,
 ) -> Result<AppSettings, String> {
-    // TODO: persist to ~/.portiva/settings.json after adding schema migration.
     let updated = settings_store.update(settings)?;
     let _ = logs.record(LogLevel::Info, "settings", "updated application settings");
     Ok(updated)

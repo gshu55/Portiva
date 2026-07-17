@@ -12,42 +12,26 @@ pub fn secret_list(secrets: State<'_, SecretStore>) -> Result<Vec<SecretMetadata
 }
 
 #[tauri::command]
-pub fn secret_create_placeholder(
-    profile_id: String,
-    purpose: SecretPurpose,
-    secrets: State<'_, SecretStore>,
-) -> Result<SecretMetadata, String> {
-    // TODO: accept secret material via secure native prompt, not regular webview state.
-    secrets.create_placeholder(profile_id, purpose)
-}
-
-#[tauri::command]
-pub fn secret_set(
+pub async fn secret_set(
     profile_id: String,
     purpose: SecretPurpose,
     value: String,
     secrets: State<'_, SecretStore>,
 ) -> Result<SecretMetadata, String> {
-    secrets.set_secret(profile_id, purpose, value)
+    let secrets = secrets.inner().clone();
+    run_secret_task(secrets, move |store| {
+        store.set_secret(profile_id, purpose, value)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn secret_get(
-    profile_id: String,
-    purpose: SecretPurpose,
+pub async fn secret_delete(
+    secret_id: String,
     secrets: State<'_, SecretStore>,
-) -> Result<Option<String>, String> {
-    secrets.get_secret(&profile_id, purpose)
-}
-
-#[tauri::command]
-pub fn secret_delete(secret_id: String, secrets: State<'_, SecretStore>) -> Result<(), String> {
-    secrets.delete(&secret_id)
-}
-
-#[tauri::command]
-pub fn secret_exists(secret_id: String, secrets: State<'_, SecretStore>) -> Result<bool, String> {
-    secrets.contains(&secret_id)
+) -> Result<(), String> {
+    let secrets = secrets.inner().clone();
+    run_secret_task(secrets, move |store| store.delete(&secret_id)).await
 }
 
 #[tauri::command]
@@ -76,4 +60,14 @@ pub fn known_host_delete(
 #[tauri::command]
 pub fn security_redact_preview(input: String) -> String {
     redaction::redact(&input)
+}
+
+async fn run_secret_task<T, F>(secrets: SecretStore, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(SecretStore) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || task(secrets))
+        .await
+        .map_err(|error| format!("系统凭据库任务执行失败：{error}"))?
 }

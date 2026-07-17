@@ -40,6 +40,7 @@ interface TerminalWorkspaceProps {
   terminalConfirmMultilinePaste?: boolean;
   terminalCopyRichText?: boolean;
   terminalRightClickBehavior?: TerminalRightClickBehavior;
+  suppressInsecureWarning?: boolean;
   terminalTheme: TerminalColorPalette;
   onSendTerminalBytes: (bytes: number[], terminalId?: string) => Promise<void> | void;
   onSendTerminalData: (data: string, terminalId?: string) => Promise<void> | void;
@@ -125,6 +126,7 @@ export function TerminalWorkspace({
   terminalConfirmMultilinePaste = true,
   terminalCopyRichText = false,
   terminalRightClickBehavior = "context-menu",
+  suppressInsecureWarning = false,
   terminalTheme,
   onCloseSessionTab,
   onDetachSessionTab,
@@ -245,6 +247,7 @@ export function TerminalWorkspace({
   const shouldShowRiskBanner =
     connection &&
     !isCustomTabActive &&
+    !suppressInsecureWarning &&
     !capabilities.secureTransport &&
     connection.transport?.kind !== "serial";
   const homeShortcutRows = useMemo(

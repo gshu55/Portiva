@@ -54,8 +54,8 @@ SSH Tunnel
 6. SSH/SFTP 是第一组协议实现，不是系统架构边界。
 7. 所有协议能力通过 capabilities 暴露给 UI。
 8. 文件传输和终端连接分开建模。
-9. 密码、私钥、passphrase、token 不进入前端状态。
-10. 大文件传输不经过前端内存。
+9. SSH/SFTP 密码、passphrase 不进入长期前端状态或前端持久化；HTTP 请求认证字段按产品约定随草稿明文持久化。
+10. SFTP 大文件传输不经过前端内存；HTTP multipart 文件在 Worker 中编码并限制单文件 128 MB。
 11. HTTP/API 调试属于短请求/响应模型，不复用终端会话，也不通过 Raw TCP 手写 HTTP。
 ```
 
@@ -350,8 +350,10 @@ nectar codec
 Secret 存储：
 
 ```text
-tauri-plugin-stronghold
-或系统 keyring
+keyring 4.1.5
+macOS：Keychain
+Windows：Credential Manager
+Linux：Secret Service
 ```
 
 ---
@@ -1078,16 +1080,15 @@ connection_open(serialProfile)
 ```text
 1. 用户选择或填写 SSH Profile。
 2. 前端调用 connection_open。
-3. Rust 读取 profile。
-4. Rust 从 SecretStore 取密码或 passphrase。
-5. Rust 建立 SSH transport。
-6. Rust 校验 host key。
-7. 首次连接时返回 fingerprint confirmation request。
-8. 用户确认后保存 known_hosts。
-9. 创建 ConnectionSession。
-10. 前端调用 terminal_attach 打开 PTY。
-11. 后端读取 SSH channel 输出，通过 Channel 推给 xterm.js。
-12. 前端输入通过 terminal_write 写回 SSH channel。
+3. Rust 建立 SSH transport 并校验 host key。
+4. 首次连接时返回 fingerprint confirmation request，用户确认后保存 known_hosts 并重试。
+5. 手工输入密码时，前端调用 ssh_authenticate_password；密码只在当前表单和本次 IPC 中短暂存在。
+6. 使用已保存密码时，前端调用 ssh_authenticate_saved_password；Rust 核对 Profile 与 SSH 会话后从 SecretStore 读取密码，密码不回传 WebView。
+7. 私钥认证的 passphrase 目前只用于本次 ssh_authenticate_private_key，不做持久化。
+8. 认证成功后更新 ConnectionSession。
+9. 前端调用 terminal_attach 打开 PTY。
+10. 后端读取 SSH channel 输出，通过 Channel 推给 xterm.js。
+11. 前端输入通过 terminal_write 写回 SSH channel。
 ```
 
 ### 15.2 known_hosts 要求
@@ -1152,6 +1153,8 @@ ANSI 颜色
 前端只接收进度和状态。
 文件内容不经过 IPC。
 ```
+
+以上原则针对 SFTP 文件传输。HTTP Console 的 multipart 文件字段由 WebView 选择文件，Worker 负责读取和 Base64 编码，单文件限制为 128 MB；响应限制为 32 MB。
 
 ---
 
@@ -1349,7 +1352,7 @@ HTTP Console 的内部布局沿用 EasyPost 原有方式：左侧 workspace tree
 
 视觉实现必须适配 Portiva 当前风格：保留 EasyPost 的信息架构和操作路径，但替换 glass/liquid 视觉语言、Tailwind 全局样式、按钮输入框外观、面板边框、颜色和状态提示。
 
-第一阶段推荐通过 Tauri HTTP 插件发送请求，后续再封装成 Portiva 自己的 Rust IPC 命令：
+当前实现通过 Portiva 自己的 Rust IPC 命令发送请求：
 
 ```text
 http_request_send
@@ -1446,20 +1449,23 @@ token
 已解密 secret
 ```
 
+手工输入的密码或私钥 passphrase 可以在当前连接表单中短暂存在，但不得写入 localStorage、Profile、日志或其他前端持久化。
+
 Profile 中只保存：
 
 ```text
-secretId
 privateKeyPath
 authType
 非敏感配置
 ```
 
-Secret 由 Rust 后端管理：
+Secret 元数据与内容分离：
 
 ```text
-SecretStore
-Stronghold 或 OS keyring
+~/.portiva/secrets.json：只保存 profileId、purpose、hasValue 和保护方式等元数据
+系统凭据库：保存实际 SSH/SFTP 密码
+凭据账户名：由 profileId 和 purpose 派生
+私钥 passphrase：当前不保存
 ```
 
 ### 20.2 日志脱敏
@@ -1690,7 +1696,7 @@ Profile CRUD
 最近连接
 known_hosts
 fingerprint 确认弹窗
-密码/私钥 passphrase 安全存储
+SSH/SFTP 密码使用系统凭据库安全存储
 日志脱敏
 ```
 
@@ -1700,7 +1706,8 @@ fingerprint 确认弹窗
 首次连接显示 fingerprint。
 确认后保存 known_hosts。
 host key 改变时阻止连接。
-前端状态中看不到密码/passphrase。
+已保存密码不回传 WebView；手工输入只在当前表单短暂存在。
+私钥 passphrase 不做持久化。
 日志中不出现敏感字段。
 ```
 
@@ -1863,7 +1870,7 @@ PowerShell / cmd / bash / zsh
 WSL profile
 ```
 
-### v0.9：HTTP/API 调试
+### v0.9：HTTP/API 调试（已实现）
 
 目标：
 
@@ -2051,16 +2058,17 @@ russh 对某些老旧服务器兼容性不足。
 风险：
 
 ```text
-密码或 passphrase 进入前端状态或日志。
+密码或 passphrase 进入前端持久化、长期状态或日志。
 ```
 
 应对：
 
 ```text
-Secret 只存 Rust 后端。
-Profile 只存 secretId。
+Profile 不保存 secret 值或 secretId。
+已保存密码只存系统凭据库，由 Rust 认证命令直接读取和使用。
+手工输入只在当前表单和本次 IPC 中短暂存在。
+私钥 passphrase 当前不保存。
 日志脱敏。
-前端 DevTools 不可见 secret。
 ```
 
 ### 25.4 Telnet 安全误导
@@ -2210,8 +2218,8 @@ Portiva 当前设计可以支持 SSH/SFTP，也可以扩展到 Serial、Telnet�
 4. 不同协议通过 ProtocolBackend 适配。
 5. 不同功能通过 ConnectionCapabilities 控制。
 6. SSH/SFTP 是第一阶段实现，不是架构边界。
-7. Secret 永远不进入前端。
-8. 大文件永远不经过前端内存。
+7. SSH/SFTP Secret 不回传前端；HTTP 请求认证字段按产品约定随草稿明文持久化。
+8. SFTP 大文件不经过前端内存；HTTP multipart 文件使用 Worker 并设置明确上限。
 9. Telnet、Raw TCP 等明文协议必须明确提示风险。
 10. HTTP/API 调试是短请求/响应模型，不复用 TerminalSession，也不通过 Raw TCP 手写 HTTP。
 11. 第一版聚焦 SSH/SFTP，把核心体验打磨稳定。
@@ -2241,4 +2249,3 @@ Portiva 的核心竞争力不是“支持很多协议”本身，而是：
 清晰的安全边界
 可扩展的协议架构
 ```
-

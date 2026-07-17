@@ -287,7 +287,8 @@ impl ConnectionManager {
     }
 
     pub fn close(&self, connection_id: &str) -> Result<(), String> {
-        // TODO: close terminal/file-transfer handles before dropping the session.
+        // Transport-specific services are closed by the connection command before
+        // this registry entry is removed.
         self.sessions
             .lock()
             .map_err(|_| "connection manager lock poisoned".to_string())?

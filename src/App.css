@@ -6442,7 +6442,7 @@ body.simple-sftp-transfer-resizing {
 
 .http-sidebar-header button,
 .http-send-button,
-.http-request-tabs button,
+.http-request-tab,
 .http-section-switcher button,
 .http-tree-action {
   border: 1px solid var(--border-faint);
@@ -6452,7 +6452,7 @@ body.simple-sftp-transfer-resizing {
 }
 
 .http-sidebar-header button:hover,
-.http-request-tabs button:hover,
+.http-request-tab:hover,
 .http-section-switcher button:hover,
 .http-tree-action:hover {
   border-color: var(--tab-hover-border);
@@ -6557,7 +6557,7 @@ body.simple-sftp-transfer-resizing {
 }
 
 .http-tree-row.active,
-.http-request-tabs button.active,
+.http-request-tab.active,
 .http-section-switcher button.active {
   border-color: color-mix(in srgb, var(--accent) 48%, var(--border-subtle));
   background: color-mix(in srgb, var(--accent) 10%, var(--panel-solid-bg));
@@ -6565,7 +6565,7 @@ body.simple-sftp-transfer-resizing {
 }
 
 .http-tree-row strong,
-.http-request-tabs button strong {
+.http-request-tab strong {
   min-width: 0;
   overflow: hidden;
   color: var(--text-strong);
@@ -6632,17 +6632,28 @@ body.simple-sftp-transfer-resizing {
   background: color-mix(in srgb, var(--panel-solid-bg) 88%, var(--app-bg));
 }
 
-.http-request-tabs button {
+.http-request-tab {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 18px;
   align-items: center;
-  gap: 7px;
   min-width: 150px;
   max-width: 230px;
   border-top: 0;
   border-bottom: 0;
   border-left: 0;
   padding: 5px 9px;
+  text-align: left;
+}
+
+.http-request-tab-select.ui-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 8px;
+  gap: 7px;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
   text-align: left;
 }
 
@@ -8147,8 +8158,8 @@ body.http-workbench-resizing {
   overflow-x: auto;
 }
 
-.http-request-tabs button {
-  grid-template-columns: auto minmax(0, 1fr) 8px 16px;
+.http-request-tab {
+  grid-template-columns: minmax(0, 1fr) 18px;
   gap: 8px;
   min-width: 160px;
   max-width: 260px;
@@ -8157,14 +8168,14 @@ body.http-workbench-resizing {
   padding: 5px 9px;
 }
 
-.http-request-tabs button small {
+.http-request-tab small {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--accent) 76%, transparent);
 }
 
-.http-request-tabs button small.saved {
+.http-request-tab small.saved {
   background: transparent;
 }
 
@@ -8174,15 +8185,20 @@ body.http-workbench-resizing {
   color: var(--accent);
 }
 
-.http-request-tab-close {
+.http-request-tab-close.ui-button {
   display: grid;
   place-items: center;
   width: 18px;
   height: 18px;
+  min-width: 18px;
+  min-height: 18px;
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: var(--text-muted);
 }
 
-.http-request-tab-close:hover {
+.http-request-tab-close.ui-button:hover {
   background: color-mix(in srgb, var(--button-bg) 72%, transparent);
   color: var(--text-strong);
 }
@@ -8295,27 +8311,51 @@ body.http-workbench-resizing {
 
 .http-editor-panel {
   padding: 6px 12px 12px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .http-parameter-table {
   display: grid;
   align-content: start;
   row-gap: 6px;
-  min-width: 760px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   border: 1px solid var(--border-subtle);
   border-radius: var(--settings-inner-radius, 6px);
   background: color-mix(in srgb, var(--panel-solid-bg) 62%, transparent);
   padding: 8px;
+  box-sizing: border-box;
+}
+
+.http-parameter-table::-webkit-scrollbar:horizontal {
+  height: 0;
 }
 
 .http-parameter-header,
 .http-parameter-row {
   display: grid;
-  grid-template-columns: 32px minmax(150px, 0.9fr) minmax(210px, 1.15fr) minmax(150px, 1fr) 122px;
+  grid-template-columns: 32px minmax(96px, 0.9fr) minmax(120px, 1.15fr) minmax(96px, 1fr) 108px;
   gap: 8px;
   align-items: center;
-  min-width: 760px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.http-form-table {
+  min-width: 0;
+}
+
+.http-form-table .http-parameter-header,
+.http-form-table .http-parameter-row {
+  grid-template-columns: 32px minmax(96px, 0.75fr) 72px minmax(180px, 1.35fr) minmax(96px, 0.85fr) 108px;
+  min-width: 720px;
 }
 
 .http-parameter-header {
@@ -8359,7 +8399,7 @@ body.http-workbench-resizing {
 }
 
 .http-parameter-row input {
-  min-width: 120px;
+  min-width: 0;
   min-height: 32px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--settings-inner-radius, 6px);
@@ -8368,18 +8408,107 @@ body.http-workbench-resizing {
   white-space: nowrap;
 }
 
+.http-form-type-toggle,
+.http-form-file-button {
+  display: inline-grid;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, 6px);
+  background: color-mix(in srgb, var(--button-muted-bg) 82%, transparent);
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.http-form-type-toggle {
+  width: 100%;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.http-form-type-toggle:hover,
+.http-form-file-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.http-form-file-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.http-form-file-summary {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.http-form-file-summary strong,
+.http-form-file-summary small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-form-file-summary strong {
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.http-form-file-summary small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.http-form-file-button {
+  position: relative;
+  grid-template-columns: 14px auto;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.http-form-file-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.http-form-file-button input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  opacity: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
 .http-param-actions {
   display: grid;
-  grid-template-columns: repeat(3, 32px);
+  grid-template-columns: repeat(3, 30px);
   justify-content: end;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .http-param-actions button {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border: 1px solid var(--border-faint);
   border-radius: var(--settings-inner-radius, 6px);
   background: color-mix(in srgb, var(--button-muted-bg) 80%, transparent);
@@ -8402,6 +8531,8 @@ body.http-workbench-resizing {
 
 .http-body-editor {
   grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
 }
 
 .http-editor-toolbar {
@@ -8678,11 +8809,12 @@ body.http-workbench-resizing {
 
 @media (max-width: 860px) {
   .http-console {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 8px;
   }
 
   .http-console-sidebar {
-    display: none;
+    display: grid;
   }
 
   .http-request-bar {

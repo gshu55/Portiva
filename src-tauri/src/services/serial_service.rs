@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -84,7 +84,7 @@ impl SerialService {
         let mut ports = SerialPort::available_ports()
             .map_err(|error| format!("failed to list serial ports: {error}"))?
             .into_iter()
-            .filter(include_serial_port_path)
+            .filter(|path| include_serial_port_path(path))
             .map(|path| serial_port_info(path, &active_ports))
             .collect::<Vec<_>>();
 
@@ -299,9 +299,8 @@ impl SerialService {
             .map_err(|_| "serial service lock poisoned".to_string())?;
         let terminal_ids = sessions
             .iter()
-            .filter_map(|(terminal_id, session)| {
-                (session.connection_id == connection_id).then(|| terminal_id.clone())
-            })
+            .filter(|(_, session)| session.connection_id == connection_id)
+            .map(|(terminal_id, _)| terminal_id.clone())
             .collect::<Vec<_>>();
 
         for terminal_id in &terminal_ids {
@@ -411,12 +410,12 @@ fn normalize_serial_port_name(path: PathBuf) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn include_serial_port_path(path: &PathBuf) -> bool {
+fn include_serial_port_path(path: &Path) -> bool {
     !path.to_string_lossy().starts_with("/dev/tty.")
 }
 
 #[cfg(not(target_os = "macos"))]
-fn include_serial_port_path(_path: &PathBuf) -> bool {
+fn include_serial_port_path(_path: &Path) -> bool {
     true
 }
 

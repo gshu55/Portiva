@@ -2,10 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { httpCancel, httpSendStream, httpWorkspacesGet, httpWorkspacesSave } from "../../shared/ipc/commands";
-import type { HttpSendRequest, HttpSendResponse } from "../../shared/ipc/commands";
+import type { HttpSendMultipartPart, HttpSendRequest, HttpSendResponse } from "../../shared/ipc/commands";
 import { Icon } from "../../shared/Icon";
 import { Button, ConfirmDialog, IconButton, Select, Tag, TextArea, TextInput } from "../../shared/ui";
 import { HttpTreeCreateAction, HttpTreeItem } from "./HttpTreeItem";
+import {
+  formatHttpByteLimit,
+  HTTP_FILE_UPLOAD_MAX_BYTES,
+  HTTP_RESPONSE_MAX_BYTES,
+  HTTP_STREAM_PREVIEW_MAX_CHARS,
+} from "./httpLimits";
 import type {
   HttpTreeDndHandlers,
   HttpTreeDragPayload,
@@ -26,7 +32,19 @@ type ImportConflictMode = "overwrite" | "ignore";
 type VariableScope = "workspace" | "project" | "environment" | "request-temp";
 type TreeNodeType = "workspace" | "project" | "request";
 type RequestRowField = "formBody" | "headers" | "params";
-type KeyValueEntry = { description?: string; enabled: boolean; key: string; sensitive?: boolean; value: string };
+type FormValueType = "text" | "file";
+type KeyValueEntry = {
+  description?: string;
+  enabled: boolean;
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
+  formValueType?: FormValueType;
+  key: string;
+  localFileId?: string;
+  sensitive?: boolean;
+  value: string;
+};
 type BodyMode = "none" | "json" | "text" | "form";
 type AuthType = "none" | "bearer" | "basic" | "api-key";
 type ApiKeyLocation = "header" | "query";
@@ -251,7 +269,7 @@ const emptyVariableDrafts: Record<VariableScope, KeyValueEntry> = {
   workspace: { ...createBlankRow(), enabled: false },
 };
 const emptyRequestDraftRows: Record<RequestRowField, KeyValueEntry> = {
-  formBody: { ...createBlankRow(), enabled: false },
+  formBody: { ...createBlankRow(), enabled: false, formValueType: "text" },
   headers: { ...createBlankRow(), enabled: false },
   params: { ...createBlankRow(), enabled: false },
 };
@@ -279,7 +297,7 @@ function createBlankRow(): KeyValueEntry {
 }
 
 function hasKeyValueContent(row: KeyValueEntry) {
-  return Boolean(row.key.trim() || row.value.trim() || (row.description ?? "").trim());
+  return Boolean(row.key.trim() || row.value.trim() || row.fileName?.trim() || (row.description ?? "").trim());
 }
 
 function trimTrailingBlankRows(rows: KeyValueEntry[]) {
@@ -376,7 +394,7 @@ function missingRequestVariables(request: HttpRequestDraft, variables: Map<strin
     request.auth.username,
     ...request.params.flatMap((entry) => [entry.key, entry.value]),
     ...request.headers.flatMap((entry) => [entry.key, entry.value]),
-    ...request.formBody.flatMap((entry) => [entry.key, entry.value]),
+    ...request.formBody.flatMap((entry) => (formValueTypeFor(entry) === "file" ? [entry.key] : [entry.key, entry.value])),
   ];
 
   return Array.from(new Set(values.flatMap((value) => missingVariables(value, variables))));
@@ -448,6 +466,14 @@ function booleanValue(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function formValueTypeFor(row: KeyValueEntry): FormValueType {
+  return row.formValueType === "file" ? "file" : "text";
+}
+
 function normalizeImportedRows(value: unknown): KeyValueEntry[] {
   if (!Array.isArray(value)) {
     return [];
@@ -462,6 +488,10 @@ function normalizeImportedRows(value: unknown): KeyValueEntry[] {
       {
         description: textValue(entry.description),
         enabled: booleanValue(entry.enabled, true),
+        fileName: textValue(entry.fileName) || undefined,
+        fileSize: numberValue(entry.fileSize),
+        fileType: textValue(entry.fileType) || undefined,
+        formValueType: textValue(entry.formValueType) === "file" ? "file" : undefined,
         key: textValue(entry.key),
         sensitive: booleanValue(entry.sensitive, false),
         value: textValue(entry.value),
@@ -718,8 +748,47 @@ function collectShareRequestOptions(workspace: HttpWorkspaceDraft): HttpShareReq
   ];
 }
 
-function buildShareWorkspace(workspace: HttpWorkspaceDraft, selectedRequestIds: Set<string>): HttpWorkspaceDraft {
+function stripLocalFormFileStateFromRows(rows: KeyValueEntry[] | undefined): KeyValueEntry[] {
+  return (rows ?? []).map((row) => {
+    const persistedRow = { ...row };
+    delete persistedRow.localFileId;
+    return persistedRow;
+  });
+}
+
+function stripLocalFormFileStateFromRequest(request: HttpRequestDraft): HttpRequestDraft {
   return {
+    ...request,
+    formBody: stripLocalFormFileStateFromRows(request.formBody),
+    headers: stripLocalFormFileStateFromRows(request.headers),
+    params: stripLocalFormFileStateFromRows(request.params),
+    tempVariables: stripLocalFormFileStateFromRows(request.tempVariables),
+  };
+}
+
+function stripLocalFormFileStateFromWorkspace(workspace: HttpWorkspaceDraft): HttpWorkspaceDraft {
+  return {
+    ...workspace,
+    environments: workspace.environments?.map((environment) => ({
+      ...environment,
+      variables: stripLocalFormFileStateFromRows(environment.variables),
+    })),
+    projects: workspace.projects.map((project) => ({
+      ...project,
+      requests: project.requests.map(stripLocalFormFileStateFromRequest),
+      variables: stripLocalFormFileStateFromRows(project.variables),
+    })),
+    requests: workspace.requests.map(stripLocalFormFileStateFromRequest),
+    variables: stripLocalFormFileStateFromRows(workspace.variables),
+  };
+}
+
+function stripLocalFormFileStateFromWorkspaces(workspaces: HttpWorkspaceDraft[]) {
+  return workspaces.map(stripLocalFormFileStateFromWorkspace);
+}
+
+function buildShareWorkspace(workspace: HttpWorkspaceDraft, selectedRequestIds: Set<string>): HttpWorkspaceDraft {
+  return stripLocalFormFileStateFromWorkspace({
     ...workspace,
     projects: workspace.projects
       .map((project) => ({
@@ -728,7 +797,7 @@ function buildShareWorkspace(workspace: HttpWorkspaceDraft, selectedRequestIds: 
       }))
       .filter((project) => project.requests.length > 0),
     requests: workspace.requests.filter((request) => selectedRequestIds.has(request.id)),
-  };
+  });
 }
 
 function buildWorkspaceShareJson(workspace: HttpWorkspaceDraft, selectedRequestIds: Set<string>) {
@@ -762,6 +831,11 @@ function appendEnabledQueryParams(url: string, params: KeyValueEntry[]) {
 
 function enabledRows(rows: KeyValueEntry[]) {
   return rows.filter((entry) => entry.enabled && entry.key.trim());
+}
+
+function appendHttpStreamPreview(current: string, chunk: string) {
+  const remaining = HTTP_STREAM_PREVIEW_MAX_CHARS - current.length;
+  return remaining > 0 ? `${current}${chunk.slice(0, remaining)}` : current;
 }
 
 function hasHeader(headers: KeyValueEntry[], key: string) {
@@ -798,6 +872,10 @@ function authHeaderRows(auth: HttpAuthDraft, variables: Map<string, string>): Ke
   return [];
 }
 
+function requestUsesMultipart(request: HttpRequestDraft) {
+  return request.bodyMode === "form" && enabledRows(request.formBody).some((entry) => formValueTypeFor(entry) === "file");
+}
+
 function bodyContentType(request: HttpRequestDraft) {
   if (request.method === "GET" || request.method === "HEAD" || request.bodyMode === "none") {
     return null;
@@ -809,6 +887,10 @@ function bodyContentType(request: HttpRequestDraft) {
 
   if (request.bodyMode === "text") {
     return "text/plain; charset=utf-8";
+  }
+
+  if (requestUsesMultipart(request)) {
+    return null;
   }
 
   return "application/x-www-form-urlencoded";
@@ -826,6 +908,7 @@ function requestHeaderRows(request: HttpRequestDraft, variables: Map<string, str
   }
 
   return headers
+    .filter((entry) => !(requestUsesMultipart(request) && entry.key.trim().toLowerCase() === "content-type"))
     .map((entry) => ({ key: entry.key.trim(), value: entry.value }));
 }
 
@@ -835,8 +918,13 @@ function requestBodyFor(request: HttpRequestDraft, variables: Map<string, string
   }
 
   if (request.bodyMode === "form") {
+    if (requestUsesMultipart(request)) {
+      return undefined;
+    }
+
     const body = new URLSearchParams();
     enabledRows(request.formBody)
+      .filter((entry) => formValueTypeFor(entry) === "text")
       .map((entry) => resolveRowVariables(entry, variables))
       .forEach((entry) => body.append(entry.key.trim(), entry.value));
     const bodyText = body.toString();
@@ -844,6 +932,175 @@ function requestBodyFor(request: HttpRequestDraft, variables: Map<string, string
   }
 
   return request.body.length > 0 ? resolveVariables(request.body, variables) : undefined;
+}
+
+type HttpFileWorkerResponse =
+  | {
+      base64: string;
+      id: string;
+      ok: true;
+    }
+  | {
+      error: string;
+      id: string;
+      ok: false;
+    };
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
+async function fileToBase64OnMainThread(file: File, signal?: AbortSignal) {
+  if (file.size > HTTP_FILE_UPLOAD_MAX_BYTES) {
+    throw new Error(`单个上传文件不能超过 ${formatHttpByteLimit(HTTP_FILE_UPLOAD_MAX_BYTES)}。`);
+  }
+
+  if (signal?.aborted) {
+    throw new Error("请求已取消。");
+  }
+
+  const base64 = arrayBufferToBase64(await file.arrayBuffer());
+  if (signal?.aborted) {
+    throw new Error("请求已取消。");
+  }
+
+  return base64;
+}
+
+function fileToBase64(file: File, signal?: AbortSignal) {
+  if (typeof Worker === "undefined") {
+    return fileToBase64OnMainThread(file, signal);
+  }
+
+  try {
+    const worker = new Worker(new URL("./httpFileWorker.ts", import.meta.url), { type: "module" });
+    const id = makeId("http-file-read");
+
+    return new Promise<string>((resolve, reject) => {
+      const abort = () => {
+        cleanup();
+        reject(new Error("请求已取消。"));
+      };
+      const cleanup = () => {
+        signal?.removeEventListener("abort", abort);
+        worker.onmessage = null;
+        worker.onerror = null;
+        worker.onmessageerror = null;
+        worker.terminate();
+      };
+
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+
+      signal?.addEventListener("abort", abort, { once: true });
+
+      worker.onmessage = (event: MessageEvent<HttpFileWorkerResponse>) => {
+        const payload = event.data;
+        if (payload.id !== id) {
+          return;
+        }
+
+        cleanup();
+        if (payload.ok) {
+          resolve(payload.base64);
+          return;
+        }
+
+        reject(new Error(payload.error));
+      };
+
+      worker.onerror = (event) => {
+        cleanup();
+        reject(new Error(event.message || "文件读取失败。"));
+      };
+
+      worker.onmessageerror = () => {
+        cleanup();
+        reject(new Error("文件读取结果无法解析。"));
+      };
+
+      try {
+        worker.postMessage({ file, id });
+      } catch (error) {
+        cleanup();
+        reject(error instanceof Error ? error : new Error("文件读取失败。"));
+      }
+    });
+  } catch {
+    return fileToBase64OnMainThread(file, signal);
+  }
+}
+
+async function requestMultipartFor(
+  request: HttpRequestDraft,
+  variables: Map<string, string>,
+  formFiles: Map<string, File>,
+  signal?: AbortSignal,
+): Promise<HttpSendMultipartPart[] | undefined> {
+  if (request.method === "GET" || request.method === "HEAD" || request.bodyMode !== "form" || !requestUsesMultipart(request)) {
+    return undefined;
+  }
+
+  const parts: HttpSendMultipartPart[] = [];
+
+  for (const entry of enabledRows(request.formBody)) {
+    const name = resolveVariables(entry.key.trim(), variables).trim();
+    if (!name) {
+      continue;
+    }
+
+    if (formValueTypeFor(entry) === "file") {
+      const file = entry.localFileId ? formFiles.get(entry.localFileId) : undefined;
+      if (!file) {
+        throw new Error(`文件字段「${entry.key.trim()}」需要重新选择文件。`);
+      }
+
+      if (file.size > HTTP_FILE_UPLOAD_MAX_BYTES) {
+        throw new Error(
+          `文件「${file.name}」超过 ${formatHttpByteLimit(HTTP_FILE_UPLOAD_MAX_BYTES)} 上限。`,
+        );
+      }
+
+      parts.push({
+        bytesBase64: await fileToBase64(file, signal),
+        contentType: file.type || entry.fileType || "application/octet-stream",
+        fileName: entry.fileName || file.name,
+        kind: "file",
+        name,
+      });
+      continue;
+    }
+
+    parts.push({
+      kind: "text",
+      name,
+      value: resolveVariables(entry.value, variables),
+    });
+  }
+
+  return parts.length > 0 ? parts : undefined;
 }
 
 function requestUrlFor(request: HttpRequestDraft, variables: Map<string, string>) {
@@ -860,14 +1117,52 @@ function requestUrlFor(request: HttpRequestDraft, variables: Map<string, string>
   return appendEnabledQueryParams(resolveVariables(request.url.trim(), variables), params);
 }
 
-function buildHttpPayload(request: HttpRequestDraft, variables = new Map<string, string>()): HttpSendRequest {
+function buildHttpPayload(
+  request: HttpRequestDraft,
+  variables = new Map<string, string>(),
+  multipart?: HttpSendMultipartPart[],
+): HttpSendRequest {
   return {
-    body: requestBodyFor(request, variables),
+    body: multipart ? undefined : requestBodyFor(request, variables),
     headers: requestHeaderRows(request, variables),
     method: request.method,
+    multipart,
     timeoutMs: 30_000,
     url: requestUrlFor(request, variables),
   };
+}
+
+async function buildHttpPayloadForSend(
+  request: HttpRequestDraft,
+  variables: Map<string, string>,
+  formFiles: Map<string, File>,
+  signal?: AbortSignal,
+): Promise<HttpSendRequest> {
+  return buildHttpPayload(request, variables, await requestMultipartFor(request, variables, formFiles, signal));
+}
+
+function requestMultipartPreviewFor(request: HttpRequestDraft, variables: Map<string, string>) {
+  if (!requestUsesMultipart(request)) {
+    return null;
+  }
+
+  const rows = enabledRows(request.formBody);
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return rows
+    .map((entry) => {
+      const name = resolveVariables(entry.key.trim(), variables).trim() || "<未填写名称>";
+      if (formValueTypeFor(entry) === "file") {
+        const fileName = entry.fileName || entry.value || "<未选择文件>";
+        const size = typeof entry.fileSize === "number" ? `, ${formatBytes(entry.fileSize)}` : "";
+        return `[file] ${name}: ${fileName}${size}`;
+      }
+
+      return `[text] ${name}: ${resolveVariables(entry.value, variables)}`;
+    })
+    .join("\n");
 }
 
 function buildRequestPreview(request: HttpRequestDraft, variables = new Map<string, string>()) {
@@ -875,7 +1170,8 @@ function buildRequestPreview(request: HttpRequestDraft, variables = new Map<stri
   const headers = payload.headers.length
     ? payload.headers.map((header) => `${header.key}: ${header.value}`).join("\n")
     : "无";
-  const body = payload.body || "无";
+  const multipartPreview = requestMultipartPreviewFor(request, variables);
+  const body = multipartPreview ? `multipart/form-data\n${multipartPreview}` : payload.body || "无";
 
   return `${payload.method} ${payload.url || "<未填写 URL>"}
 
@@ -1007,6 +1303,9 @@ function decodeBufferedResponseBody(bytes: Uint8Array, contentType: string) {
 async function decodeBrowserResponseBody(response: Response) {
   const contentType = response.headers.get("content-type") ?? "";
   const buffer = await response.arrayBuffer();
+  if (buffer.byteLength > HTTP_RESPONSE_MAX_BYTES) {
+    throw new Error(`响应内容超过 ${formatHttpByteLimit(HTTP_RESPONSE_MAX_BYTES)} 上限。`);
+  }
   return decodeBufferedResponseBody(new Uint8Array(buffer), contentType);
 }
 
@@ -1018,16 +1317,23 @@ async function sendWithBrowserFetch(
   } = {},
 ): Promise<HttpResponsePreview> {
   const headers = new Headers();
-  request.headers.forEach((header) => headers.append(header.key, header.value));
+  request.headers
+    .filter((header) => !(request.multipart && header.key.trim().toLowerCase() === "content-type"))
+    .forEach((header) => headers.append(header.key, header.value));
+  const body = request.multipart ? buildBrowserMultipartBody(request.multipart) : request.body;
 
   const startedAt = performance.now();
   const response = await fetch(request.url, {
-    body: request.body,
+    body,
     headers,
     method: request.method,
     redirect: "follow",
     signal: options.signal,
   });
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > HTTP_RESPONSE_MAX_BYTES) {
+    throw new Error(`响应内容超过 ${formatHttpByteLimit(HTTP_RESPONSE_MAX_BYTES)} 上限。`);
+  }
   const contentType = response.headers.get("content-type") ?? "";
   const chunks: Uint8Array[] = [];
   let sizeBytes = 0;
@@ -1050,6 +1356,11 @@ async function sendWithBrowserFetch(
 
       chunks.push(value);
       sizeBytes += value.byteLength;
+
+      if (sizeBytes > HTTP_RESPONSE_MAX_BYTES) {
+        await reader.cancel();
+        throw new Error(`响应内容超过 ${formatHttpByteLimit(HTTP_RESPONSE_MAX_BYTES)} 上限。`);
+      }
 
       if (decoder) {
         options.onChunk?.(
@@ -1079,17 +1390,31 @@ async function sendWithBrowserFetch(
   };
 }
 
+function buildBrowserMultipartBody(parts: HttpSendMultipartPart[]) {
+  const formData = new FormData();
+
+  parts.forEach((part) => {
+    if (part.kind === "file") {
+      const bytes = part.bytesBase64 ? base64ToUint8Array(part.bytesBase64) : new Uint8Array(part.bytes ?? []);
+      const blob = new Blob([bytes], { type: part.contentType || "application/octet-stream" });
+      formData.append(part.name, blob, part.fileName || "upload");
+      return;
+    }
+
+    formData.append(part.name, part.value ?? "");
+  });
+
+  return formData;
+}
+
 async function sendHttpDraftRequest(
-  request: HttpRequestDraft,
+  payload: HttpSendRequest,
   options: {
     requestId: string;
     signal?: AbortSignal;
     onChunk?: (chunk: string, bodyKind: HttpResponsePreview["bodyKind"], sizeBytes: number) => void;
-    variables?: Map<string, string>;
   },
 ): Promise<HttpResponsePreview> {
-  const payload = buildHttpPayload(request, options.variables);
-
   if (isTauriRuntime()) {
     return httpSendStream(options.requestId, payload);
   }
@@ -1143,6 +1468,7 @@ export function HttpConsolePanel() {
   const suppressTreeClickRef = useRef(false);
   const saveWorkspacesTimerRef = useRef<number | null>(null);
   const activeHttpSendRef = useRef<ActiveHttpSendState | null>(null);
+  const formFilesRef = useRef<Map<string, File>>(new Map());
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0];
   const workspaceEnvironments = activeWorkspace.environments ?? [];
@@ -1263,7 +1589,7 @@ export function HttpConsolePanel() {
     }
 
     saveWorkspacesTimerRef.current = window.setTimeout(() => {
-      void httpWorkspacesSave<HttpWorkspaceDraft>(workspaces)
+      void httpWorkspacesSave<HttpWorkspaceDraft>(stripLocalFormFileStateFromWorkspaces(workspaces))
         .then(() => {
           setDirtyRequestIds((current) => (current.size === 0 ? current : new Set()));
         })
@@ -1345,7 +1671,7 @@ export function HttpConsolePanel() {
     }
 
     try {
-      await httpWorkspacesSave<HttpWorkspaceDraft>(workspaces);
+      await httpWorkspacesSave<HttpWorkspaceDraft>(stripLocalFormFileStateFromWorkspaces(workspaces));
       setDirtyRequestIds((current) => (current.size === 0 ? current : new Set()));
     } catch (error) {
       console.warn("Failed to save HTTP workspaces", error);
@@ -2544,7 +2870,14 @@ export function HttpConsolePanel() {
   };
 
   const resetRequestDraft = (field: RequestRowField) => {
-    setRequestDraftRows((current) => ({ ...current, [field]: { ...createBlankRow(), enabled: false } }));
+    setRequestDraftRows((current) => ({
+      ...current,
+      [field]: {
+        ...createBlankRow(),
+        enabled: false,
+        ...(field === "formBody" ? { formValueType: "text" as FormValueType } : {}),
+      },
+    }));
   };
 
   const updateRequestDraft = (field: RequestRowField, patch: Partial<KeyValueEntry>) => {
@@ -2593,9 +2926,64 @@ export function HttpConsolePanel() {
     updateRequestRows(field, trimTrailingBlankRows(nextRows));
   };
 
+  const forgetFormFile = (row: KeyValueEntry | undefined) => {
+    if (row?.localFileId) {
+      formFilesRef.current.delete(row.localFileId);
+    }
+  };
+
+  const setFormRowValueType = (index: number, valueType: FormValueType) => {
+    if (!activeRequest) {
+      return;
+    }
+
+    const rows = trimTrailingBlankRows(activeRequest.formBody);
+    const currentRow = index >= rows.length ? requestDraftRows.formBody : rows[index];
+    forgetFormFile(currentRow);
+
+    updateRequestRow("formBody", index, {
+      fileName: undefined,
+      fileSize: undefined,
+      fileType: undefined,
+      formValueType: valueType === "file" ? "file" : undefined,
+      localFileId: undefined,
+      value: "",
+    });
+  };
+
+  const selectFormFile = (index: number, file: File | undefined) => {
+    if (!file || !activeRequest) {
+      return;
+    }
+
+    if (file.size > HTTP_FILE_UPLOAD_MAX_BYTES) {
+      setResponseError(`单个上传文件不能超过 ${formatHttpByteLimit(HTTP_FILE_UPLOAD_MAX_BYTES)}。`);
+      return;
+    }
+
+    const rows = trimTrailingBlankRows(activeRequest.formBody);
+    const currentRow = index >= rows.length ? requestDraftRows.formBody : rows[index];
+    const localFileId = makeId("form-file");
+    forgetFormFile(currentRow);
+    formFilesRef.current.set(localFileId, file);
+
+    updateRequestRow("formBody", index, {
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      formValueType: "file",
+      localFileId,
+      value: file.name,
+    });
+  };
+
   const removeRequestRow = (field: RequestRowField, index: number) => {
     if (!activeRequest) {
       return;
+    }
+
+    if (field === "formBody") {
+      forgetFormFile(trimTrailingBlankRows(activeRequest.formBody)[index]);
     }
 
     updateRequestRows(
@@ -2692,9 +3080,10 @@ export function HttpConsolePanel() {
       return;
     }
 
-    const payload = buildHttpPayload(requestSnapshot, activeVariables);
     const requestId = makeId("http-send");
     const abortController = new AbortController();
+    const pendingUrl = requestUrlFor(requestSnapshot, activeVariables);
+    let payload: HttpSendRequest | null = null;
     let unlistenStream: (() => void) | null = null;
 
     activeHttpSendRef.current = {
@@ -2708,12 +3097,24 @@ export function HttpConsolePanel() {
       headers: {},
       sizeBytes: 0,
       status: 0,
-      statusText: "请求中",
-      url: payload.url,
+      statusText: requestUsesMultipart(requestSnapshot) ? "读取文件" : "请求中",
+      url: pendingUrl,
     });
     setIsSending(true);
 
     try {
+      payload = await buildHttpPayloadForSend(requestSnapshot, activeVariables, formFilesRef.current, abortController.signal);
+      setResponse((current) => ({
+        body: current?.body ?? "",
+        bodyKind: current?.bodyKind ?? "text",
+        durationMs: current?.durationMs ?? 0,
+        headers: current?.headers ?? {},
+        sizeBytes: current?.sizeBytes ?? 0,
+        status: current?.status ?? 0,
+        statusText: "请求中",
+        url: payload?.url ?? pendingUrl,
+      }));
+
       if (isTauriRuntime()) {
         const { listen } = await import("@tauri-apps/api/event");
         unlistenStream = await listen<HttpStreamChunkPayload>("http-stream-chunk", (event) => {
@@ -2722,32 +3123,31 @@ export function HttpConsolePanel() {
           }
 
           setResponse((current) => ({
-            body: `${current?.body ?? ""}${event.payload.chunk}`,
+            body: appendHttpStreamPreview(current?.body ?? "", event.payload.chunk),
             bodyKind: event.payload.bodyKind,
             durationMs: current?.durationMs ?? 0,
             headers: current?.headers ?? {},
             sizeBytes: event.payload.sizeBytes,
             status: current?.status ?? 0,
             statusText: current?.statusText ?? "请求中",
-            url: current?.url ?? payload.url,
+            url: current?.url ?? payload?.url ?? pendingUrl,
           }));
         });
       }
 
-      const nextResponse = await sendHttpDraftRequest(requestSnapshot, {
+      const nextResponse = await sendHttpDraftRequest(payload, {
         requestId,
         signal: abortController.signal,
-        variables: activeVariables,
         onChunk: (chunk, bodyKind, sizeBytes) => {
           setResponse((current) => ({
-            body: `${current?.body ?? ""}${chunk}`,
+            body: appendHttpStreamPreview(current?.body ?? "", chunk),
             bodyKind,
             durationMs: current?.durationMs ?? 0,
             headers: current?.headers ?? {},
             sizeBytes,
             status: current?.status ?? 0,
             statusText: current?.statusText ?? "请求中",
-            url: current?.url ?? payload.url,
+            url: current?.url ?? payload?.url ?? pendingUrl,
           }));
         },
       });
@@ -2769,7 +3169,7 @@ export function HttpConsolePanel() {
         error: message,
         method: requestSnapshot.method,
         name: requestSnapshot.name,
-        url: payload.url,
+        url: payload?.url ?? pendingUrl,
       });
     } finally {
       unlistenStream?.();
@@ -2847,12 +3247,14 @@ export function HttpConsolePanel() {
   const renderKeyValueRows = (field: RequestRowField) => {
     const rows = trimTrailingBlankRows(activeRequest?.[field] ?? []);
     const displayRows = [...rows, requestDraftRows[field]];
+    const isFormBody = field === "formBody";
 
     return (
-      <div className="http-parameter-table">
+      <div className={["http-parameter-table", isFormBody ? "http-form-table" : ""].filter(Boolean).join(" ")}>
         <div className="http-parameter-header" aria-hidden="true">
           <span />
           <span>名称</span>
+          {isFormBody ? <span>类型</span> : null}
           <span>值</span>
           <span>描述</span>
           <span />
@@ -2862,7 +3264,12 @@ export function HttpConsolePanel() {
 
           return (
             <div
-              className={["http-parameter-row", entry.enabled ? "enabled" : "", isVirtualRow ? "virtual" : ""]
+              className={[
+                "http-parameter-row",
+                isFormBody ? "http-form-row" : "",
+                entry.enabled ? "enabled" : "",
+                isVirtualRow ? "virtual" : "",
+              ]
                 .filter(Boolean)
                 .join(" ")}
               key={`${field}-${isVirtualRow ? "blank" : index}`}
@@ -2903,12 +3310,51 @@ export function HttpConsolePanel() {
                 placeholder="key"
                 aria-label="名称"
               />
-              <TextInput
-                value={entry.value}
-                onChange={(event) => updateRequestRow(field, index, { value: event.target.value })}
-                placeholder="value"
-                aria-label="值"
-              />
+              {isFormBody ? (
+                <button
+                  className="http-form-type-toggle"
+                  onClick={() => setFormRowValueType(index, formValueTypeFor(entry) === "file" ? "text" : "file")}
+                  title="切换表单值类型"
+                  type="button"
+                >
+                  {formValueTypeFor(entry) === "file" ? "文件" : "文本"}
+                </button>
+              ) : null}
+              {isFormBody && formValueTypeFor(entry) === "file" ? (
+                <div className="http-form-file-control">
+                  <div className="http-form-file-summary" title={entry.fileName || entry.value || "未选择文件"}>
+                    <strong>{entry.fileName || entry.value || "未选择文件"}</strong>
+                    <small>
+                      {entry.localFileId
+                        ? typeof entry.fileSize === "number"
+                          ? formatBytes(entry.fileSize)
+                          : "已选择"
+                        : entry.fileName || entry.value
+                          ? "需要重新选择"
+                          : "重新选择文件后可发送"}
+                    </small>
+                  </div>
+                  <label className="http-form-file-button">
+                    <Icon name="upload" />
+                    <span>选择</span>
+                    <input
+                      aria-label="选择表单文件"
+                      type="file"
+                      onChange={(event) => {
+                        selectFormFile(index, event.currentTarget.files?.[0]);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <TextInput
+                  value={entry.value}
+                  onChange={(event) => updateRequestRow(field, index, { value: event.target.value })}
+                  placeholder="value"
+                  aria-label="值"
+                />
+              )}
               <TextInput
                 value={entry.description ?? ""}
                 onChange={(event) => updateRequestRow(field, index, { description: event.target.value })}
@@ -3815,6 +4261,7 @@ export function HttpConsolePanel() {
           </div>
           <div
             className="http-tree"
+            role="tree"
             onContextMenu={(event) => {
               event.preventDefault();
               setContextMenu({ type: "tree", workspaceId: activeWorkspace.id, x: event.clientX, y: event.clientY });
@@ -4050,126 +4497,114 @@ export function HttpConsolePanel() {
       </aside>
 
       <div className="http-console-main">
-        <div className="http-request-tabs" aria-label="HTTP 请求编辑标签">
+        <div className="http-request-tabs" aria-label="HTTP 请求编辑标签" role="tablist">
           {environmentTabOpen ? (
-	            <Button
-	              active={activeMainView === "environment"}
-	              className="http-environment-main-tab"
-	              onAuxClick={(event) => {
-	                if (event.button === 1) {
-	                  event.preventDefault();
-	                  closeEnvironmentTab();
-	                }
-	              }}
-	              onClick={() => setActiveMainView("environment")}
-	              tone="muted"
-	            >
-              <Icon name="palette" />
-              <strong>环境</strong>
-              <small aria-hidden="true" className="saved" />
-              <span
+            <div
+              className={["http-request-tab", "http-environment-main-tab", activeMainView === "environment" ? "active" : ""]
+                .filter(Boolean)
+                .join(" ")}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  closeEnvironmentTab();
+                }
+              }}
+            >
+              <Button
+                aria-selected={activeMainView === "environment"}
+                className="http-request-tab-select"
+                onClick={() => setActiveMainView("environment")}
+                role="tab"
+                tone="muted"
+              >
+                <Icon name="palette" />
+                <strong>环境</strong>
+                <small aria-hidden="true" className="saved" />
+              </Button>
+              <IconButton
                 aria-label="关闭环境"
                 className="http-request-tab-close"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeEnvironmentTab();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    closeEnvironmentTab();
-                  }
-                }}
-                role="button"
-                tabIndex={0}
+                icon="x"
+                onClick={closeEnvironmentTab}
                 title="关闭环境"
-              >
-                <Icon name="x" />
-              </span>
-            </Button>
+                tone="muted"
+              />
+            </div>
           ) : null}
           {shareTabOpen ? (
-	            <Button
-	              active={activeMainView === "share"}
-	              className="http-share-main-tab"
-	              onAuxClick={(event) => {
-	                if (event.button === 1) {
-	                  event.preventDefault();
-	                  closeShareTab();
-	                }
-	              }}
-	              onClick={() => setActiveMainView("share")}
-	              tone="muted"
-	            >
-              <Icon name="upload" />
-              <strong>分享</strong>
-              <small aria-hidden="true" className="saved" />
-              <span
+            <div
+              className={["http-request-tab", "http-share-main-tab", activeMainView === "share" ? "active" : ""]
+                .filter(Boolean)
+                .join(" ")}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  closeShareTab();
+                }
+              }}
+            >
+              <Button
+                aria-selected={activeMainView === "share"}
+                className="http-request-tab-select"
+                onClick={() => setActiveMainView("share")}
+                role="tab"
+                tone="muted"
+              >
+                <Icon name="upload" />
+                <strong>分享</strong>
+                <small aria-hidden="true" className="saved" />
+              </Button>
+              <IconButton
                 aria-label="关闭分享"
                 className="http-request-tab-close"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeShareTab();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
+                icon="x"
+                onClick={closeShareTab}
+                title="关闭分享"
+                tone="muted"
+              />
+            </div>
+          ) : null}
+          {openRequestTabs.map((request) => {
+            const active = activeMainView === "request" && request.id === activeRequest?.id;
+
+            return (
+              <div
+                className={["http-request-tab", active ? "active" : ""].filter(Boolean).join(" ")}
+                key={request.id}
+                onAuxClick={(event) => {
+                  if (event.button === 1) {
                     event.preventDefault();
-                    event.stopPropagation();
-                    closeShareTab();
+                    closeRequestTab(request.id);
                   }
                 }}
-                role="button"
-                tabIndex={0}
-                title="关闭分享"
               >
-                <Icon name="x" />
-              </span>
-            </Button>
-          ) : null}
-	          {openRequestTabs.map((request) => (
-		            <Button
-	              active={activeMainView === "request" && request.id === activeRequest?.id}
-	              key={request.id}
-		              onAuxClick={(event) => {
-		                if (event.button === 1) {
-		                  event.preventDefault();
-		                  closeRequestTab(request.id);
-		                }
-		              }}
-	              onClick={() => selectRequest(activeProject?.id ?? null, request.id)}
-	              tone="muted"
-	            >
-              <span className={methodClass(request.method)}>{request.method}</span>
-              <strong>{request.name}</strong>
-              <small
-                aria-label={dirtyRequestIds.has(request.id) ? "未保存" : undefined}
-                aria-hidden={dirtyRequestIds.has(request.id) ? undefined : "true"}
-                className={dirtyRequestIds.has(request.id) ? "" : "saved"}
-                title={dirtyRequestIds.has(request.id) ? "未保存" : undefined}
-              />
-              <span
-                aria-label="关闭请求"
-                className="http-request-tab-close"
-	                onClick={(event) => {
-	                  event.stopPropagation();
-	                  closeRequestTab(request.id);
-	                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-	                    event.preventDefault();
-	                    event.stopPropagation();
-	                    closeRequestTab(request.id);
-	                  }
-                }}
-                role="button"
-                tabIndex={0}
-                title="关闭请求"
-              >
-                <Icon name="x" />
-              </span>
-            </Button>
-          ))}
+                <Button
+                  aria-selected={active}
+                  className="http-request-tab-select"
+                  onClick={() => selectRequest(activeProject?.id ?? null, request.id)}
+                  role="tab"
+                  tone="muted"
+                >
+                  <span className={methodClass(request.method)}>{request.method}</span>
+                  <strong>{request.name}</strong>
+                  <small
+                    aria-label={dirtyRequestIds.has(request.id) ? "未保存" : undefined}
+                    aria-hidden={dirtyRequestIds.has(request.id) ? undefined : "true"}
+                    className={dirtyRequestIds.has(request.id) ? "" : "saved"}
+                    title={dirtyRequestIds.has(request.id) ? "未保存" : undefined}
+                  />
+                </Button>
+                <IconButton
+                  aria-label="关闭请求"
+                  className="http-request-tab-close"
+                  icon="x"
+                  onClick={() => closeRequestTab(request.id)}
+                  title="关闭请求"
+                  tone="muted"
+                />
+              </div>
+            );
+          })}
         </div>
 
         {activeMainView === "environment" && environmentTabOpen ? (

@@ -36,14 +36,14 @@ export function SecuritySettings({
         <SettingsSectionHeader description="主机信任、日志脱敏和协议风险提示。" title="连接保护" />
         <div className="settings-toggle-grid">
           <Toggle
-            checked={settings.security.requireHostKeyVerification}
-            label="要求 SSH 主机密钥校验"
-            onChange={(event) => updateSecurity({ requireHostKeyVerification: event.currentTarget.checked })}
+            checked
+            disabled
+            label="始终校验 SSH 主机密钥"
           />
           <Toggle
-            checked={settings.security.redactSensitiveLogs}
-            label="日志中脱敏敏感字段"
-            onChange={(event) => updateSecurity({ redactSensitiveLogs: event.currentTarget.checked })}
+            checked
+            disabled
+            label="始终脱敏敏感日志字段"
           />
           <Toggle
             checked={settings.security.allowInsecureWithoutWarning}
@@ -68,18 +68,18 @@ export function SecuritySettings({
       </section>
 
       <section className="settings-block security-settings-block">
-        <SettingsSectionHeader description="只显示元数据，实际密钥由后端保管。" meta={`${secrets.length} 项`} title="密钥元数据" />
+        <SettingsSectionHeader description="这里只显示标识，密码保存在当前系统的安全凭据库中。" meta={`${secrets.length} 项`} title="系统凭据" />
         <div className="security-list">
           {secrets.length > 0 ? (
             secrets.map((secret) => (
               <div className="security-row" key={secret.id}>
                 <span>{secret.purpose}</span>
                 <small>{secret.id}</small>
-                <IconButton aria-label={`删除密钥 ${secret.id}`} icon="trash" onClick={() => onDeleteSecretMetadata(secret.id)} title="删除密钥元数据" tone="danger" />
+                <IconButton aria-label={`删除凭据 ${secret.id}`} icon="trash" onClick={() => onDeleteSecretMetadata(secret.id)} title="删除系统凭据" tone="danger" />
               </div>
             ))
           ) : (
-            <div className="settings-empty">暂无密钥元数据</div>
+            <div className="settings-empty">暂无系统凭据</div>
           )}
         </div>
       </section>

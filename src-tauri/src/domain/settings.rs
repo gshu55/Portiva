@@ -30,9 +30,10 @@ pub enum ThemeMode {
     System,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TerminalColorPreset {
+    #[default]
     Dark,
     Light,
     Custom,
@@ -92,10 +93,11 @@ pub struct TerminalSettings {
     pub right_click_behavior: TerminalRightClickBehavior,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TerminalRightClickBehavior {
     Disabled,
+    #[default]
     ContextMenu,
     Paste,
     CopyOrPaste,
@@ -140,12 +142,6 @@ impl Default for KeymapSettings {
     }
 }
 
-impl Default for TerminalColorPreset {
-    fn default() -> Self {
-        Self::Dark
-    }
-}
-
 impl Default for TerminalColorPalette {
     fn default() -> Self {
         Self {
@@ -180,12 +176,6 @@ impl Default for TerminalSettings {
             copy_rich_text: false,
             right_click_behavior: TerminalRightClickBehavior::ContextMenu,
         }
-    }
-}
-
-impl Default for TerminalRightClickBehavior {
-    fn default() -> Self {
-        Self::ContextMenu
     }
 }
 

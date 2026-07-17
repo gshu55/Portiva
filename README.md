@@ -1,6 +1,6 @@
 # Portiva
 
-Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建的跨平台桌面终端客户端。项目目标是提供统一的连接工作台，把 SSH 终端、SFTP 文件管理、串口调试、本地终端以及后续可扩展的 Telnet、Raw TCP、HTTP/API 调试等能力放在同一个应用体验里。
+Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建的跨平台桌面终端客户端。项目目标是提供统一的连接工作台，把 SSH 终端、SFTP 文件管理、串口调试、本地终端、Telnet、Raw TCP 和 HTTP/API 调试等能力放在同一个应用体验里。
 
 当前项目已经围绕“连接 Profile + 终端会话 + 文件传输 + 安全配置”建立了完整的前后端结构：前端负责工作台、标签页、配置表单和终端渲染，Rust 后端负责协议连接、PTY/串口读写、SFTP 传输、本地文件访问、日志、设置和安全相关数据。
 
@@ -45,10 +45,11 @@ Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建
 
 ### HTTP/API 调试
 
-- 规划迁移 EasyPost 的 HTTP 请求调试能力。
-- HTTP 调试将作为单实例 HTTP Console 接入，沿用 EasyPost 的工作区布局，不复用终端会话或 Raw TCP 实现。
-- 优先复用 Portiva 的标签、IPC、日志、设置和安全边界。
-- 迁移方案见 [EasyPost HTTP 调试能力迁移设计](docs/easypost_http_integration.md)。
+- 已实现单实例 HTTP Console，不复用终端会话或 Raw TCP 实现。
+- 支持工作区、项目、环境变量、请求临时变量、参数、请求头、认证、JSON、文本和 multipart 表单。
+- multipart 表单支持文件字段；文件编码在 Worker 中执行，单文件限制为 128 MB。
+- 支持流式文本预览、发送取消、响应头、响应体和历史记录，单次响应限制为 32 MB。
+- HTTP 工作区和请求草稿持久化到本地 SQLite；按当前产品约定，HTTP 认证字段随请求草稿明文保存。
 
 ### 工作台体验
 
@@ -67,9 +68,9 @@ Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建
 | SFTP | 可用 | 通过 SSH 会话打开 SFTP，支持基础文件管理和传输队列 |
 | Serial | 可用 | 支持串口枚举、配置、读写和终端显示 |
 | Local Shell | 可用 | 支持本地 PTY 终端 |
-| Telnet | 预留 | 已建模 capabilities 和 Profile，协议协商尚未实现 |
-| Raw TCP | 预留 | 已建模 capabilities 和 Profile，TCP 数据流尚未实现 |
-| HTTP/API 调试 | 规划中 | 迁移 EasyPost 核心请求模型和工作区布局，作为单实例 HTTP Console 接入 |
+| Telnet | 可用 | 支持基础 Telnet 协商、终端收发、编码、换行和重连 |
+| Raw TCP | 可用 | 支持 TCP 字节流、终端收发、编码、换行和重连 |
+| HTTP/API 调试 | 可用 | 单实例 HTTP Console，通过 Rust IPC 发送 HTTP/HTTPS 请求 |
 
 ## 技术栈
 
@@ -116,18 +117,18 @@ pnpm tauri dev
 pnpm build
 ```
 
-构建桌面应用：
+构建 Windows NSIS 安装包：
 
 ```bash
-pnpm build:desktop
+pnpm build:win:exe
 ```
 
-平台打包脚本：
+构建 Windows 便携目录、macOS DMG 或 Linux DEB：
 
 ```bash
-pnpm build:windows
-pnpm build:macos
-pnpm build:linux
+pnpm build:win:portable
+pnpm build:mac:dmg
+pnpm build:linux:deb
 ```
 
 清理构建产物：
@@ -140,8 +141,10 @@ pnpm clean
 
 - 连接模型使用通用的 `ConnectionProfile`、`ConnectionSession`、`ProtocolBackend`，避免把架构绑定到 SSH。
 - xterm.js 只负责终端显示和输入采集，协议连接和数据流放在 Rust 后端。
-- 密码、私钥 passphrase 等敏感信息不进入长期前端状态。
-- 文件传输不通过前端内存搬运文件内容。
+- 密码、私钥 passphrase 等敏感信息不进入长期前端状态或前端持久化；手工输入只在当前表单短暂存在。
+- 已保存的 SSH/SFTP 密码存入系统凭据库，并由 Rust 认证命令直接读取，不回传 WebView。
+- SFTP 文件传输不通过前端内存搬运文件内容；HTTP multipart 文件受 128 MB 上限约束并在线程 Worker 中编码。
 - UI 功能入口由 capabilities 决定，不直接依赖协议名称硬编码。
 - 非加密协议需要明确安全边界和风险提示。
 - HTTP/API 调试是短请求/响应模型，不复用 `TerminalSession`，也不通过 Raw TCP 手写 HTTP。
+- SSH/SFTP 密码和私钥口令使用系统凭据库；HTTP 请求草稿中的认证字段按产品约定明文持久化。

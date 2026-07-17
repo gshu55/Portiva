@@ -1,5 +1,5 @@
 import "./App.css";
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ActiveFileTransferPanel } from "./app/ActiveFileTransferPanel";
 import { AppTitlebar } from "./app/AppTitlebar";
 import { GlobalNotice } from "./app/GlobalNotice";
@@ -11,7 +11,6 @@ import { usePortivaWorkspace } from "./app/usePortivaWorkspace";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { SimpleSftpPanel } from "./features/file-transfer/SimpleSftpPanel";
 import type { ConnectionSecretInput } from "./features/connections/ConnectionProfileDialog";
-import { HttpConsolePanel } from "./features/http/HttpConsolePanel";
 import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
@@ -28,6 +27,9 @@ const detachedWindowMinWidth = 480;
 const detachedWindowMinHeight = 480;
 const settingsTabId = "portiva-settings";
 const httpConsoleTabId = "portiva-http-console";
+const HttpConsolePanel = lazy(() =>
+  import("./features/http/HttpConsolePanel").then((module) => ({ default: module.HttpConsolePanel })),
+);
 const inactiveCapabilities: ConnectionCapabilities = {
   fileTransfer: false,
   localFileAccess: false,
@@ -990,7 +992,8 @@ function App() {
     hostTrustRequest &&
     workspace.pendingKnownHost &&
     (hostTrustRequest.profile.type === "ssh" || hostTrustRequest.profile.type === "sftp") &&
-    hostTrustRequest.profile.host === workspace.pendingKnownHost.host
+    hostTrustRequest.profile.host?.trim().toLowerCase() === workspace.pendingKnownHost.host.toLowerCase() &&
+    (hostTrustRequest.profile.port ?? 22) === workspace.pendingKnownHost.port
       ? workspace.pendingKnownHost
       : null;
   const activeHostTrustRequest = pendingHostTrust ? hostTrustRequest : null;
@@ -1042,6 +1045,7 @@ function App() {
           terminalConfirmMultilinePaste={workspace.settings.terminal.confirmMultilinePaste}
           terminalCopyRichText={workspace.settings.terminal.copyRichText}
           terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
+          suppressInsecureWarning={workspace.settings.security.allowInsecureWithoutWarning}
           terminalTheme={terminalPalette}
           onCloseSessionTab={workspace.closeConnection}
           onCloseSerialTerminal={workspace.closeSerialTerminal}
@@ -1102,7 +1106,11 @@ function App() {
             capabilities={settingsTabActive || httpConsoleActive ? inactiveCapabilities : workspace.capabilities}
             connection={settingsTabActive || httpConsoleActive ? null : workspace.activeConnection}
             customTabPanels={{
-              [httpConsoleTabId]: <HttpConsolePanel />,
+              [httpConsoleTabId]: (
+                <Suspense fallback={null}>
+                  <HttpConsolePanel />
+                </Suspense>
+              ),
               [settingsTabId]: <SettingsTabPanel workspace={workspace} />,
             }}
             emptyStateNotice={workspace.sessionNotice}
@@ -1117,6 +1125,7 @@ function App() {
             terminalConfirmMultilinePaste={workspace.settings.terminal.confirmMultilinePaste}
             terminalCopyRichText={workspace.settings.terminal.copyRichText}
             terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
+            suppressInsecureWarning={workspace.settings.security.allowInsecureWithoutWarning}
             terminalTheme={terminalPalette}
             onCloseSessionTab={closeAppSessionTab}
             onCloseSerialTerminal={workspace.closeSerialTerminal}

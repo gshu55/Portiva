@@ -328,9 +328,8 @@ impl TcpTerminalService {
             .map_err(|_| "tcp terminal service lock poisoned".to_string())?;
         let terminal_ids = sessions
             .iter()
-            .filter_map(|(terminal_id, session)| {
-                (session.connection_id == connection_id).then(|| terminal_id.clone())
-            })
+            .filter(|(_, session)| session.connection_id == connection_id)
+            .map(|(terminal_id, _)| terminal_id.clone())
             .collect::<Vec<_>>();
 
         for terminal_id in &terminal_ids {
@@ -827,6 +826,7 @@ fn respond_telnet_negotiation(writer: &Arc<Mutex<TcpStream>>, command: u8, optio
     write_telnet_command(writer, &response);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_tcp_reader(
     app_handle: AppHandle,
     terminal_id: String,

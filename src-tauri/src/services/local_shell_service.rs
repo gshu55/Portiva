@@ -189,9 +189,8 @@ impl LocalShellService {
             .map_err(|_| "local shell service lock poisoned".to_string())?;
         let terminal_ids = sessions
             .iter()
-            .filter_map(|(terminal_id, session)| {
-                (session.connection_id == connection_id).then(|| terminal_id.clone())
-            })
+            .filter(|(_, session)| session.connection_id == connection_id)
+            .map(|(terminal_id, _)| terminal_id.clone())
             .collect::<Vec<_>>();
 
         for terminal_id in &terminal_ids {

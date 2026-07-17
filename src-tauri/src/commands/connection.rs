@@ -4,11 +4,14 @@ use crate::domain::capability::ConnectionCapabilities;
 use crate::domain::connection::ConnectionSession;
 use crate::domain::logging::LogLevel;
 use crate::domain::profile::{ConnectionProfile, ConnectionType};
+use crate::domain::secret::SecretPurpose;
 use crate::services::connection_manager::ConnectionManager;
 use crate::services::file_transfer_service::FileTransferService;
 use crate::services::known_hosts_store::KnownHostsStore;
 use crate::services::local_shell_service::LocalShellService;
 use crate::services::log_service::LogService;
+use crate::services::profile_store::ProfileStore;
+use crate::services::secret_store::SecretStore;
 use crate::services::serial_service::SerialService;
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::tcp_terminal_service::TcpTerminalService;
@@ -84,6 +87,7 @@ pub async fn connection_open(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn connection_close(
     connection_id: String,
     manager: State<'_, ConnectionManager>,
@@ -96,17 +100,52 @@ pub async fn connection_close(
     tcp_terminals: State<'_, TcpTerminalService>,
     logs: State<'_, LogService>,
 ) -> Result<(), String> {
-    let closed_terminals = terminal_service.close_by_connection(&connection_id)?;
-    let closed_local_ptys = local_shells.close_ptys_by_connection(&connection_id)?;
-    let closed_ssh_ptys = ssh_sessions
-        .close_ptys_by_connection(&connection_id)
-        .await?;
-    let closed_file_sessions = file_transfer_service.close_by_connection(&connection_id)?;
-    let cancelled_transfers = transfer_service.cancel_by_connection(&connection_id)?;
-    let closed_ssh_session = ssh_sessions.close(&connection_id).await?;
-    let closed_serial_terminals = serial_service.close_by_connection(&connection_id)?;
-    let closed_tcp_terminals = tcp_terminals.close_by_connection(&connection_id)?;
-    manager.close(&connection_id)?;
+    let mut errors = Vec::new();
+    let closed_terminals = collect_cleanup_result(
+        "terminal sessions",
+        terminal_service.close_by_connection(&connection_id),
+        &mut errors,
+    );
+    let closed_local_ptys = collect_cleanup_result(
+        "local ptys",
+        local_shells.close_ptys_by_connection(&connection_id),
+        &mut errors,
+    );
+    let closed_ssh_ptys = collect_cleanup_result(
+        "ssh ptys",
+        ssh_sessions.close_ptys_by_connection(&connection_id).await,
+        &mut errors,
+    );
+    let closed_file_sessions = collect_cleanup_result(
+        "file transfer sessions",
+        file_transfer_service.close_by_connection(&connection_id),
+        &mut errors,
+    );
+    let cancelled_transfers = collect_cleanup_result(
+        "transfers",
+        transfer_service.cancel_by_connection(&connection_id),
+        &mut errors,
+    );
+    let closed_ssh_session = collect_cleanup_result(
+        "ssh transport",
+        ssh_sessions.close(&connection_id).await,
+        &mut errors,
+    );
+    let closed_serial_terminals = collect_cleanup_result(
+        "serial terminals",
+        serial_service.close_by_connection(&connection_id),
+        &mut errors,
+    );
+    let closed_tcp_terminals = collect_cleanup_result(
+        "tcp terminals",
+        tcp_terminals.close_by_connection(&connection_id),
+        &mut errors,
+    );
+    collect_cleanup_result(
+        "connection registry",
+        manager.close(&connection_id),
+        &mut errors,
+    );
     let _ = logs.record(
         LogLevel::Info,
         "connection",
@@ -114,7 +153,28 @@ pub async fn connection_close(
             "closed {connection_id}; released {closed_terminals} terminals, {closed_local_ptys} local ptys, {closed_ssh_ptys} ssh ptys, {closed_serial_terminals} serial terminals, {closed_tcp_terminals} tcp terminals, {closed_file_sessions} file sessions, cancelled {cancelled_transfers} transfers, closed ssh session: {closed_ssh_session}"
         ),
     );
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "connection cleanup completed with errors: {}",
+            errors.join("; ")
+        ))
+    }
+}
+
+fn collect_cleanup_result<T: Default>(
+    name: &str,
+    result: Result<T, String>,
+    errors: &mut Vec<String>,
+) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            errors.push(format!("{name}: {error}"));
+            T::default()
+        }
+    }
 }
 
 #[tauri::command]
@@ -125,10 +185,68 @@ pub async fn ssh_authenticate_password(
     ssh_sessions: State<'_, SshSessionService>,
     logs: State<'_, LogService>,
 ) -> Result<ConnectionSession, String> {
+    authenticate_ssh_password(
+        &connection_id,
+        password,
+        manager.inner(),
+        ssh_sessions.inner(),
+        logs.inner(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn ssh_authenticate_saved_password(
+    connection_id: String,
+    manager: State<'_, ConnectionManager>,
+    profiles: State<'_, ProfileStore>,
+    secrets: State<'_, SecretStore>,
+    ssh_sessions: State<'_, SshSessionService>,
+    logs: State<'_, LogService>,
+) -> Result<ConnectionSession, String> {
+    let session = manager
+        .get(&connection_id)?
+        .ok_or_else(|| format!("connection not found: {connection_id}"))?;
+    let profile = profiles
+        .get(&session.profile_id)?
+        .ok_or_else(|| format!("profile not found: {}", session.profile_id))?;
+    if !matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp)
+        || profile.auth_type.as_deref() != Some("password")
+    {
+        return Err("保存的 SSH 密码只能用于密码认证配置".to_string());
+    }
+    ssh_sessions.ensure_matches_profile(&connection_id, &profile)?;
+
+    let profile_id = session.profile_id;
+    let secret_store = secrets.inner().clone();
+    let password = tauri::async_runtime::spawn_blocking(move || {
+        secret_store.get_secret(&profile_id, SecretPurpose::Password)
+    })
+    .await
+    .map_err(|error| format!("系统凭据库任务执行失败：{error}"))??
+    .ok_or_else(|| "未找到已保存的 SSH 密码，请重新输入".to_string())?;
+
+    authenticate_ssh_password(
+        &connection_id,
+        password,
+        manager.inner(),
+        ssh_sessions.inner(),
+        logs.inner(),
+    )
+    .await
+}
+
+async fn authenticate_ssh_password(
+    connection_id: &str,
+    password: String,
+    manager: &ConnectionManager,
+    ssh_sessions: &SshSessionService,
+    logs: &LogService,
+) -> Result<ConnectionSession, String> {
     let outcome = ssh_sessions
-        .authenticate_password(&connection_id, password)
+        .authenticate_password(connection_id, password)
         .await?;
-    let session = manager.mark_ssh_authenticated(&connection_id, false)?;
+    let session = manager.mark_ssh_authenticated(connection_id, false)?;
     let _ = logs.record(
         LogLevel::Info,
         "connection",

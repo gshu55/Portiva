@@ -29,6 +29,7 @@ export const commandNames = {
   connectionGet: "connection_get",
   connectionGetCapabilities: "connection_get_capabilities",
   sshAuthenticatePassword: "ssh_authenticate_password",
+  sshAuthenticateSavedPassword: "ssh_authenticate_saved_password",
   sshAuthenticatePrivateKey: "ssh_authenticate_private_key",
   sshAuthenticateAgent: "ssh_authenticate_agent",
   profileGroups: "profile_groups",
@@ -47,11 +48,8 @@ export const commandNames = {
   knownHostTrustPlaceholder: "known_host_trust_placeholder",
   securityRedactPreview: "security_redact_preview",
   secretList: "secret_list",
-  secretCreatePlaceholder: "secret_create_placeholder",
   secretSet: "secret_set",
-  secretGet: "secret_get",
   secretDelete: "secret_delete",
-  secretExists: "secret_exists",
   knownHostsList: "known_hosts_list",
   knownHostDelete: "known_host_delete",
   terminalAttach: "terminal_attach",
@@ -103,12 +101,12 @@ export const commandNames = {
 
 export interface ProfileSaveResult {
   profileId: string;
-  reservedSecretId?: string;
 }
 
 export interface TestConnectionResult {
   fingerprint?: string;
   host?: string;
+  port?: number;
   ok: boolean;
   message: string;
   requiresFingerprintConfirmation: boolean;
@@ -116,6 +114,7 @@ export interface TestConnectionResult {
 
 export interface KnownHostTrustResult {
   host: string;
+  port: number;
   fingerprint: string;
 }
 
@@ -141,10 +140,21 @@ export interface HttpSendHeader {
   value: string;
 }
 
+export interface HttpSendMultipartPart {
+  bytes?: number[];
+  bytesBase64?: string;
+  contentType?: string;
+  fileName?: string;
+  kind: "text" | "file";
+  name: string;
+  value?: string;
+}
+
 export interface HttpSendRequest {
   body?: string;
   headers: HttpSendHeader[];
   method: string;
+  multipart?: HttpSendMultipartPart[];
   timeoutMs?: number;
   url: string;
 }
@@ -216,8 +226,8 @@ export function profileTestConnection(profile: ConnectionProfile, secret?: strin
   return invoke<TestConnectionResult>(commandNames.profileTestConnection, { profile, secret });
 }
 
-export function knownHostTrustPlaceholder(host: string, fingerprint: string) {
-  return invoke<KnownHostTrustResult>(commandNames.knownHostTrustPlaceholder, { host, fingerprint });
+export function knownHostTrustPlaceholder(host: string, port: number, fingerprint: string) {
+  return invoke<KnownHostTrustResult>(commandNames.knownHostTrustPlaceholder, { host, port, fingerprint });
 }
 
 export function securityRedactPreview(input: string) {
@@ -228,24 +238,12 @@ export function secretList() {
   return invoke<SecretMetadata[]>(commandNames.secretList);
 }
 
-export function secretCreatePlaceholder(profileId: string, purpose: SecretMetadata["purpose"]) {
-  return invoke<SecretMetadata>(commandNames.secretCreatePlaceholder, { profileId, purpose });
-}
-
 export function secretSet(profileId: string, purpose: SecretMetadata["purpose"], value: string) {
   return invoke<SecretMetadata>(commandNames.secretSet, { profileId, purpose, value });
 }
 
-export function secretGet(profileId: string, purpose: SecretMetadata["purpose"]) {
-  return invoke<string | null>(commandNames.secretGet, { profileId, purpose });
-}
-
 export function secretDelete(secretId: string) {
   return invoke<void>(commandNames.secretDelete, { secretId });
-}
-
-export function secretExists(secretId: string) {
-  return invoke<boolean>(commandNames.secretExists, { secretId });
 }
 
 export function knownHostsList() {
@@ -286,6 +284,10 @@ export function connectionGetCapabilities(connectionId: string) {
 
 export function sshAuthenticatePassword(connectionId: string, password: string) {
   return invoke<ConnectionSummary>(commandNames.sshAuthenticatePassword, { connectionId, password });
+}
+
+export function sshAuthenticateSavedPassword(connectionId: string) {
+  return invoke<ConnectionSummary>(commandNames.sshAuthenticateSavedPassword, { connectionId });
 }
 
 export function sshAuthenticatePrivateKey(

@@ -194,7 +194,7 @@ pub async fn file_transfer_open(
         return Err("connection does not support file transfer".to_string());
     }
 
-    if session.is_file_transfer_ready() {
+    if session.is_file_transfer_ready() && ssh_sessions.has_sftp(&connection_id)? {
         return file_transfer_service.open(connection_id);
     }
 
@@ -240,16 +240,14 @@ pub async fn file_transfer_list(
     let session = file_transfer_service.session(&session_id)?;
     let remote_path = normalize_remote_list_path(&remote_path);
 
-    if ssh_sessions.has_sftp(&session.connection_id)? {
-        return ssh_sessions
-            .list_dir(&session.connection_id, &remote_path)
-            .await;
-    }
-
-    file_transfer_service.list_dir(&session_id, &remote_path)
+    require_sftp(&ssh_sessions, &session.connection_id)?;
+    ssh_sessions
+        .list_dir(&session.connection_id, &remote_path)
+        .await
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn file_transfer_upload(
     session_id: String,
     local_path: String,
@@ -262,6 +260,7 @@ pub async fn file_transfer_upload(
 ) -> Result<TransferTask, String> {
     let session = file_transfer_service.session(&session_id)?;
     let connection_id = session.connection_id.clone();
+    require_sftp(&ssh_sessions, &connection_id)?;
     let task = transfer_service.upload(connection_id.clone(), local_path.clone(), remote_path)?;
     let _ = logs.record(
         LogLevel::Info,
@@ -269,15 +268,12 @@ pub async fn file_transfer_upload(
         format!("queued upload {}", task.remote_path),
     );
 
-    if ssh_sessions.has_sftp(&connection_id)? {
-        start_queued_sftp_transfers(app_handle, connection_id)?;
-        return transfer_service.get(&task.id);
-    }
-
-    Ok(task)
+    start_queued_sftp_transfers(app_handle, connection_id)?;
+    transfer_service.get(&task.id)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn file_transfer_download(
     session_id: String,
     remote_path: String,
@@ -290,19 +286,16 @@ pub async fn file_transfer_download(
 ) -> Result<TransferTask, String> {
     let session = file_transfer_service.session(&session_id)?;
     let connection_id = session.connection_id.clone();
-    let task = transfer_service.download(connection_id, remote_path, local_path)?;
+    require_sftp(&ssh_sessions, &connection_id)?;
+    let task = transfer_service.download(connection_id.clone(), remote_path, local_path)?;
     let _ = logs.record(
         LogLevel::Info,
         "transfer",
         format!("queued download {}", task.remote_path),
     );
 
-    if ssh_sessions.has_sftp(&session.connection_id)? {
-        start_queued_sftp_transfers(app_handle, session.connection_id)?;
-        return transfer_service.get(&task.id);
-    }
-
-    Ok(task)
+    start_queued_sftp_transfers(app_handle, connection_id)?;
+    transfer_service.get(&task.id)
 }
 
 fn spawn_sftp_upload(app_handle: AppHandle, connection_id: String, task: TransferTask) {
@@ -364,9 +357,7 @@ fn start_queued_sftp_transfers(
     let transfer_service = app_handle.state::<TransferService>();
     let ssh_sessions = app_handle.state::<SshSessionService>();
 
-    if !ssh_sessions.has_sftp(&connection_id)? {
-        return Ok(Vec::new());
-    }
+    require_sftp(&ssh_sessions, &connection_id)?;
 
     let mut started = Vec::new();
     loop {
@@ -474,13 +465,10 @@ pub async fn file_transfer_mkdir(
     ssh_sessions: State<'_, SshSessionService>,
 ) -> Result<(), String> {
     let session = file_transfer_service.session(&session_id)?;
-    if ssh_sessions.has_sftp(&session.connection_id)? {
-        return ssh_sessions
-            .mkdir(&session.connection_id, &remote_path)
-            .await;
-    }
-
-    file_transfer_service.mkdir(&session_id, &remote_path)
+    require_sftp(&ssh_sessions, &session.connection_id)?;
+    ssh_sessions
+        .mkdir(&session.connection_id, &remote_path)
+        .await
 }
 
 #[tauri::command]
@@ -491,13 +479,10 @@ pub async fn file_transfer_remove(
     ssh_sessions: State<'_, SshSessionService>,
 ) -> Result<(), String> {
     let session = file_transfer_service.session(&session_id)?;
-    if ssh_sessions.has_sftp(&session.connection_id)? {
-        return ssh_sessions
-            .remove(&session.connection_id, &remote_path)
-            .await;
-    }
-
-    file_transfer_service.remove(&session_id, &remote_path)
+    require_sftp(&ssh_sessions, &session.connection_id)?;
+    ssh_sessions
+        .remove(&session.connection_id, &remote_path)
+        .await
 }
 
 #[tauri::command]
@@ -509,13 +494,10 @@ pub async fn file_transfer_rename(
     ssh_sessions: State<'_, SshSessionService>,
 ) -> Result<(), String> {
     let session = file_transfer_service.session(&session_id)?;
-    if ssh_sessions.has_sftp(&session.connection_id)? {
-        return ssh_sessions
-            .rename(&session.connection_id, &from, &to)
-            .await;
-    }
-
-    file_transfer_service.rename(&session_id, &from, &to)
+    require_sftp(&ssh_sessions, &session.connection_id)?;
+    ssh_sessions
+        .rename(&session.connection_id, &from, &to)
+        .await
 }
 
 #[tauri::command]
@@ -549,15 +531,23 @@ pub fn file_transfer_retry(
     ssh_sessions: State<'_, SshSessionService>,
     transfer_service: State<'_, TransferService>,
 ) -> Result<TransferTask, String> {
+    let existing = transfer_service.get(&transfer_id)?;
+    require_sftp(&ssh_sessions, &existing.connection_id)?;
     let task = transfer_service.retry(&transfer_id)?;
-
-    if !ssh_sessions.has_sftp(&task.connection_id)? {
-        return Ok(task);
-    }
 
     let _ = start_queued_sftp_transfers(app_handle, task.connection_id.clone())?;
 
     transfer_service.get(&task.id)
+}
+
+fn require_sftp(ssh_sessions: &SshSessionService, connection_id: &str) -> Result<(), String> {
+    if ssh_sessions.has_sftp(connection_id)? {
+        return Ok(());
+    }
+
+    Err(format!(
+        "SFTP connection is unavailable for {connection_id}; reconnect before continuing"
+    ))
 }
 
 #[tauri::command]
@@ -647,10 +637,10 @@ fn list_local_roots() -> Result<LocalFileListResult, String> {
             }
         }
 
-        return Ok(LocalFileListResult {
+        Ok(LocalFileListResult {
             path: LOCAL_ROOTS_PATH.to_string(),
             entries,
-        });
+        })
     }
 
     #[cfg(not(windows))]
@@ -669,10 +659,10 @@ fn list_local_roots() -> Result<LocalFileListResult, String> {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        return Ok(LocalFileListResult {
+        Ok(LocalFileListResult {
             path: LOCAL_ROOTS_PATH.to_string(),
             entries,
-        });
+        })
     }
 }
 

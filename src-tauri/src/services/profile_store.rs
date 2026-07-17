@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::domain::profile::{ConnectionProfile, ConnectionType, ProfileGroup, RecentConnection};
-use crate::utils::{app_paths, clock};
+use crate::utils::{app_paths, clock, json_store};
 
 pub struct ProfileStore {
     profiles: Mutex<HashMap<String, ConnectionProfile>>,
@@ -47,9 +46,15 @@ impl ProfileStore {
     }
 
     pub fn with_paths(profile_path: PathBuf, recent_path: PathBuf) -> Self {
-        let mut profiles = load_profiles(&profile_path).unwrap_or_default();
+        let mut profiles = load_profiles(&profile_path).unwrap_or_else(|error| {
+            eprintln!("failed to load profiles; using an empty profile list: {error}");
+            HashMap::new()
+        });
         profiles.retain(|_, profile| !is_builtin_sample_ssh_profile(profile));
-        let mut recent = load_recent_connections(&recent_path).unwrap_or_default();
+        let mut recent = load_recent_connections(&recent_path).unwrap_or_else(|error| {
+            eprintln!("failed to load recent connections; using an empty list: {error}");
+            Vec::new()
+        });
         recent.retain(|entry| entry.profile_id != "prod-ssh");
 
         Self {
@@ -69,32 +74,62 @@ impl ProfileStore {
         Ok(stored.values().cloned().collect())
     }
 
-    pub fn upsert(&self, profile: ConnectionProfile) -> Result<String, String> {
-        validate_profile(&profile)?;
-
-        let id = profile.id.clone();
-        self.profiles
+    pub fn get(&self, profile_id: &str) -> Result<Option<ConnectionProfile>, String> {
+        Ok(self
+            .profiles
             .lock()
             .map_err(|_| "profile store lock poisoned".to_string())?
-            .insert(id.clone(), profile);
+            .get(profile_id)
+            .cloned())
+    }
 
-        self.persist_profiles()?;
+    pub fn upsert(&self, profile: ConnectionProfile) -> Result<String, String> {
+        self.validate(&profile)?;
+
+        let id = profile.id.clone();
+        let mut profiles = self
+            .profiles
+            .lock()
+            .map_err(|_| "profile store lock poisoned".to_string())?;
+        let mut next_profiles = profiles.clone();
+        next_profiles.insert(id.clone(), profile);
+
+        self.persist_profiles(&next_profiles)?;
+        *profiles = next_profiles;
 
         Ok(id)
     }
 
-    pub fn delete(&self, profile_id: &str) -> Result<(), String> {
-        self.profiles
-            .lock()
-            .map_err(|_| "profile store lock poisoned".to_string())?
-            .remove(profile_id);
-        self.recent
-            .lock()
-            .map_err(|_| "profile recent lock poisoned".to_string())?
-            .retain(|entry| entry.profile_id != profile_id);
+    pub fn validate(&self, profile: &ConnectionProfile) -> Result<(), String> {
+        validate_profile(profile)
+    }
 
-        self.persist_profiles()?;
-        self.persist_recent()?;
+    pub fn delete(&self, profile_id: &str) -> Result<(), String> {
+        let mut profiles = self
+            .profiles
+            .lock()
+            .map_err(|_| "profile store lock poisoned".to_string())?;
+        let mut recent = self
+            .recent
+            .lock()
+            .map_err(|_| "profile recent lock poisoned".to_string())?;
+        let mut next_profiles = profiles.clone();
+        let mut next_recent = recent.clone();
+        next_profiles.remove(profile_id);
+        next_recent.retain(|entry| entry.profile_id != profile_id);
+
+        self.persist_profiles(&next_profiles)?;
+        if let Err(error) = self.persist_recent(&next_recent) {
+            let rollback = self.persist_profiles(&profiles);
+            return Err(match rollback {
+                Ok(()) => error,
+                Err(rollback_error) => {
+                    format!("{error}; failed to roll back profiles: {rollback_error}")
+                }
+            });
+        }
+        *profiles = next_profiles;
+        *recent = next_recent;
 
         Ok(())
     }
@@ -148,52 +183,42 @@ impl ProfileStore {
             .recent
             .lock()
             .map_err(|_| "profile recent lock poisoned".to_string())?;
-        recent.retain(|existing| existing.profile_id != entry.profile_id);
-        recent.insert(0, entry.clone());
-        recent.truncate(10);
-        drop(recent);
+        let mut next_recent = recent.clone();
+        next_recent.retain(|existing| existing.profile_id != entry.profile_id);
+        next_recent.insert(0, entry.clone());
+        next_recent.truncate(10);
 
-        self.persist_recent()?;
+        self.persist_recent(&next_recent)?;
+        *recent = next_recent;
 
         Ok(entry)
     }
 
-    fn persist_profiles(&self) -> Result<(), String> {
+    fn persist_profiles(
+        &self,
+        profiles: &HashMap<String, ConnectionProfile>,
+    ) -> Result<(), String> {
         let Some(path) = &self.profile_path else {
             return Ok(());
         };
 
-        let profiles = self
-            .profiles
-            .lock()
-            .map_err(|_| "profile store lock poisoned".to_string())?;
         let mut values = profiles.values().cloned().collect::<Vec<_>>();
         values.sort_by(|left, right| left.name.cmp(&right.name));
         write_profiles(path, &values)
     }
 
-    fn persist_recent(&self) -> Result<(), String> {
+    fn persist_recent(&self, recent: &[RecentConnection]) -> Result<(), String> {
         let Some(path) = &self.recent_path else {
             return Ok(());
         };
 
-        let recent = self
-            .recent
-            .lock()
-            .map_err(|_| "profile recent lock poisoned".to_string())?;
-        write_recent_connections(path, &recent)
+        write_recent_connections(path, recent)
     }
 }
 
 fn load_profiles(path: &Path) -> Result<HashMap<String, ConnectionProfile>, String> {
-    if !path.exists() {
-        return Err("profiles file does not exist".to_string());
-    }
-
-    let raw =
-        fs::read_to_string(path).map_err(|error| format!("failed to read profiles: {error}"))?;
     let profiles: Vec<ConnectionProfile> =
-        serde_json::from_str(&raw).map_err(|error| format!("failed to parse profiles: {error}"))?;
+        json_store::load_json(path, "profiles")?.unwrap_or_default();
 
     let mut stored = HashMap::new();
     for profile in profiles {
@@ -205,39 +230,19 @@ fn load_profiles(path: &Path) -> Result<HashMap<String, ConnectionProfile>, Stri
 }
 
 fn write_profiles(path: &Path, profiles: &[ConnectionProfile]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create profile directory: {error}"))?;
-    }
-
-    let raw = serde_json::to_string_pretty(profiles)
-        .map_err(|error| format!("failed to encode profiles: {error}"))?;
-    fs::write(path, raw).map_err(|error| format!("failed to write profiles: {error}"))
+    json_store::write_json(path, profiles, "profiles")
 }
 
 fn load_recent_connections(path: &Path) -> Result<Vec<RecentConnection>, String> {
-    if !path.exists() {
-        return Err("recent connections file does not exist".to_string());
-    }
-
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read recent connections: {error}"))?;
-    let mut recent: Vec<RecentConnection> = serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse recent connections: {error}"))?;
+    let mut recent: Vec<RecentConnection> =
+        json_store::load_json(path, "recent connections")?.unwrap_or_default();
     recent.retain(|entry| !entry.profile_id.trim().is_empty());
     recent.truncate(10);
     Ok(recent)
 }
 
 fn write_recent_connections(path: &Path, recent: &[RecentConnection]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create recent connections directory: {error}"))?;
-    }
-
-    let raw = serde_json::to_string_pretty(recent)
-        .map_err(|error| format!("failed to encode recent connections: {error}"))?;
-    fs::write(path, raw).map_err(|error| format!("failed to write recent connections: {error}"))
+    json_store::write_json(path, recent, "recent connections")
 }
 
 fn group_name(group_id: &str) -> String {

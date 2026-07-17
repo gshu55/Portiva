@@ -1,9 +1,8 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::domain::settings::AppSettings;
-use crate::utils::app_paths;
+use crate::utils::{app_paths, json_store};
 
 pub struct SettingsStore {
     settings: Mutex<AppSettings>,
@@ -26,7 +25,10 @@ impl SettingsStore {
     }
 
     pub fn with_path(path: PathBuf) -> Self {
-        let settings = load_settings(&path).unwrap_or_default();
+        let settings = load_settings(&path).unwrap_or_else(|error| {
+            eprintln!("failed to load settings; using defaults: {error}");
+            AppSettings::default()
+        });
 
         Self {
             settings: Mutex::new(settings),
@@ -42,15 +44,17 @@ impl SettingsStore {
             .clone())
     }
 
-    pub fn update(&self, settings: AppSettings) -> Result<AppSettings, String> {
+    pub fn update(&self, mut settings: AppSettings) -> Result<AppSettings, String> {
+        enforce_security_invariants(&mut settings);
         validate_settings(&settings)?;
 
-        *self
+        let mut current = self
             .settings
             .lock()
-            .map_err(|_| "settings store lock poisoned".to_string())? = settings.clone();
+            .map_err(|_| "settings store lock poisoned".to_string())?;
 
         self.persist(&settings)?;
+        *current = settings.clone();
 
         Ok(settings)
     }
@@ -65,27 +69,19 @@ impl SettingsStore {
 }
 
 fn load_settings(path: &Path) -> Result<AppSettings, String> {
-    if !path.exists() {
-        return Err("settings file does not exist".to_string());
-    }
-
-    let raw =
-        fs::read_to_string(path).map_err(|error| format!("failed to read settings: {error}"))?;
-    let settings: AppSettings =
-        serde_json::from_str(&raw).map_err(|error| format!("failed to parse settings: {error}"))?;
+    let mut settings = json_store::load_json(path, "settings")?.unwrap_or_default();
+    enforce_security_invariants(&mut settings);
     validate_settings(&settings)?;
     Ok(settings)
 }
 
-fn write_settings(path: &Path, settings: &AppSettings) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create settings directory: {error}"))?;
-    }
+fn enforce_security_invariants(settings: &mut AppSettings) {
+    settings.security.require_host_key_verification = true;
+    settings.security.redact_sensitive_logs = true;
+}
 
-    let raw = serde_json::to_string_pretty(settings)
-        .map_err(|error| format!("failed to encode settings: {error}"))?;
-    fs::write(path, raw).map_err(|error| format!("failed to write settings: {error}"))
+fn write_settings(path: &Path, settings: &AppSettings) -> Result<(), String> {
+    json_store::write_json(path, settings, "settings")
 }
 
 fn validate_settings(settings: &AppSettings) -> Result<(), String> {
@@ -190,6 +186,21 @@ mod tests {
             store.update(settings).unwrap_err(),
             "terminal color background must be #RRGGBB"
         );
+    }
+
+    #[test]
+    fn enforces_non_optional_security_settings() {
+        let store = SettingsStore::in_memory();
+        let mut settings = AppSettings::default();
+        settings.security.require_host_key_verification = false;
+        settings.security.redact_sensitive_logs = false;
+        settings.security.allow_insecure_without_warning = true;
+
+        let updated = store.update(settings).unwrap();
+
+        assert!(updated.security.require_host_key_verification);
+        assert!(updated.security.redact_sensitive_logs);
+        assert!(updated.security.allow_insecure_without_warning);
     }
 
     #[test]

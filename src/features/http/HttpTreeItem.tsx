@@ -125,7 +125,8 @@ export function HttpTreeItem({
       onDrop={(event) => dnd.dropTreeNode(event, drop)}
       onKeyDown={onKeyDown}
       onPointerDown={drag ? (event) => dnd.startTreePointerDrag(event, drag) : undefined}
-      role="button"
+      aria-selected={active}
+      role="treeitem"
       tabIndex={0}
       title={title}
     >

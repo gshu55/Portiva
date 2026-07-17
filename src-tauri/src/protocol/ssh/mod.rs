@@ -18,7 +18,8 @@ impl ProtocolBackend for SshBackend {
     }
 
     fn connect_placeholder(&self, profile: ConnectionProfile) -> Result<ConnectionSession, String> {
-        // TODO: use russh/russh-sftp, SecretStore, and KnownHostsStore here.
+        // The command layer performs host verification and opens the real SSH
+        // transport; this backend only provides the pending session metadata.
         Ok(ConnectionSession {
             id: format!("session-{}", profile.id),
             profile_id: profile.id.clone(),

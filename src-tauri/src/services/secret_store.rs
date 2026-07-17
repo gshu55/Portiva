@@ -1,16 +1,99 @@
 use std::collections::HashMap;
-use std::ffi::c_void;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::ptr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+#[cfg(windows)]
+use std::{ffi::c_void, ptr};
 
 use crate::domain::secret::{SecretMetadata, SecretPurpose};
-use crate::utils::{app_paths, clock};
+use crate::utils::{app_paths, clock, json_store};
 
+const KEYRING_SERVICE: &str = "Portiva";
+const OS_KEYRING_PROTECTION: &str = "os-keyring-v1";
+const LEGACY_WINDOWS_DPAPI_PROTECTION: &str = "windows-dpapi-current-user";
+
+trait CredentialBackend: Send + Sync {
+    fn set(&self, account: &str, value: &str) -> Result<(), String>;
+    fn get(&self, account: &str) -> Result<Option<String>, String>;
+    fn delete(&self, account: &str) -> Result<(), String>;
+}
+
+struct OsCredentialBackend;
+
+impl OsCredentialBackend {
+    fn entry(account: &str) -> Result<keyring::Entry, String> {
+        keyring::Entry::new(KEYRING_SERVICE, account)
+            .map_err(|error| credential_error("创建凭据项", error))
+    }
+}
+
+impl CredentialBackend for OsCredentialBackend {
+    fn set(&self, account: &str, value: &str) -> Result<(), String> {
+        Self::entry(account)?
+            .set_password(value)
+            .map_err(|error| credential_error("保存凭据", error))
+    }
+
+    fn get(&self, account: &str) -> Result<Option<String>, String> {
+        match Self::entry(account)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(credential_error("读取凭据", error)),
+        }
+    }
+
+    fn delete(&self, account: &str) -> Result<(), String> {
+        match Self::entry(account)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(credential_error("删除凭据", error)),
+        }
+    }
+}
+
+fn credential_error(action: &str, error: keyring::Error) -> String {
+    format!("系统凭据库{action}失败：{error}")
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct MemoryCredentialBackend {
+    values: Mutex<HashMap<String, String>>,
+}
+
+#[cfg(test)]
+impl CredentialBackend for MemoryCredentialBackend {
+    fn set(&self, account: &str, value: &str) -> Result<(), String> {
+        self.values
+            .lock()
+            .map_err(|_| "test credential store lock poisoned".to_string())?
+            .insert(account.to_string(), value.to_string());
+        Ok(())
+    }
+
+    fn get(&self, account: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|_| "test credential store lock poisoned".to_string())?
+            .get(account)
+            .cloned())
+    }
+
+    fn delete(&self, account: &str) -> Result<(), String> {
+        self.values
+            .lock()
+            .map_err(|_| "test credential store lock poisoned".to_string())?
+            .remove(account);
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
 pub struct SecretStore {
-    secrets: Mutex<HashMap<String, StoredSecret>>,
+    secrets: Arc<Mutex<HashMap<String, StoredSecret>>>,
     path: Option<PathBuf>,
+    backend: Arc<dyn CredentialBackend>,
+    credential_operations: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -31,47 +114,30 @@ impl Default for SecretStore {
 impl SecretStore {
     #[cfg(test)]
     pub fn in_memory() -> Self {
-        Self {
-            secrets: Mutex::new(HashMap::new()),
-            path: None,
-        }
+        Self::with_backend(None, Arc::new(MemoryCredentialBackend::default()))
     }
 
     pub fn with_path(path: PathBuf) -> Self {
-        Self {
-            secrets: Mutex::new(load_secret_metadata(&path).unwrap_or_default()),
-            path: Some(path),
-        }
+        Self::with_backend(Some(path), Arc::new(OsCredentialBackend))
     }
 
-    pub fn create_placeholder(
-        &self,
-        profile_id: String,
-        purpose: SecretPurpose,
-    ) -> Result<SecretMetadata, String> {
-        // TODO: write encrypted secret value with Stronghold or OS keyring. This stores metadata only.
-        let id = format!("secret:{}:{}", profile_id, purpose_label(&purpose));
-        let metadata = SecretMetadata {
-            id: id.clone(),
-            profile_id,
-            purpose,
-            created_at: clock::now_stamp(),
-            has_value: false,
-        };
-        let stored = StoredSecret {
-            metadata,
-            protected_value: None,
-            protection: None,
-        };
+    fn with_backend(path: Option<PathBuf>, backend: Arc<dyn CredentialBackend>) -> Self {
+        let secrets = path
+            .as_deref()
+            .map(load_secret_metadata)
+            .transpose()
+            .unwrap_or_else(|error| {
+                eprintln!("failed to load secret metadata; using an empty index: {error}");
+                Some(HashMap::new())
+            })
+            .unwrap_or_default();
 
-        self.secrets
-            .lock()
-            .map_err(|_| "secret store lock poisoned".to_string())?
-            .insert(id, stored.clone());
-
-        self.persist()?;
-
-        Ok(stored.metadata)
+        Self {
+            secrets: Arc::new(Mutex::new(secrets)),
+            path,
+            backend,
+            credential_operations: Arc::new(Mutex::new(())),
+        }
     }
 
     pub fn set_secret(
@@ -80,12 +146,12 @@ impl SecretStore {
         purpose: SecretPurpose,
         value: String,
     ) -> Result<SecretMetadata, String> {
+        let _operation = self.lock_credential_operation()?;
         if value.is_empty() {
             return Err("secret value cannot be empty".to_string());
         }
 
-        let protected = protect_secret(value.as_bytes())?;
-        let id = format!("secret:{}:{}", profile_id, purpose_label(&purpose));
+        let id = secret_id(&profile_id, &purpose);
         let stored = StoredSecret {
             metadata: SecretMetadata {
                 id: id.clone(),
@@ -94,16 +160,30 @@ impl SecretStore {
                 created_at: clock::now_stamp(),
                 has_value: true,
             },
-            protected_value: Some(hex_encode(&protected)),
-            protection: Some(protection_label().to_string()),
+            protected_value: None,
+            protection: Some(OS_KEYRING_PROTECTION.to_string()),
         };
 
-        self.secrets
+        let previous = self
+            .secrets
             .lock()
             .map_err(|_| "secret store lock poisoned".to_string())?
-            .insert(id, stored.clone());
+            .insert(id.clone(), stored.clone());
 
-        self.persist()?;
+        if let Err(error) = self.persist() {
+            self.restore_stored(&id, previous)?;
+            return Err(error);
+        }
+
+        if let Err(error) = self.backend.set(&id, &value) {
+            self.restore_stored(&id, previous)?;
+            return match self.persist() {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(format!(
+                    "{error}; failed to roll back secret metadata: {rollback_error}"
+                )),
+            };
+        }
 
         Ok(stored.metadata)
     }
@@ -113,7 +193,8 @@ impl SecretStore {
         profile_id: &str,
         purpose: SecretPurpose,
     ) -> Result<Option<String>, String> {
-        let id = format!("secret:{}:{}", profile_id, purpose_label(&purpose));
+        let _operation = self.lock_credential_operation()?;
+        let id = secret_id(profile_id, &purpose);
         let stored = self
             .secrets
             .lock()
@@ -123,15 +204,34 @@ impl SecretStore {
         let Some(stored) = stored else {
             return Ok(None);
         };
-        let Some(protected_value) = stored.protected_value else {
-            return Ok(None);
-        };
-        let raw = hex_decode(&protected_value)?;
-        let secret = unprotect_secret(&raw)?;
+        match stored.protection.as_deref() {
+            Some(OS_KEYRING_PROTECTION) => {
+                let value = self.backend.get(&id)?;
+                if value.is_none() {
+                    self.mark_credential_missing(&id)?;
+                }
+                Ok(value)
+            }
+            Some(LEGACY_WINDOWS_DPAPI_PROTECTION) => {
+                let protected_value = stored
+                    .protected_value
+                    .as_deref()
+                    .ok_or_else(|| "旧版 Windows 密码数据不完整".to_string())?;
+                let raw = hex_decode(protected_value)?;
+                let secret = unprotect_legacy_windows_secret(&raw)?;
+                let value = String::from_utf8(secret)
+                    .map_err(|error| format!("旧版密码不是有效的 UTF-8：{error}"))?;
 
-        String::from_utf8(secret)
-            .map(Some)
-            .map_err(|error| format!("stored secret is not valid UTF-8: {error}"))
+                self.backend.set(&id, &value)?;
+                self.replace_with_keyring_metadata(&id, &stored)?;
+                Ok(Some(value))
+            }
+            Some(protection) => Err(format!("不支持的密码保护格式：{protection}")),
+            None if stored.protected_value.is_some() => {
+                Err("密码数据缺少保护格式标识，无法安全读取".to_string())
+            }
+            None => Ok(None),
+        }
     }
 
     pub fn list(&self) -> Result<Vec<SecretMetadata>, String> {
@@ -147,22 +247,156 @@ impl SecretStore {
     }
 
     pub fn delete(&self, secret_id: &str) -> Result<(), String> {
+        let _operation = self.lock_credential_operation()?;
+        self.delete_locked(secret_id)
+    }
+
+    fn delete_locked(&self, secret_id: &str) -> Result<(), String> {
+        let stored = self
+            .secrets
+            .lock()
+            .map_err(|_| "secret store lock poisoned".to_string())?
+            .get(secret_id)
+            .cloned();
+
+        let Some(stored) = stored else {
+            return Ok(());
+        };
+
+        let previous_credential = if stored.protection.as_deref() == Some(OS_KEYRING_PROTECTION) {
+            self.backend.get(secret_id)?
+        } else {
+            None
+        };
+
+        if stored.protection.as_deref() == Some(OS_KEYRING_PROTECTION) {
+            self.backend.delete(secret_id)?;
+        }
+
         self.secrets
             .lock()
             .map_err(|_| "secret store lock poisoned".to_string())?
             .remove(secret_id);
 
-        self.persist()?;
+        if let Err(error) = self.persist() {
+            self.secrets
+                .lock()
+                .map_err(|_| "secret store lock poisoned".to_string())?
+                .insert(secret_id.to_string(), stored.clone());
+            let credential_rollback = if let Some(previous_credential) = previous_credential {
+                self.backend.set(secret_id, &previous_credential)
+            } else {
+                Ok(())
+            };
+            return Err(match credential_rollback {
+                Ok(()) => error,
+                Err(rollback_error) => {
+                    format!("{error}; credential rollback unavailable: {rollback_error}")
+                }
+            });
+        }
 
         Ok(())
     }
 
-    pub fn contains(&self, secret_id: &str) -> Result<bool, String> {
-        Ok(self
+    pub fn delete_for_profile(&self, profile_id: &str) -> Result<(), String> {
+        let _operation = self.lock_credential_operation()?;
+        let secret_ids = self
             .secrets
             .lock()
             .map_err(|_| "secret store lock poisoned".to_string())?
-            .contains_key(secret_id))
+            .values()
+            .filter(|stored| stored.metadata.profile_id == profile_id)
+            .map(|stored| stored.metadata.id.clone())
+            .collect::<Vec<_>>();
+
+        for secret_id in secret_ids {
+            self.delete_locked(&secret_id)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn delete_for_profile_purpose(
+        &self,
+        profile_id: &str,
+        purpose: SecretPurpose,
+    ) -> Result<(), String> {
+        let _operation = self.lock_credential_operation()?;
+        self.delete_locked(&secret_id(profile_id, &purpose))
+    }
+
+    fn lock_credential_operation(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.credential_operations
+            .lock()
+            .map_err(|_| "credential operation lock poisoned".to_string())
+    }
+
+    fn replace_with_keyring_metadata(
+        &self,
+        secret_id: &str,
+        previous: &StoredSecret,
+    ) -> Result<(), String> {
+        let mut stored = previous.clone();
+        stored.metadata.has_value = true;
+        stored.protected_value = None;
+        stored.protection = Some(OS_KEYRING_PROTECTION.to_string());
+
+        self.secrets
+            .lock()
+            .map_err(|_| "secret store lock poisoned".to_string())?
+            .insert(secret_id.to_string(), stored);
+
+        if let Err(error) = self.persist() {
+            self.secrets
+                .lock()
+                .map_err(|_| "secret store lock poisoned".to_string())?
+                .insert(secret_id.to_string(), previous.clone());
+            return Err(error);
+        }
+
+        Ok(())
+    }
+
+    fn mark_credential_missing(&self, secret_id: &str) -> Result<(), String> {
+        let mut secrets = self
+            .secrets
+            .lock()
+            .map_err(|_| "secret store lock poisoned".to_string())?;
+        let Some(stored) = secrets.get_mut(secret_id) else {
+            return Ok(());
+        };
+        let previous = stored.clone();
+        stored.metadata.has_value = false;
+        stored.protected_value = None;
+        stored.protection = None;
+        drop(secrets);
+
+        if let Err(error) = self.persist() {
+            self.secrets
+                .lock()
+                .map_err(|_| "secret store lock poisoned".to_string())?
+                .insert(secret_id.to_string(), previous);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn restore_stored(
+        &self,
+        secret_id: &str,
+        previous: Option<StoredSecret>,
+    ) -> Result<(), String> {
+        let mut secrets = self
+            .secrets
+            .lock()
+            .map_err(|_| "secret store lock poisoned".to_string())?;
+        if let Some(previous) = previous {
+            secrets.insert(secret_id.to_string(), previous);
+        } else {
+            secrets.remove(secret_id);
+        }
+        Ok(())
     }
 
     fn persist(&self) -> Result<(), String> {
@@ -183,18 +417,13 @@ impl SecretStore {
 }
 
 fn load_secret_metadata(path: &Path) -> Result<HashMap<String, StoredSecret>, String> {
-    if !path.exists() {
-        return Err("secrets metadata file does not exist".to_string());
-    }
-
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("failed to read secrets metadata: {error}"))?;
-    let secrets: Vec<StoredSecret> = serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse secrets metadata: {error}"))?;
+    let secrets: Vec<StoredSecret> =
+        json_store::load_json(path, "secrets metadata")?.unwrap_or_default();
 
     let mut stored = HashMap::new();
     for mut secret in secrets {
-        secret.metadata.has_value = secret.protected_value.is_some();
+        secret.metadata.has_value = secret.protected_value.is_some()
+            || secret.protection.as_deref() == Some(OS_KEYRING_PROTECTION);
         validate_metadata(&secret.metadata)?;
         stored.insert(secret.metadata.id.clone(), secret);
     }
@@ -203,14 +432,7 @@ fn load_secret_metadata(path: &Path) -> Result<HashMap<String, StoredSecret>, St
 }
 
 fn write_secret_metadata(path: &Path, secrets: &[StoredSecret]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create secrets metadata directory: {error}"))?;
-    }
-
-    let raw = serde_json::to_string_pretty(secrets)
-        .map_err(|error| format!("failed to encode secrets metadata: {error}"))?;
-    fs::write(path, raw).map_err(|error| format!("failed to write secrets metadata: {error}"))
+    json_store::write_json(path, secrets, "secrets metadata")
 }
 
 fn validate_metadata(metadata: &SecretMetadata) -> Result<(), String> {
@@ -233,20 +455,12 @@ fn purpose_label(purpose: &SecretPurpose) -> &'static str {
     }
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-
-    output
+fn secret_id(profile_id: &str, purpose: &SecretPurpose) -> String {
+    format!("secret:{profile_id}:{}", purpose_label(purpose))
 }
 
 fn hex_decode(value: &str) -> Result<Vec<u8>, String> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err("protected secret encoding is invalid".to_string());
     }
 
@@ -269,18 +483,6 @@ fn hex_nibble(value: u8) -> Result<u8, String> {
     }
 }
 
-fn protection_label() -> &'static str {
-    #[cfg(windows)]
-    {
-        "windows-dpapi-current-user"
-    }
-
-    #[cfg(not(windows))]
-    {
-        "unsupported"
-    }
-}
-
 #[cfg(windows)]
 #[repr(C)]
 struct DataBlob {
@@ -291,16 +493,6 @@ struct DataBlob {
 #[cfg(windows)]
 #[link(name = "Crypt32")]
 extern "system" {
-    fn CryptProtectData(
-        p_data_in: *mut DataBlob,
-        sz_data_descr: *const u16,
-        p_optional_entropy: *mut DataBlob,
-        pv_reserved: *mut c_void,
-        p_prompt_struct: *mut c_void,
-        dw_flags: u32,
-        p_data_out: *mut DataBlob,
-    ) -> i32;
-
     fn CryptUnprotectData(
         p_data_in: *mut DataBlob,
         ppsz_data_descr: *mut *mut u16,
@@ -319,44 +511,7 @@ extern "system" {
 }
 
 #[cfg(windows)]
-fn protect_secret(value: &[u8]) -> Result<Vec<u8>, String> {
-    const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
-    let mut input = DataBlob {
-        cb_data: value.len() as u32,
-        pb_data: value.as_ptr() as *mut u8,
-    };
-    let mut output = DataBlob {
-        cb_data: 0,
-        pb_data: ptr::null_mut(),
-    };
-
-    let ok = unsafe {
-        CryptProtectData(
-            &mut input,
-            ptr::null(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output,
-        )
-    };
-
-    if ok == 0 {
-        return Err("Windows DPAPI failed to protect secret".to_string());
-    }
-
-    let protected = unsafe {
-        let bytes = std::slice::from_raw_parts(output.pb_data, output.cb_data as usize).to_vec();
-        let _ = LocalFree(output.pb_data.cast::<c_void>());
-        bytes
-    };
-
-    Ok(protected)
-}
-
-#[cfg(windows)]
-fn unprotect_secret(value: &[u8]) -> Result<Vec<u8>, String> {
+fn unprotect_legacy_windows_secret(value: &[u8]) -> Result<Vec<u8>, String> {
     const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
     let mut input = DataBlob {
         cb_data: value.len() as u32,
@@ -393,63 +548,35 @@ fn unprotect_secret(value: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(not(windows))]
-fn protect_secret(_value: &[u8]) -> Result<Vec<u8>, String> {
-    Err("encrypted local password storage is only enabled on Windows in this build".to_string())
-}
-
-#[cfg(not(windows))]
-fn unprotect_secret(_value: &[u8]) -> Result<Vec<u8>, String> {
-    Err("encrypted local password storage is only enabled on Windows in this build".to_string())
+fn unprotect_legacy_windows_secret(_value: &[u8]) -> Result<Vec<u8>, String> {
+    Err("旧版 Windows 密码只能在原 Windows 用户账户下迁移，请重新输入并保存".to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SecretStore;
+    use super::{MemoryCredentialBackend, SecretStore, OS_KEYRING_PROTECTION};
     use crate::domain::secret::SecretPurpose;
     use std::path::PathBuf;
-
-    #[test]
-    fn stores_metadata_without_secret_value() {
-        let store = SecretStore::in_memory();
-        let metadata = store
-            .create_placeholder("profile-1".to_string(), SecretPurpose::Password)
-            .unwrap();
-
-        assert_eq!(metadata.id, "secret:profile-1:password");
-        assert!(metadata.created_at.starts_with("unix:"));
-        assert!(store.contains(&metadata.id).unwrap());
-    }
+    use std::sync::Arc;
 
     #[test]
     fn deletes_secret_metadata() {
         let store = SecretStore::in_memory();
         let metadata = store
-            .create_placeholder("profile-1".to_string(), SecretPurpose::Token)
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Token,
+                "token".to_string(),
+            )
             .unwrap();
 
         store.delete(&metadata.id).unwrap();
 
-        assert!(!store.contains(&metadata.id).unwrap());
-    }
-
-    #[test]
-    fn persists_secret_metadata_without_secret_value() {
-        let path = test_path("secrets-persist.json");
-        let _ = std::fs::remove_file(&path);
-
-        let store = SecretStore::with_path(path.clone());
-        let metadata = store
-            .create_placeholder("profile-1".to_string(), SecretPurpose::Password)
-            .unwrap();
-
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(raw.contains(&metadata.id));
-        assert!(!raw.contains("hunter2"));
-
-        let reloaded = SecretStore::with_path(path.clone());
-        assert!(reloaded.contains(&metadata.id).unwrap());
-
-        let _ = std::fs::remove_file(path);
+        assert!(store.list().unwrap().is_empty());
+        assert!(store
+            .get_secret("profile-1", SecretPurpose::Token)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -457,16 +584,141 @@ mod tests {
         let path = test_path("secrets-delete.json");
         let _ = std::fs::remove_file(&path);
 
-        let store = SecretStore::with_path(path.clone());
+        let backend = Arc::new(MemoryCredentialBackend::default());
+        let store = SecretStore::with_backend(Some(path.clone()), backend.clone());
         let metadata = store
-            .create_placeholder("profile-1".to_string(), SecretPurpose::Token)
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Token,
+                "token".to_string(),
+            )
             .unwrap();
         store.delete(&metadata.id).unwrap();
 
-        let reloaded = SecretStore::with_path(path.clone());
-        assert!(!reloaded.contains(&metadata.id).unwrap());
+        let reloaded = SecretStore::with_backend(Some(path.clone()), backend);
+        assert!(reloaded.list().unwrap().is_empty());
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn stores_secret_in_credential_backend_without_writing_value_to_metadata() {
+        let path = test_path("secrets-keyring.json");
+        let _ = std::fs::remove_file(&path);
+        let backend = Arc::new(MemoryCredentialBackend::default());
+        let store = SecretStore::with_backend(Some(path.clone()), backend.clone());
+
+        let metadata = store
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Password,
+                "hunter2".to_string(),
+            )
+            .unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains(OS_KEYRING_PROTECTION));
+        assert!(!raw.contains("hunter2"));
+        assert_eq!(
+            store
+                .get_secret("profile-1", SecretPurpose::Password)
+                .unwrap()
+                .as_deref(),
+            Some("hunter2")
+        );
+
+        let reloaded = SecretStore::with_backend(Some(path.clone()), backend);
+        assert!(reloaded.list().unwrap()[0].has_value);
+        assert_eq!(
+            reloaded
+                .get_secret("profile-1", SecretPurpose::Password)
+                .unwrap()
+                .as_deref(),
+            Some("hunter2")
+        );
+        reloaded.delete(&metadata.id).unwrap();
+        assert!(reloaded.list().unwrap().is_empty());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn deleting_profile_removes_only_its_credentials() {
+        let store = SecretStore::in_memory();
+        store
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Password,
+                "one".to_string(),
+            )
+            .unwrap();
+        store
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Token,
+                "token".to_string(),
+            )
+            .unwrap();
+        store
+            .set_secret(
+                "profile-2".to_string(),
+                SecretPurpose::Password,
+                "two".to_string(),
+            )
+            .unwrap();
+
+        store.delete_for_profile("profile-1").unwrap();
+
+        assert!(store
+            .get_secret("profile-1", SecretPurpose::Password)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get_secret("profile-1", SecretPurpose::Token)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .get_secret("profile-2", SecretPurpose::Password)
+                .unwrap()
+                .as_deref(),
+            Some("two")
+        );
+    }
+
+    #[test]
+    fn deleting_one_purpose_keeps_other_profile_credentials() {
+        let store = SecretStore::in_memory();
+        store
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Password,
+                "password".to_string(),
+            )
+            .unwrap();
+        store
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Token,
+                "token".to_string(),
+            )
+            .unwrap();
+
+        store
+            .delete_for_profile_purpose("profile-1", SecretPurpose::Password)
+            .unwrap();
+
+        assert!(store
+            .get_secret("profile-1", SecretPurpose::Password)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .get_secret("profile-1", SecretPurpose::Token)
+                .unwrap()
+                .as_deref(),
+            Some("token")
+        );
     }
 
     fn test_path(name: &str) -> PathBuf {

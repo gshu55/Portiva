@@ -21,6 +21,7 @@ export function TransferQueue({ onCancel, onDelete, onPause, onResume, onRetry, 
       {tasks.map((task) => {
         const progress = task.totalBytes ? Math.round((task.transferredBytes / task.totalBytes) * 100) : 0;
         const active = task.status === "running" || task.status === "paused";
+        const cancellable = task.status === "pending" || active;
 
         return (
           <div
@@ -45,17 +46,21 @@ export function TransferQueue({ onCancel, onDelete, onPause, onResume, onRetry, 
                 <button aria-label="继续传输" onClick={() => onResume(task.id)} title="继续传输" type="button">
                   <Icon name="play" />
                 </button>
-              ) : (
+              ) : task.status === "running" ? (
                 <button aria-label="暂停传输" onClick={() => onPause(task.id)} title="暂停传输" type="button">
                   <Icon name="pause" />
                 </button>
-              )}
-              <button aria-label="重试传输" onClick={() => onRetry(task.id)} title="重试传输" type="button">
-                <Icon name="rotate-ccw" />
-              </button>
-              <button aria-label="取消传输" onClick={() => onCancel(task.id)} title="取消传输" type="button">
-                <Icon name="ban" />
-              </button>
+              ) : null}
+              {task.status === "failed" ? (
+                <button aria-label="重试传输" onClick={() => onRetry(task.id)} title="重试传输" type="button">
+                  <Icon name="rotate-ccw" />
+                </button>
+              ) : null}
+              {cancellable ? (
+                <button aria-label="取消传输" onClick={() => onCancel(task.id)} title="取消传输" type="button">
+                  <Icon name="ban" />
+                </button>
+              ) : null}
               <button
                 aria-label="删除传输记录"
                 className="danger-action"

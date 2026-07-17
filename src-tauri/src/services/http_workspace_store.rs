@@ -4,12 +4,10 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::domain::http_workspace::{
-    HttpProjectDraft, HttpRequestDraft, HttpWorkspaceDraft,
-};
+use crate::domain::http_workspace::{HttpProjectDraft, HttpRequestDraft, HttpWorkspaceDraft};
 use crate::utils::{app_paths, clock};
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 pub struct HttpWorkspaceStore {
     lock: Mutex<()>,
@@ -97,9 +95,13 @@ fn migrate(connection: &Connection) -> Result<(), String> {
     }
 
     connection
-        .execute_batch(
-            r#"
-            PRAGMA foreign_keys = ON;
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .map_err(|error| format!("failed to enable http database foreign keys: {error}"))?;
+
+    if version < 1 {
+        connection
+            .execute_batch(
+                r#"
             CREATE TABLE IF NOT EXISTS http_workspaces (
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
@@ -134,10 +136,27 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               ON http_projects(workspace_id, sort_order, name);
             CREATE INDEX IF NOT EXISTS idx_http_requests_workspace_project_sort
               ON http_requests(workspace_id, project_id, sort_order, name);
-            PRAGMA user_version = 1;
             "#,
-        )
-        .map_err(|error| format!("failed to migrate http database: {error}"))?;
+            )
+            .map_err(|error| format!("failed to migrate http database to version 1: {error}"))?;
+    }
+
+    if version < 2 {
+        connection
+            .execute_batch(
+                r#"
+                ALTER TABLE http_workspaces ADD COLUMN active_environment_id TEXT;
+                ALTER TABLE http_workspaces ADD COLUMN environments_json TEXT NOT NULL DEFAULT '[]';
+                ALTER TABLE http_workspaces ADD COLUMN variables_json TEXT NOT NULL DEFAULT '[]';
+                ALTER TABLE http_projects ADD COLUMN variables_json TEXT NOT NULL DEFAULT '[]';
+                "#,
+            )
+            .map_err(|error| format!("failed to migrate http database to version 2: {error}"))?;
+    }
+
+    connection
+        .pragma_update(None, "user_version", SCHEMA_VERSION)
+        .map_err(|error| format!("failed to update http database version: {error}"))?;
 
     Ok(())
 }
@@ -161,20 +180,48 @@ fn replace_workspaces(
 
     let now = clock::now_stamp();
     for (workspace_index, workspace) in workspaces.iter().enumerate() {
+        let environments_json = serde_json::to_string(&workspace.environments)
+            .map_err(|error| format!("failed to encode http environments: {error}"))?;
+        let workspace_variables_json = serde_json::to_string(&workspace.variables)
+            .map_err(|error| format!("failed to encode http workspace variables: {error}"))?;
         transaction
             .execute(
-                "INSERT INTO http_workspaces (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                params![workspace.id, workspace.name, workspace_index as i64, now, now],
+                "INSERT INTO http_workspaces (
+                   id, name, sort_order, created_at, updated_at,
+                   active_environment_id, environments_json, variables_json
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    workspace.id,
+                    workspace.name,
+                    workspace_index as i64,
+                    now,
+                    now,
+                    workspace.active_environment_id,
+                    environments_json,
+                    workspace_variables_json
+                ],
             )
             .map_err(|error| format!("failed to save http workspace: {error}"))?;
 
         insert_requests(&transaction, &workspace.id, None, &workspace.requests, &now)?;
 
         for (project_index, project) in workspace.projects.iter().enumerate() {
+            let project_variables_json = serde_json::to_string(&project.variables)
+                .map_err(|error| format!("failed to encode http project variables: {error}"))?;
             transaction
                 .execute(
-                    "INSERT INTO http_projects (id, workspace_id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    params![project.id, workspace.id, project.name, project_index as i64, now, now],
+                    "INSERT INTO http_projects (
+                       id, workspace_id, name, sort_order, created_at, updated_at, variables_json
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        project.id,
+                        workspace.id,
+                        project.name,
+                        project_index as i64,
+                        now,
+                        now,
+                        project_variables_json
+                    ],
                 )
                 .map_err(|error| format!("failed to save http project: {error}"))?;
             insert_requests(
@@ -227,25 +274,41 @@ fn insert_requests(
 
 fn load_workspaces(connection: &Connection) -> Result<Vec<HttpWorkspaceDraft>, String> {
     let mut statement = connection
-        .prepare("SELECT id, name FROM http_workspaces ORDER BY sort_order, name")
+        .prepare(
+            "SELECT id, name, active_environment_id, environments_json, variables_json
+             FROM http_workspaces ORDER BY sort_order, name",
+        )
         .map_err(|error| format!("failed to prepare http workspace query: {error}"))?;
     let workspace_rows = statement
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
         })
         .map_err(|error| format!("failed to load http workspaces: {error}"))?;
 
     let mut workspaces = Vec::new();
     for row in workspace_rows {
-        let (workspace_id, name) =
+        let (workspace_id, name, active_environment_id, environments_json, variables_json) =
             row.map_err(|error| format!("failed to read http workspace: {error}"))?;
+        let environments = serde_json::from_str(&environments_json)
+            .map_err(|error| format!("failed to decode http environments: {error}"))?;
+        let variables = serde_json::from_str(&variables_json)
+            .map_err(|error| format!("failed to decode http workspace variables: {error}"))?;
         let projects = load_projects(connection, &workspace_id)?;
         let requests = load_requests(connection, &workspace_id, None)?;
         workspaces.push(HttpWorkspaceDraft {
+            active_environment_id,
+            environments,
             id: workspace_id,
             name,
             projects,
             requests,
+            variables,
         });
     }
 
@@ -258,24 +321,32 @@ fn load_projects(
 ) -> Result<Vec<HttpProjectDraft>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, name FROM http_projects WHERE workspace_id = ? ORDER BY sort_order, name",
+            "SELECT id, name, variables_json FROM http_projects
+             WHERE workspace_id = ? ORDER BY sort_order, name",
         )
         .map_err(|error| format!("failed to prepare http project query: {error}"))?;
     let project_rows = statement
         .query_map(params![workspace_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })
         .map_err(|error| format!("failed to load http projects: {error}"))?;
 
     let mut projects = Vec::new();
     for row in project_rows {
-        let (project_id, name) =
+        let (project_id, name, variables_json) =
             row.map_err(|error| format!("failed to read http project: {error}"))?;
+        let variables = serde_json::from_str(&variables_json)
+            .map_err(|error| format!("failed to decode http project variables: {error}"))?;
         let requests = load_requests(connection, workspace_id, Some(&project_id))?;
         projects.push(HttpProjectDraft {
             id: project_id,
             name,
             requests,
+            variables,
         });
     }
 
@@ -379,10 +450,13 @@ fn count_rows(connection: &Connection, table: &str) -> Result<i64, String> {
 
 fn default_http_workspaces() -> Vec<HttpWorkspaceDraft> {
     vec![HttpWorkspaceDraft {
+        active_environment_id: None,
+        environments: Vec::new(),
         id: "ws-default".to_string(),
         name: "默认工作区".to_string(),
         projects: Vec::new(),
         requests: Vec::new(),
+        variables: Vec::new(),
     }]
 }
 
@@ -390,7 +464,8 @@ fn default_http_workspaces() -> Vec<HttpWorkspaceDraft> {
 mod tests {
     use super::HttpWorkspaceStore;
     use crate::domain::http_workspace::{
-        HttpAuthDraft, HttpProjectDraft, HttpRequestDraft, HttpWorkspaceDraft,
+        HttpAuthDraft, HttpEnvironmentDraft, HttpKeyValueEntry, HttpProjectDraft, HttpRequestDraft,
+        HttpWorkspaceDraft,
     };
 
     #[test]
@@ -411,6 +486,8 @@ mod tests {
 
         store
             .save_all(vec![HttpWorkspaceDraft {
+                active_environment_id: None,
+                environments: Vec::new(),
                 id: "ws-default".to_string(),
                 name: "默认工作区".to_string(),
                 projects: vec![HttpProjectDraft {
@@ -421,12 +498,14 @@ mod tests {
                         "服务健康检查",
                         "https://api.example.local/health",
                     )],
+                    variables: Vec::new(),
                 }],
                 requests: vec![seeded_request(
                     "req-workspace-status",
                     "工作区状态",
                     "https://api.example.local/status",
                 )],
+                variables: Vec::new(),
             }])
             .unwrap();
 
@@ -435,6 +514,63 @@ mod tests {
         assert_eq!(workspaces[0].id, "ws-default");
         assert!(workspaces[0].projects.is_empty());
         assert!(workspaces[0].requests.is_empty());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn preserves_workspace_variable_scopes_and_sensitive_flags() {
+        let path = test_path("http-workspace-variable-roundtrip.sqlite");
+        let _ = std::fs::remove_file(&path);
+        let store = HttpWorkspaceStore::with_path(path.clone());
+        let variable = HttpKeyValueEntry {
+            description: Some("令牌".to_string()),
+            enabled: true,
+            file_name: None,
+            file_size: None,
+            file_type: None,
+            form_value_type: None,
+            key: "token".to_string(),
+            sensitive: Some(true),
+            value: "plaintext-by-user-choice".to_string(),
+        };
+        let request = HttpRequestDraft {
+            temp_variables: vec![variable.clone()],
+            ..seeded_request("request", "请求", "https://example.com")
+        };
+        let expected = HttpWorkspaceDraft {
+            active_environment_id: Some("environment".to_string()),
+            environments: vec![HttpEnvironmentDraft {
+                id: "environment".to_string(),
+                name: "开发环境".to_string(),
+                variables: vec![variable.clone()],
+            }],
+            id: "workspace".to_string(),
+            name: "工作区".to_string(),
+            projects: vec![HttpProjectDraft {
+                id: "project".to_string(),
+                name: "项目".to_string(),
+                requests: vec![request],
+                variables: vec![variable.clone()],
+            }],
+            requests: Vec::new(),
+            variables: vec![variable],
+        };
+
+        let saved = store.save_all(vec![expected]).unwrap();
+        let serialized = serde_json::to_value(&saved[0]).unwrap();
+
+        assert_eq!(serialized["activeEnvironmentId"], "environment");
+        assert_eq!(serialized["variables"][0]["sensitive"], true);
+        assert_eq!(
+            serialized["environments"][0]["variables"][0]["key"],
+            "token"
+        );
+        assert_eq!(serialized["projects"][0]["variables"][0]["key"], "token");
+        assert_eq!(
+            serialized["projects"][0]["requests"][0]["tempVariables"][0]["key"],
+            "token"
+        );
 
         let _ = std::fs::remove_file(path);
     }
@@ -458,6 +594,7 @@ mod tests {
             method: "GET".to_string(),
             name: name.to_string(),
             params: Vec::new(),
+            temp_variables: Vec::new(),
             url: url.to_string(),
         }
     }

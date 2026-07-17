@@ -58,6 +58,7 @@ pub fn local_shell_open(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn terminal_attach(
     connection_id: String,
     size: TerminalSize,

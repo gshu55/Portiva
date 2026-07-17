@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -30,6 +31,7 @@ const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 15;
 const SSH_KEEPALIVE_MAX_MISSES: usize = 2;
 const TERMINAL_OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 const TERMINAL_OUTPUT_MAX_CHUNK_BYTES: usize = 32 * 1024;
+static TRANSFER_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +88,32 @@ struct SshPtySession {
 }
 
 impl SshSessionService {
+    pub fn ensure_matches_profile(
+        &self,
+        connection_id: &str,
+        profile: &ConnectionProfile,
+    ) -> Result<(), String> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "SSH session service lock poisoned".to_string())?;
+        let session = sessions
+            .get(connection_id)
+            .ok_or_else(|| format!("SSH runtime session not found: {connection_id}"))?;
+        let expected_host = profile.host.as_deref().unwrap_or_default().trim();
+        let expected_username = profile.username.as_deref().unwrap_or_default().trim();
+        let expected_port = profile.port.unwrap_or(22);
+
+        if !session.host.eq_ignore_ascii_case(expected_host)
+            || session.port != expected_port
+            || session.username != expected_username
+        {
+            return Err("当前 SSH 会话与保存密码所属的连接配置不一致".to_string());
+        }
+
+        Ok(())
+    }
+
     pub async fn connect_trusted(
         &self,
         connection_id: &str,
@@ -94,7 +122,7 @@ impl SshSessionService {
     ) -> Result<SshConnectedTransport, String> {
         let opened = open_ssh_handle(profile).await?;
 
-        match known_hosts.verify_host_key(&opened.host, &opened.fingerprint)? {
+        match known_hosts.verify_host_key(&opened.host, opened.port, &opened.fingerprint)? {
             KnownHostDecision::Trusted => {}
             KnownHostDecision::Unknown => {
                 let _ = opened
@@ -737,26 +765,24 @@ async fn open_sftp_session_from_handle(
 async fn connect_agent_client() -> Result<DynamicAgentClient, String> {
     #[cfg(unix)]
     {
-        return AgentClient::connect_env()
+        AgentClient::connect_env()
             .await
             .map(AgentClient::dynamic)
-            .map_err(|error| format!("failed to connect SSH agent via SSH_AUTH_SOCK: {error}"));
+            .map_err(|error| format!("failed to connect SSH agent via SSH_AUTH_SOCK: {error}"))
     }
 
     #[cfg(windows)]
     {
         match AgentClient::connect_pageant().await {
-            Ok(client) => return Ok(client.dynamic()),
-            Err(pageant_error) => {
-                return AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
-                    .await
-                    .map(AgentClient::dynamic)
-                    .map_err(|pipe_error| {
-                        format!(
-                            "failed to connect SSH agent (Pageant: {pageant_error}; OpenSSH agent pipe: {pipe_error})"
-                        )
-                    });
-            }
+            Ok(client) => Ok(client.dynamic()),
+            Err(pageant_error) => AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
+                .await
+                .map(AgentClient::dynamic)
+                .map_err(|pipe_error| {
+                    format!(
+                        "failed to connect SSH agent (Pageant: {pageant_error}; OpenSSH agent pipe: {pipe_error})"
+                    )
+                }),
         }
     }
 
@@ -956,7 +982,7 @@ async fn remove_remote_entry_with_sftp(sftp: &SftpSession, path: &str) -> Result
 
 fn remote_entry_name(raw_name: &str) -> String {
     raw_name
-        .trim_end_matches(|character| character == '/' || character == '\\')
+        .trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
         .next()
         .filter(|name| !name.is_empty())
@@ -1199,22 +1225,17 @@ where
     F: FnMut(u64, Option<u64>) -> Result<SftpTransferDirective, String> + Send,
 {
     let remote_path = normalize_remote_path(remote_path);
-    let metadata = sftp
-        .metadata(remote_path.clone())
+    let local_target = Path::new(local_path);
+    if tokio::fs::try_exists(local_target)
         .await
-        .map_err(|error| format!("failed to stat remote file: {error}"))?;
-
-    if metadata.is_dir() {
-        return Err(
-            "remote path is a directory; recursive download is not implemented yet".to_string(),
-        );
+        .map_err(|error| format!("failed to inspect local download target: {error}"))?
+    {
+        return Err(format!(
+            "download target already exists; choose a conflict action before retrying: {}",
+            local_target.display()
+        ));
     }
 
-    let mut remote_file = sftp
-        .open(remote_path)
-        .await
-        .map_err(|error| format!("failed to open remote file: {error}"))?;
-    let local_target = Path::new(local_path);
     if let Some(parent) = local_target
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1233,22 +1254,76 @@ where
             ));
         }
     }
-    let mut local_file = tokio::fs::File::create(local_path)
+
+    let metadata = sftp
+        .metadata(remote_path.clone())
+        .await
+        .map_err(|error| format!("failed to stat remote file: {error}"))?;
+
+    if metadata.is_dir() {
+        return Err(
+            "remote path is a directory; recursive download is not implemented yet".to_string(),
+        );
+    }
+
+    let mut remote_file = sftp
+        .open(remote_path)
+        .await
+        .map_err(|error| format!("failed to open remote file: {error}"))?;
+    let temporary_path = local_transfer_temp_path(local_target);
+    let mut local_file = tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary_path)
         .await
         .map_err(|error| format!("failed to create local file: {error}"))?;
-    let transferred_bytes = copy_with_progress(
+    let copy_result = copy_with_progress(
         &mut remote_file,
         &mut local_file,
         metadata.size,
         progress,
         "download remote file",
     )
-    .await
-    .map_err(|error| format!("failed to download remote file: {error}"))?;
-    local_file
-        .flush()
-        .await
-        .map_err(|error| format!("failed to flush local file: {error}"))?;
+    .await;
+
+    let finalize_result = async {
+        let transferred_bytes =
+            copy_result.map_err(|error| format!("failed to download remote file: {error}"))?;
+        local_file
+            .flush()
+            .await
+            .map_err(|error| format!("failed to flush local file: {error}"))?;
+        local_file
+            .sync_all()
+            .await
+            .map_err(|error| format!("failed to sync local file: {error}"))?;
+        drop(local_file);
+
+        if tokio::fs::try_exists(local_target)
+            .await
+            .map_err(|error| format!("failed to recheck local download target: {error}"))?
+        {
+            return Err(format!(
+                "download target appeared during transfer; temporary data was discarded: {}",
+                local_target.display()
+            ));
+        }
+
+        tokio::fs::rename(&temporary_path, local_target)
+            .await
+            .map_err(|error| format!("failed to finalize local download: {error}"))?;
+
+        Ok(transferred_bytes)
+    }
+    .await;
+
+    let transferred_bytes = match finalize_result {
+        Ok(transferred_bytes) => transferred_bytes,
+        Err(error) => {
+            let _ = tokio::fs::remove_file(&temporary_path).await;
+            return Err(error);
+        }
+    };
 
     Ok(SftpTransferOutcome {
         total_bytes: metadata.size,
@@ -1276,35 +1351,99 @@ where
         );
     }
 
+    if sftp
+        .try_exists(remote_path.clone())
+        .await
+        .map_err(|error| format!("failed to inspect remote upload target: {error}"))?
+    {
+        return Err(format!(
+            "upload target already exists; choose a conflict action before retrying: {remote_path}"
+        ));
+    }
+
     let mut local_file = tokio::fs::File::open(local_path)
         .await
         .map_err(|error| format!("failed to open local file: {error}"))?;
+    let temporary_path = remote_transfer_temp_path(&remote_path);
     let mut remote_file = sftp
-        .create(remote_path)
+        .create(temporary_path.clone())
         .await
         .map_err(|error| format!("failed to create remote file: {error}"))?;
-    let transferred_bytes = copy_with_progress(
+    let copy_result = copy_with_progress(
         &mut local_file,
         &mut remote_file,
         Some(metadata.len()),
         progress,
         "upload local file",
     )
-    .await
-    .map_err(|error| format!("failed to upload local file: {error}"))?;
-    remote_file
-        .flush()
-        .await
-        .map_err(|error| format!("failed to flush remote file: {error}"))?;
-    remote_file
-        .shutdown()
-        .await
-        .map_err(|error| format!("failed to close remote file: {error}"))?;
+    .await;
+
+    let finalize_result = async {
+        let transferred_bytes =
+            copy_result.map_err(|error| format!("failed to upload local file: {error}"))?;
+        remote_file
+            .flush()
+            .await
+            .map_err(|error| format!("failed to flush remote file: {error}"))?;
+        remote_file
+            .shutdown()
+            .await
+            .map_err(|error| format!("failed to close remote file: {error}"))?;
+        drop(remote_file);
+
+        if sftp
+            .try_exists(remote_path.clone())
+            .await
+            .map_err(|error| format!("failed to recheck remote upload target: {error}"))?
+        {
+            return Err(format!(
+                "upload target appeared during transfer; temporary data was discarded: {remote_path}"
+            ));
+        }
+
+        sftp.rename(temporary_path.clone(), remote_path.clone())
+            .await
+            .map_err(|error| format!("failed to finalize remote upload: {error}"))?;
+
+        Ok(transferred_bytes)
+    }
+    .await;
+
+    let transferred_bytes = match finalize_result {
+        Ok(transferred_bytes) => transferred_bytes,
+        Err(error) => {
+            let _ = sftp.remove_file(temporary_path).await;
+            return Err(error);
+        }
+    };
 
     Ok(SftpTransferOutcome {
         total_bytes: Some(metadata.len()),
         transferred_bytes,
     })
+}
+
+fn next_transfer_temp_suffix() -> String {
+    let sequence = TRANSFER_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    format!("portiva-part-{}-{sequence}", std::process::id())
+}
+
+fn local_transfer_temp_path(target: &Path) -> PathBuf {
+    let suffix = next_transfer_temp_suffix();
+    let file_name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download");
+    target.with_file_name(format!(".{file_name}.{suffix}"))
+}
+
+fn remote_transfer_temp_path(target: &str) -> String {
+    let suffix = next_transfer_temp_suffix();
+    match target.rsplit_once('/') {
+        Some((parent, name)) if !parent.is_empty() => format!("{parent}/.{name}.{suffix}"),
+        Some((_, name)) => format!("/.{name}.{suffix}"),
+        None => format!(".{target}.{suffix}"),
+    }
 }
 
 async fn copy_with_progress<R, W, F>(
@@ -1361,10 +1500,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::time::Duration;
 
     use super::{
-        is_sftp_session_closed_result, remote_entry_name, ssh_client_config, SshSessionService,
+        is_sftp_session_closed_result, local_transfer_temp_path, remote_entry_name,
+        remote_transfer_temp_path, ssh_client_config, SshSessionService,
         SSH_KEEPALIVE_INTERVAL_SECS, SSH_KEEPALIVE_MAX_MISSES,
     };
 
@@ -1382,6 +1523,18 @@ mod tests {
         assert_eq!(remote_entry_name("var/www/logs/"), "logs");
         assert_eq!(remote_entry_name(r"C:\var\www\logs"), "logs");
         assert_eq!(remote_entry_name(r"C:\var\www\logs\"), "logs");
+    }
+
+    #[test]
+    fn transfer_temp_paths_stay_next_to_their_targets_and_are_unique() {
+        let local_target = Path::new("/tmp/archive.zip");
+        let first_local = local_transfer_temp_path(local_target);
+        let second_local = local_transfer_temp_path(local_target);
+        let remote = remote_transfer_temp_path("/var/tmp/archive.zip");
+
+        assert_eq!(first_local.parent(), local_target.parent());
+        assert_ne!(first_local, second_local);
+        assert!(remote.starts_with("/var/tmp/.archive.zip.portiva-part-"));
     }
 
     #[test]

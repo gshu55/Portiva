@@ -1,6 +1,6 @@
 [package]
 name = "portiva"
-version = "1.0.1"
+version = "1.1.0"
 description = "A Tauri App"
 authors = ["gshu"]
 edition = "2021"
@@ -31,3 +31,4 @@ portable-pty = "0.9.0"
 serial2 = "0.2.37"
 arboard = "3.6.1"
 encoding_rs = "0.8"
+keyring = "4.1.5"

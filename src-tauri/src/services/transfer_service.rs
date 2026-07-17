@@ -10,9 +10,18 @@ use crate::utils::transfer_progress::progress_percent;
 
 pub const DEFAULT_MAX_RUNNING_TRANSFERS_PER_CONNECTION: usize = 3;
 
-#[derive(Default)]
 pub struct TransferService {
     tasks: Mutex<HashMap<String, TransferTask>>,
+    next_sequence: Mutex<u64>,
+}
+
+impl Default for TransferService {
+    fn default() -> Self {
+        Self {
+            tasks: Mutex::new(HashMap::new()),
+            next_sequence: Mutex::new(0),
+        }
+    }
 }
 
 impl TransferService {
@@ -45,15 +54,25 @@ impl TransferService {
     }
 
     pub fn cancel(&self, transfer_id: &str) -> Result<TransferTask, String> {
-        self.set_status(transfer_id, TransferStatus::Cancelled)
+        self.transition(transfer_id, "cancel", |status| {
+            matches!(
+                status,
+                TransferStatus::Pending | TransferStatus::Running | TransferStatus::Paused
+            )
+            .then_some(TransferStatus::Cancelled)
+        })
     }
 
     pub fn pause(&self, transfer_id: &str) -> Result<TransferTask, String> {
-        self.set_status(transfer_id, TransferStatus::Paused)
+        self.transition(transfer_id, "pause", |status| {
+            matches!(status, TransferStatus::Running).then_some(TransferStatus::Paused)
+        })
     }
 
     pub fn resume(&self, transfer_id: &str) -> Result<TransferTask, String> {
-        self.set_status(transfer_id, TransferStatus::Running)
+        self.transition(transfer_id, "resume", |status| {
+            matches!(status, TransferStatus::Paused).then_some(TransferStatus::Running)
+        })
     }
 
     pub fn retry(&self, transfer_id: &str) -> Result<TransferTask, String> {
@@ -65,6 +84,13 @@ impl TransferService {
         let task = tasks
             .get_mut(transfer_id)
             .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
+
+        if !matches!(task.status, TransferStatus::Failed) {
+            return Err(format!(
+                "cannot retry transfer while status is {:?}",
+                task.status
+            ));
+        }
 
         task.retry_count = task.retry_count.saturating_add(1);
         task.status = TransferStatus::Pending;
@@ -110,6 +136,16 @@ impl TransferService {
             .get_mut(transfer_id)
             .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
 
+        if !matches!(
+            task.status,
+            TransferStatus::Pending | TransferStatus::Running
+        ) {
+            return Err(format!(
+                "cannot start transfer while status is {:?}",
+                task.status
+            ));
+        }
+
         task.status = TransferStatus::Running;
         task.total_bytes = total_bytes;
         task.error = None;
@@ -136,8 +172,8 @@ impl TransferService {
             return Ok(task.clone());
         }
 
-        if !matches!(task.status, TransferStatus::Paused) {
-            task.status = TransferStatus::Running;
+        if !matches!(task.status, TransferStatus::Running) {
+            return Ok(task.clone());
         }
         task.transferred_bytes = transferred_bytes;
         task.total_bytes = total_bytes.or(task.total_bytes);
@@ -164,6 +200,13 @@ impl TransferService {
             return Ok(task.clone());
         }
 
+        if !matches!(task.status, TransferStatus::Running) {
+            return Err(format!(
+                "cannot complete transfer while status is {:?}",
+                task.status
+            ));
+        }
+
         task.status = TransferStatus::Completed;
         task.transferred_bytes = transferred_bytes;
         task.total_bytes = total_bytes.or(Some(transferred_bytes));
@@ -185,6 +228,16 @@ impl TransferService {
 
         if matches!(task.status, TransferStatus::Cancelled) {
             return Ok(task.clone());
+        }
+
+        if !matches!(
+            task.status,
+            TransferStatus::Running | TransferStatus::Paused
+        ) {
+            return Err(format!(
+                "cannot fail transfer while status is {:?}",
+                task.status
+            ));
         }
 
         task.status = TransferStatus::Failed;
@@ -281,7 +334,10 @@ impl TransferService {
 
         for task in tasks.values_mut() {
             if task.connection_id != connection_id
-                || matches!(task.status, TransferStatus::Cancelled)
+                || !matches!(
+                    task.status,
+                    TransferStatus::Pending | TransferStatus::Running | TransferStatus::Paused
+                )
             {
                 continue;
             }
@@ -295,13 +351,15 @@ impl TransferService {
     }
 
     pub fn list(&self) -> Result<Vec<TransferTask>, String> {
-        let tasks = self
+        let mut tasks = self
             .tasks
             .lock()
             .map_err(|_| "transfer service lock poisoned".to_string())?
             .values()
             .cloned()
             .collect::<Vec<_>>();
+
+        tasks.sort_by_key(|task| transfer_sequence(&task.id));
 
         for task in &tasks {
             let _progress = progress_percent(task.transferred_bytes, task.total_bytes);
@@ -322,11 +380,18 @@ impl TransferService {
             TransferDirection::Upload => "upload",
             TransferDirection::Download => "download",
         };
+        let sequence = {
+            let mut next_sequence = self
+                .next_sequence
+                .lock()
+                .map_err(|_| "transfer sequence lock poisoned".to_string())?;
+            *next_sequence = next_sequence.saturating_add(1);
+            *next_sequence
+        };
         let mut tasks = self
             .tasks
             .lock()
             .map_err(|_| "transfer service lock poisoned".to_string())?;
-        let sequence = tasks.len() + 1;
         let task = TransferTask {
             id: format!(
                 "transfer-{direction_label}-{sequence}-{}",
@@ -353,10 +418,11 @@ impl TransferService {
         Ok(task)
     }
 
-    fn set_status(
+    fn transition(
         &self,
         transfer_id: &str,
-        status: TransferStatus,
+        action: &str,
+        next_status: impl FnOnce(&TransferStatus) -> Option<TransferStatus>,
     ) -> Result<TransferTask, String> {
         let mut tasks = self
             .tasks
@@ -367,6 +433,8 @@ impl TransferService {
             .get_mut(transfer_id)
             .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
 
+        let status = next_status(&task.status)
+            .ok_or_else(|| format!("cannot {action} transfer while status is {:?}", task.status))?;
         task.status = status;
         task.updated_at = now_stamp();
         Ok(task.clone())
@@ -406,6 +474,8 @@ mod tests {
             )
             .unwrap();
 
+        service.mark_running(&task.id, None).unwrap();
+
         assert!(matches!(
             service.pause(&task.id).unwrap().status,
             TransferStatus::Paused
@@ -431,6 +501,10 @@ mod tests {
             )
             .unwrap();
 
+        service.mark_running(&task.id, None).unwrap();
+        service
+            .mark_failed(&task.id, "network error".to_string())
+            .unwrap();
         let retried = service.retry(&task.id).unwrap();
 
         assert_eq!(retried.retry_count, 1);
@@ -468,6 +542,7 @@ mod tests {
             )
             .unwrap();
 
+        service.mark_running(&task.id, Some(10)).unwrap();
         let running = service.mark_progress(&task.id, 3, Some(10)).unwrap();
 
         assert!(matches!(running.status, TransferStatus::Running));
@@ -490,6 +565,7 @@ mod tests {
             service.status(&task.id).unwrap(),
             TransferStatus::Pending
         ));
+        service.mark_running(&task.id, None).unwrap();
         service.pause(&task.id).unwrap();
         assert!(matches!(
             service.status(&task.id).unwrap(),
@@ -549,6 +625,50 @@ mod tests {
 
         assert_ne!(first.id, second.id);
         assert_eq!(service.list().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn task_ids_are_not_reused_after_delete() {
+        let service = TransferService::default();
+        let first = service
+            .upload(
+                "connection-1".to_string(),
+                "local-a.txt".to_string(),
+                "/tmp/a.txt".to_string(),
+            )
+            .unwrap();
+        service.delete(&first.id).unwrap();
+        let second = service
+            .upload(
+                "connection-1".to_string(),
+                "local-b.txt".to_string(),
+                "/tmp/b.txt".to_string(),
+            )
+            .unwrap();
+
+        assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn rejects_invalid_transfer_transitions() {
+        let service = TransferService::default();
+        let task = service
+            .upload(
+                "connection-1".to_string(),
+                "local.txt".to_string(),
+                "/tmp/remote.txt".to_string(),
+            )
+            .unwrap();
+
+        assert!(service.pause(&task.id).is_err());
+        assert!(service.resume(&task.id).is_err());
+        assert!(service.retry(&task.id).is_err());
+
+        service.mark_running(&task.id, None).unwrap();
+        assert!(service.retry(&task.id).is_err());
+        service.cancel(&task.id).unwrap();
+        assert!(service.resume(&task.id).is_err());
+        assert!(service.retry(&task.id).is_err());
     }
 
     #[test]

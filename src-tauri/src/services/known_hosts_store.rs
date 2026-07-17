@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::domain::secret::KnownHostEntry;
 use crate::security::fingerprint::{fingerprint_matches, normalize_fingerprint};
-use crate::utils::app_paths;
+use crate::utils::{app_paths, json_store};
 
 pub struct KnownHostsStore {
     fingerprints: Mutex<HashMap<String, String>>,
@@ -28,8 +27,12 @@ impl KnownHostsStore {
     }
 
     pub fn with_path(path: PathBuf) -> Self {
+        let fingerprints = load_known_hosts(&path).unwrap_or_else(|error| {
+            eprintln!("failed to load known_hosts; using an empty trust store: {error}");
+            HashMap::new()
+        });
         Self {
-            fingerprints: Mutex::new(load_known_hosts(&path).unwrap_or_default()),
+            fingerprints: Mutex::new(fingerprints),
             path: Some(path),
         }
     }
@@ -37,9 +40,10 @@ impl KnownHostsStore {
     pub fn verify_host_key(
         &self,
         host: &str,
+        port: u16,
         fingerprint: &str,
     ) -> Result<KnownHostDecision, String> {
-        let host = normalize_host(host)?;
+        let host = host_identifier(host, port)?;
         let fingerprint = normalize_fingerprint(fingerprint);
         let known = self
             .fingerprints
@@ -55,26 +59,33 @@ impl KnownHostsStore {
         }
     }
 
-    pub fn trust_host_key(&self, host: &str, fingerprint: &str) -> Result<(), String> {
-        let host = normalize_host(host)?;
-        self.fingerprints
+    pub fn trust_host_key(&self, host: &str, port: u16, fingerprint: &str) -> Result<(), String> {
+        let host = host_identifier(host, port)?;
+        let mut fingerprints = self
+            .fingerprints
             .lock()
-            .map_err(|_| "known_hosts store lock poisoned".to_string())?
-            .insert(host, normalize_fingerprint(fingerprint));
+            .map_err(|_| "known_hosts store lock poisoned".to_string())?;
+        let mut next = fingerprints.clone();
+        next.insert(host, normalize_fingerprint(fingerprint));
 
-        self.persist()?;
+        self.persist(&next)?;
+        *fingerprints = next;
 
         Ok(())
     }
 
     pub fn delete(&self, host: &str) -> Result<(), String> {
         let host = normalize_host(host)?;
-        self.fingerprints
+        let mut fingerprints = self
+            .fingerprints
             .lock()
-            .map_err(|_| "known_hosts store lock poisoned".to_string())?
-            .remove(&host);
+            .map_err(|_| "known_hosts store lock poisoned".to_string())?;
+        let mut next = fingerprints.clone();
+        next.remove(&host);
 
-        self.persist()
+        self.persist(&next)?;
+        *fingerprints = next;
+        Ok(())
     }
 
     pub fn list(&self) -> Result<Vec<KnownHostEntry>, String> {
@@ -92,15 +103,11 @@ impl KnownHostsStore {
         Ok(entries)
     }
 
-    fn persist(&self) -> Result<(), String> {
+    fn persist(&self, fingerprints: &HashMap<String, String>) -> Result<(), String> {
         let Some(path) = &self.path else {
             return Ok(());
         };
 
-        let fingerprints = self
-            .fingerprints
-            .lock()
-            .map_err(|_| "known_hosts store lock poisoned".to_string())?;
         let mut entries = fingerprints
             .iter()
             .map(|(host, fingerprint)| KnownHostEntry {
@@ -129,15 +136,18 @@ fn normalize_host(host: &str) -> Result<String, String> {
     Ok(host)
 }
 
-fn load_known_hosts(path: &Path) -> Result<HashMap<String, String>, String> {
-    if !path.exists() {
-        return Err("known_hosts file does not exist".to_string());
+pub fn host_identifier(host: &str, port: u16) -> Result<String, String> {
+    let host = normalize_host(host)?;
+    if port == 22 {
+        Ok(host)
+    } else {
+        Ok(format!("[{host}]:{port}"))
     }
+}
 
-    let raw =
-        fs::read_to_string(path).map_err(|error| format!("failed to read known_hosts: {error}"))?;
-    let entries: Vec<KnownHostEntry> = serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse known_hosts: {error}"))?;
+fn load_known_hosts(path: &Path) -> Result<HashMap<String, String>, String> {
+    let entries: Vec<KnownHostEntry> =
+        json_store::load_json(path, "known_hosts")?.unwrap_or_default();
 
     let mut known = HashMap::new();
     for entry in entries {
@@ -151,14 +161,7 @@ fn load_known_hosts(path: &Path) -> Result<HashMap<String, String>, String> {
 }
 
 fn write_known_hosts(path: &Path, entries: &[KnownHostEntry]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create known_hosts directory: {error}"))?;
-    }
-
-    let raw = serde_json::to_string_pretty(entries)
-        .map_err(|error| format!("failed to encode known_hosts: {error}"))?;
-    fs::write(path, raw).map_err(|error| format!("failed to write known_hosts: {error}"))
+    json_store::write_json(path, entries, "known_hosts")
 }
 
 #[cfg(test)]
@@ -171,7 +174,9 @@ mod tests {
         let store = KnownHostsStore::in_memory();
 
         assert!(matches!(
-            store.verify_host_key("example.com", "SHA256:aa").unwrap(),
+            store
+                .verify_host_key("example.com", 22, "SHA256:aa")
+                .unwrap(),
             KnownHostDecision::Unknown
         ));
     }
@@ -179,10 +184,12 @@ mod tests {
     #[test]
     fn trusted_host_matches_normalized_fingerprint() {
         let store = KnownHostsStore::in_memory();
-        store.trust_host_key("example.com", "SHA256:AA:BB").unwrap();
+        store
+            .trust_host_key("example.com", 22, "SHA256:AA:BB")
+            .unwrap();
 
         assert!(matches!(
-            store.verify_host_key("example.com", "aabb").unwrap(),
+            store.verify_host_key("example.com", 22, "aabb").unwrap(),
             KnownHostDecision::Trusted
         ));
     }
@@ -190,10 +197,14 @@ mod tests {
     #[test]
     fn changed_host_key_is_detected() {
         let store = KnownHostsStore::in_memory();
-        store.trust_host_key("example.com", "SHA256:aa").unwrap();
+        store
+            .trust_host_key("example.com", 22, "SHA256:aa")
+            .unwrap();
 
         assert!(matches!(
-            store.verify_host_key("example.com", "SHA256:bb").unwrap(),
+            store
+                .verify_host_key("example.com", 22, "SHA256:bb")
+                .unwrap(),
             KnownHostDecision::Changed
         ));
     }
@@ -201,7 +212,9 @@ mod tests {
     #[test]
     fn lists_trusted_hosts() {
         let store = KnownHostsStore::in_memory();
-        store.trust_host_key("example.com", "SHA256:aa").unwrap();
+        store
+            .trust_host_key("example.com", 22, "SHA256:aa")
+            .unwrap();
 
         assert_eq!(store.list().unwrap()[0].host, "example.com");
     }
@@ -212,11 +225,13 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let store = KnownHostsStore::with_path(path.clone());
-        store.trust_host_key("Example.COM", "SHA256:AA:BB").unwrap();
+        store
+            .trust_host_key("Example.COM", 22, "SHA256:AA:BB")
+            .unwrap();
 
         let reloaded = KnownHostsStore::with_path(path.clone());
         assert!(matches!(
-            reloaded.verify_host_key("example.com", "aabb").unwrap(),
+            reloaded.verify_host_key("example.com", 22, "aabb").unwrap(),
             KnownHostDecision::Trusted
         ));
 
@@ -228,7 +243,7 @@ mod tests {
         let store = KnownHostsStore::in_memory();
 
         assert_eq!(
-            store.trust_host_key(" ", "SHA256:aa").unwrap_err(),
+            store.trust_host_key(" ", 22, "SHA256:aa").unwrap_err(),
             "known host is required"
         );
     }
@@ -236,12 +251,16 @@ mod tests {
     #[test]
     fn deletes_known_host() {
         let store = KnownHostsStore::in_memory();
-        store.trust_host_key("example.com", "SHA256:aa").unwrap();
+        store
+            .trust_host_key("example.com", 22, "SHA256:aa")
+            .unwrap();
 
         store.delete("example.com").unwrap();
 
         assert!(matches!(
-            store.verify_host_key("example.com", "SHA256:aa").unwrap(),
+            store
+                .verify_host_key("example.com", 22, "SHA256:aa")
+                .unwrap(),
             KnownHostDecision::Unknown
         ));
     }
@@ -252,13 +271,41 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let store = KnownHostsStore::with_path(path.clone());
-        store.trust_host_key("example.com", "SHA256:aa").unwrap();
+        store
+            .trust_host_key("example.com", 22, "SHA256:aa")
+            .unwrap();
         store.delete("example.com").unwrap();
 
         let reloaded = KnownHostsStore::with_path(path.clone());
         assert!(reloaded.list().unwrap().is_empty());
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn isolates_host_keys_by_non_default_port() {
+        let store = KnownHostsStore::in_memory();
+        store
+            .trust_host_key("example.com", 2222, "SHA256:aa")
+            .unwrap();
+        store
+            .trust_host_key("example.com", 2200, "SHA256:bb")
+            .unwrap();
+
+        assert!(matches!(
+            store
+                .verify_host_key("example.com", 2222, "SHA256:aa")
+                .unwrap(),
+            KnownHostDecision::Trusted
+        ));
+        assert!(matches!(
+            store
+                .verify_host_key("example.com", 2200, "SHA256:aa")
+                .unwrap(),
+            KnownHostDecision::Changed
+        ));
+        assert_eq!(store.list().unwrap()[0].host, "[example.com]:2200");
+        assert_eq!(store.list().unwrap()[1].host, "[example.com]:2222");
     }
 
     fn test_path(name: &str) -> PathBuf {

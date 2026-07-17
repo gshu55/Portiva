@@ -39,7 +39,6 @@ import {
   profileTestConnection,
   profileUpdate,
   protocolList,
-  secretGet,
   secretList,
   secretDelete,
   secretSet,
@@ -54,6 +53,7 @@ import {
   sshAuthenticateAgent,
   sshAuthenticatePassword,
   sshAuthenticatePrivateKey,
+  sshAuthenticateSavedPassword,
   terminalAttach,
   terminalClose,
   terminalResize,
@@ -177,6 +177,25 @@ const defaultTerminalSize = {
   heightPx: 720,
 };
 const serialTabTitle = "[SERIAL]";
+
+function isTauriRuntime() {
+  return typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+}
+
+function disconnectedConnection(connection: ConnectionSummary): ConnectionSummary {
+  return {
+    ...connection,
+    status: "disconnected",
+    transport: connection.transport
+      ? {
+          ...connection.transport,
+          authenticated: false,
+          fileTransferReady: false,
+          terminalChannelReady: false,
+        }
+      : connection.transport,
+  };
+}
 
 function truncateTerminalPreview(value: string) {
   if (value.length <= terminalPreviewMaxChars) {
@@ -307,7 +326,11 @@ export function usePortivaWorkspace() {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [redactionInput, setRedactionInput] = useState("host=prod\npassword=hunter2\nuser=deploy");
   const [redactionPreview, setRedactionPreview] = useState("");
-  const [pendingKnownHost, setPendingKnownHost] = useState<{ fingerprint: string; host: string } | null>(null);
+  const [pendingKnownHost, setPendingKnownHost] = useState<{
+    fingerprint: string;
+    host: string;
+    port: number;
+  } | null>(null);
   const [knownHosts, setKnownHosts] = useState<KnownHostEntry[]>(sampleKnownHosts);
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>(sampleSerialPorts);
   const [tunnels, setTunnels] = useState<TunnelRule[]>(sampleTunnels);
@@ -387,6 +410,46 @@ export function usePortivaWorkspace() {
     setRemotePathState(remoteRootPath);
   }, []);
 
+  const markConnectionTabsDisconnected = useCallback((connectionId: string) => {
+    const affectedTabs = sessionTabsRef.current.filter(
+      (tab) => tab.connection.id === connectionId || tab.parentConnectionId === connectionId,
+    );
+    const affectedConnectionIds = new Set(affectedTabs.map((tab) => tab.connection.id));
+    const affectedTerminalIds = new Set(
+      affectedTabs.flatMap((tab) => (tab.terminal ? [tab.terminal.id] : [])),
+    );
+    const activeWasAffected = Boolean(activeConnection && affectedConnectionIds.has(activeConnection.id));
+
+    setSessionTabs((current) =>
+      current.map((tab) =>
+        tab.connection.id === connectionId || tab.parentConnectionId === connectionId
+          ? {
+              ...tab,
+              connection: disconnectedConnection(tab.connection),
+              fileTransferSession: null,
+              terminal: null,
+              terminalSnapshot: null,
+            }
+          : tab,
+      ),
+    );
+    setActiveConnection((current) =>
+      current && affectedConnectionIds.has(current.id) ? disconnectedConnection(current) : current,
+    );
+    setActiveTerminal((current) =>
+      current && affectedTerminalIds.has(current.id) ? null : current,
+    );
+    setActiveFileTransferSession((current) =>
+      current?.connectionId === connectionId ? null : current,
+    );
+
+    if (activeWasAffected) {
+      setTerminalSnapshotState(null);
+      setRemoteEntries(emptyRemoteEntries);
+      setSelectedRemoteEntry(null);
+    }
+  }, [activeConnection]);
+
   const attachTerminalWithSnapshot = useCallback(async (connectionId: string) => {
     const terminal = await terminalAttach(connectionId, defaultTerminalSize);
     let snapshot: TerminalSnapshot | null = null;
@@ -417,8 +480,8 @@ export function usePortivaWorkspace() {
     try {
       const result = await profileTestConnection(profile);
       if (result.requiresFingerprintConfirmation) {
-        if (result.host && result.fingerprint) {
-          setPendingKnownHost({ host: result.host, fingerprint: result.fingerprint });
+        if (result.host && result.port && result.fingerprint) {
+          setPendingKnownHost({ host: result.host, port: result.port, fingerprint: result.fingerprint });
         }
         setWorkspaceMessage(result.message);
         return connectionResult("needs-trust", result.message);
@@ -714,54 +777,57 @@ export function usePortivaWorkspace() {
   );
 
   const refreshWorkspace = useCallback(async () => {
-    try {
-      const [
-        nextProfiles,
-        nextGroups,
-        nextRecentConnections,
-        nextProtocolDescriptors,
-        nextTransfers,
-        nextLogs,
-        nextSecrets,
-        nextSettings,
-        nextKnownHosts,
-        nextSerialPorts,
-        nextTunnels,
-      ] = await Promise.all([
-        profileList(),
-        profileGroups(),
-        profileRecent(),
-        protocolList(),
-        transferList(),
-        logList(),
-        secretList(),
-        settingsGet(),
-        knownHostsList(),
-        serialListPorts().catch(() => []),
-        tunnelList(),
-      ]);
-
-      setProfiles(nextProfiles);
-      setGroups(nextGroups);
-      setRecentConnections(nextRecentConnections);
-      setProtocolDescriptors(nextProtocolDescriptors);
-      setTransfers(nextTransfers);
-      setLogs(nextLogs);
-      setSecrets(nextSecrets);
-      setSettings(nextSettings);
-      setKnownHosts(nextKnownHosts);
-      lastDetectedSerialPortNamesRef.current = new Set(nextSerialPorts.map((port) => port.portName));
-      setSerialPorts(nextSerialPorts);
-      setTunnels(nextTunnels);
-      setActiveProfileId((current) =>
-        nextProfiles.some((profile) => profile.id === current) ? current : nextProfiles[0]?.id ?? current,
-      );
-      setDataSource("tauri");
-      setWorkspaceMessage("已从 Rust 服务加载工作区状态。");
-    } catch (error) {
+    if (!isTauriRuntime()) {
       setDataSource("mock");
-      setWorkspaceMessage(`Tauri IPC 不可用，正在显示演示数据。${String(error)}`);
+      setWorkspaceMessage("当前为浏览器环境，正在显示演示数据。");
+      return;
     }
+
+    const failures: string[] = [];
+    const loadSlice = async <T,>(
+      label: string,
+      request: Promise<T>,
+      apply: (value: T) => void,
+      fallback: T,
+    ) => {
+      try {
+        apply(await request);
+      } catch (error) {
+        apply(fallback);
+        failures.push(`${label}（${String(error)}）`);
+      }
+    };
+
+    await Promise.all([
+      loadSlice("连接配置", profileList(), (nextProfiles) => {
+        setProfiles(nextProfiles);
+        setActiveProfileId((current) =>
+          nextProfiles.some((profile) => profile.id === current)
+            ? current
+            : nextProfiles[0]?.id ?? "",
+        );
+      }, []),
+      loadSlice("配置分组", profileGroups(), setGroups, []),
+      loadSlice("最近连接", profileRecent(), setRecentConnections, []),
+      loadSlice("协议能力", protocolList(), setProtocolDescriptors, []),
+      loadSlice("传输队列", transferList(), setTransfers, []),
+      loadSlice("日志", logList(), setLogs, []),
+      loadSlice("凭据索引", secretList(), setSecrets, []),
+      loadSlice("设置", settingsGet(), setSettings, defaultSettings),
+      loadSlice("已知主机", knownHostsList(), setKnownHosts, []),
+      loadSlice("串口", serialListPorts(), (nextSerialPorts) => {
+        lastDetectedSerialPortNamesRef.current = new Set(nextSerialPorts.map((port) => port.portName));
+        setSerialPorts(nextSerialPorts);
+      }, []),
+      loadSlice("隧道", tunnelList(), setTunnels, []),
+    ]);
+
+    setDataSource("tauri");
+    setWorkspaceMessage(
+      failures.length === 0
+        ? "已从 Rust 服务加载工作区状态。"
+        : `工作区已加载，但以下数据读取失败并已置空：${failures.join("；")}`,
+    );
   }, []);
 
   useEffect(() => {
@@ -934,13 +1000,36 @@ export function usePortivaWorkspace() {
       try {
         await secretDelete(secretId);
         setSecrets(await secretList());
-        setWorkspaceMessage(`已删除密钥元数据 ${secretId}。`);
+        setWorkspaceMessage(`已删除系统凭据 ${secretId}。`);
       } catch (error) {
-        setWorkspaceMessage(`删除密钥元数据失败：${String(error)}`);
+        setWorkspaceMessage(`删除系统凭据失败：${String(error)}`);
       }
     },
     [],
   );
+
+  const hasRememberedPassword = useCallback(
+    (profileId: string) => secrets.some(
+      (secret) =>
+        secret.profileId === profileId &&
+        secret.purpose === "password" &&
+        secret.hasValue,
+    ),
+    [secrets],
+  );
+
+  const forgetRememberedPassword = useCallback(async (profileId: string) => {
+    const metadata = secrets.find(
+      (secret) => secret.profileId === profileId && secret.purpose === "password",
+    );
+    if (!metadata) {
+      return false;
+    }
+
+    await secretDelete(metadata.id);
+    setSecrets((current) => current.filter((secret) => secret.id !== metadata.id));
+    return true;
+  }, [secrets]);
 
   const deleteKnownHost = useCallback(async (host: string) => {
     try {
@@ -976,14 +1065,22 @@ export function usePortivaWorkspace() {
     profile: ConnectionProfile,
     options: OpenConnectionOptions = {},
   ): Promise<OpenConnectionResult> => {
+    const requiresPassword =
+      options.authenticate &&
+      (profile.type === "ssh" || profile.type === "sftp") &&
+      profile.authType === "password";
+    if (requiresPassword && !options.secret && !hasRememberedPassword(profile.id)) {
+      const message = "密码认证需要填写 SSH 密码。";
+      setWorkspaceMessage(message);
+      return connectionResult("failed", message);
+    }
+
+    let openedConnectionId: string | null = null;
+
     try {
       setSessionNotice("");
-      const passwordForAuth =
-        (profile.type === "ssh" || profile.type === "sftp") &&
-        profile.authType === "password"
-          ? options.secret || (await secretGet(profile.id, "password")) || ""
-          : "";
       let session = await connectionOpen(profile);
+      openedConnectionId = session.id;
       setPendingKnownHost(null);
       let authenticatedByDialog = false;
 
@@ -992,22 +1089,9 @@ export function usePortivaWorkspace() {
         (profile.type === "ssh" || profile.type === "sftp") &&
         profile.authType === "password"
       ) {
-        const password = passwordForAuth;
-
-        if (!password) {
-          const message = "密码认证需要填写 SSH 密码。";
-          setWorkspaceMessage(message);
-          return connectionResult("failed", message);
-        }
-
-        session = await sshAuthenticatePassword(session.id, password);
-        if (options.rememberSecret && options.secret) {
-          const metadata = await secretSet(profile.id, "password", options.secret);
-          setSecrets((current) => [
-            metadata,
-            ...current.filter((item) => item.id !== metadata.id),
-          ]);
-        }
+        session = options.secret
+          ? await sshAuthenticatePassword(session.id, options.secret)
+          : await sshAuthenticateSavedPassword(session.id);
         authenticatedByDialog = true;
       }
 
@@ -1031,6 +1115,26 @@ export function usePortivaWorkspace() {
       ) {
         session = await sshAuthenticateAgent(session.id);
         authenticatedByDialog = true;
+      }
+
+      if (
+        options.authenticate &&
+        (profile.type === "ssh" || profile.type === "sftp") &&
+        profile.authType === "password" &&
+        options.rememberSecret &&
+        options.secret
+      ) {
+        const metadata = await secretSet(profile.id, "password", options.secret);
+        setSecrets((current) => [
+          metadata,
+          ...current.filter((item) => item.id !== metadata.id),
+        ]);
+      } else if (
+        options.authenticate &&
+        (profile.type === "ssh" || profile.type === "sftp") &&
+        options.rememberSecret === false
+      ) {
+        await forgetRememberedPassword(profile.id);
       }
 
       clearFileTransferView();
@@ -1088,10 +1192,10 @@ export function usePortivaWorkspace() {
         terminalSnapshot: initialTerminalSnapshot,
       };
 
-	      setSessionTabs((current) => [
-	        ...current.filter((tab) => tab.connection.id !== session.id),
-	        nextTab,
-	      ]);
+      setSessionTabs((current) => [
+        ...current.filter((tab) => tab.connection.id !== session.id),
+        nextTab,
+      ]);
       setActiveConnection(session);
       setActiveSessionTabId(session.id);
       setActiveTerminal(terminal);
@@ -1118,6 +1222,9 @@ export function usePortivaWorkspace() {
 
       return connectionResult("opened", message);
     } catch (error) {
+      if (openedConnectionId) {
+        await connectionClose(openedConnectionId).catch(() => undefined);
+      }
       const trustResult = await resolveHostTrustFailure(profile, error);
       if (trustResult) {
         return trustResult;
@@ -1127,7 +1234,7 @@ export function usePortivaWorkspace() {
       setWorkspaceMessage(message);
       return connectionResult("failed", message);
     }
-  }, [attachTerminalWithSnapshot, clearFileTransferView, refreshWorkspace, remotePath, resolveHostTrustFailure]);
+  }, [attachTerminalWithSnapshot, clearFileTransferView, forgetRememberedPassword, hasRememberedPassword, refreshWorkspace, remotePath, resolveHostTrustFailure]);
 
   const openActiveConnection = useCallback(
     () => openProfileConnection(activeProfile),
@@ -1349,6 +1456,7 @@ export function usePortivaWorkspace() {
         }
 
         await connectionClose(reconnectTab.connection.id).catch(() => undefined);
+        markConnectionTabsDisconnected(reconnectTab.connection.id);
 
         const opened = await localShellOpen(defaultTerminalSize);
         const nextTab: WorkspaceSessionTab = {
@@ -1390,17 +1498,11 @@ export function usePortivaWorkspace() {
       return connectionResult("failed", message);
     }
 
-    const savedPassword =
-      (profile.type === "ssh" || profile.type === "sftp") &&
-      profile.authType === "password" &&
-      !options.secret
-        ? await secretGet(profile.id, "password")
-        : null;
     const needsSecret =
       (profile.type === "ssh" || profile.type === "sftp") &&
       profile.authType === "password" &&
       !options.secret &&
-      !savedPassword;
+      !hasRememberedPassword(profile.id);
 
     if (needsSecret) {
       const message = "密码认证需要重新输入密码。";
@@ -1408,30 +1510,27 @@ export function usePortivaWorkspace() {
       return connectionResult("failed", message);
     }
 
+    let openedConnectionId: string | null = null;
+
     try {
       if (reconnectTab.terminal) {
         await terminalClose(reconnectTab.terminal.id).catch(() => undefined);
       }
 
       await connectionClose(reconnectTab.connection.id).catch(() => undefined);
+      markConnectionTabsDisconnected(reconnectTab.connection.id);
 
       let session = await connectionOpen(profile);
+      openedConnectionId = session.id;
       setPendingKnownHost(null);
 
       if (
         (profile.type === "ssh" || profile.type === "sftp") &&
         profile.authType === "password"
       ) {
-        const password = options.secret || savedPassword || "";
-
-        session = await sshAuthenticatePassword(session.id, password);
-        if (options.rememberSecret && options.secret) {
-          const metadata = await secretSet(profile.id, "password", options.secret);
-          setSecrets((current) => [
-            metadata,
-            ...current.filter((item) => item.id !== metadata.id),
-          ]);
-        }
+        session = options.secret
+          ? await sshAuthenticatePassword(session.id, options.secret)
+          : await sshAuthenticateSavedPassword(session.id);
       }
 
       if (
@@ -1450,6 +1549,24 @@ export function usePortivaWorkspace() {
         profile.authType === "agent"
       ) {
         session = await sshAuthenticateAgent(session.id);
+      }
+
+      if (
+        (profile.type === "ssh" || profile.type === "sftp") &&
+        profile.authType === "password" &&
+        options.rememberSecret &&
+        options.secret
+      ) {
+        const metadata = await secretSet(profile.id, "password", options.secret);
+        setSecrets((current) => [
+          metadata,
+          ...current.filter((item) => item.id !== metadata.id),
+        ]);
+      } else if (
+        (profile.type === "ssh" || profile.type === "sftp") &&
+        options.rememberSecret === false
+      ) {
+        await forgetRememberedPassword(profile.id);
       }
 
       let terminal: TerminalSession | null = null;
@@ -1509,6 +1626,9 @@ export function usePortivaWorkspace() {
 
       return connectionResult("opened", message);
     } catch (error) {
+      if (openedConnectionId) {
+        await connectionClose(openedConnectionId).catch(() => undefined);
+      }
       const trustResult = await resolveHostTrustFailure(profile, error);
       if (trustResult) {
         return trustResult;
@@ -1518,7 +1638,7 @@ export function usePortivaWorkspace() {
       setWorkspaceMessage(message);
       return connectionResult("failed", message);
     }
-  }, [attachTerminalWithSnapshot, clearFileTransferView, dataSource, profiles, refreshWorkspace, resolveHostTrustFailure, sessionTabs]);
+  }, [attachTerminalWithSnapshot, clearFileTransferView, dataSource, forgetRememberedPassword, hasRememberedPassword, markConnectionTabsDisconnected, profiles, refreshWorkspace, resolveHostTrustFailure, sessionTabs]);
 
   const authenticateActiveSshPassword = useCallback(async () => {
     if (!activeConnection) {
@@ -1662,6 +1782,11 @@ export function usePortivaWorkspace() {
           updatedProfile.authType === "password"
         ) {
           passwordMessage = "，未输入新密码，密码未更新";
+        } else if (options.rememberSecret === false) {
+          const removedPassword = await forgetRememberedPassword(updatedProfile.id);
+          if (removedPassword) {
+            passwordMessage = "，已移除保存的密码";
+          }
         }
         await refreshWorkspace();
         setActiveProfileId(updatedProfile.id);
@@ -1682,7 +1807,7 @@ export function usePortivaWorkspace() {
         return null;
       }
     },
-    [dataSource, profiles, refreshWorkspace],
+    [dataSource, forgetRememberedPassword, profiles, refreshWorkspace],
   );
 
   const deleteProfile = useCallback(
@@ -1730,8 +1855,8 @@ export function usePortivaWorkspace() {
   ): Promise<TestConnectionResult> => {
     try {
       const result = await profileTestConnection(profile, options.secret);
-      if (result.requiresFingerprintConfirmation && result.host && result.fingerprint) {
-        setPendingKnownHost({ host: result.host, fingerprint: result.fingerprint });
+      if (result.requiresFingerprintConfirmation && result.host && result.port && result.fingerprint) {
+        setPendingKnownHost({ host: result.host, port: result.port, fingerprint: result.fingerprint });
       } else {
         setPendingKnownHost(null);
       }
@@ -2120,7 +2245,9 @@ export function usePortivaWorkspace() {
 
     try {
       const pending =
-        pendingKnownHost && pendingKnownHost.host === profile.host
+        pendingKnownHost &&
+        pendingKnownHost.host.toLowerCase() === profile.host?.trim().toLowerCase() &&
+        pendingKnownHost.port === (profile.port ?? 22)
           ? pendingKnownHost
           : null;
 
@@ -2129,9 +2256,9 @@ export function usePortivaWorkspace() {
         return false;
       }
 
-      const trusted = await knownHostTrustPlaceholder(pending.host, pending.fingerprint);
+      const trusted = await knownHostTrustPlaceholder(pending.host, pending.port, pending.fingerprint);
       setPendingKnownHost(null);
-      setWorkspaceMessage(`已信任 ${trusted.host} 的待确认 SSH 指纹：${trusted.fingerprint}。`);
+      setWorkspaceMessage(`已信任 ${trusted.host}:${trusted.port} 的待确认 SSH 指纹：${trusted.fingerprint}。`);
       await refreshWorkspace();
       return true;
     } catch (error) {
@@ -2217,27 +2344,16 @@ export function usePortivaWorkspace() {
       return null;
     }
 
-    let savedPassword: string | null = null;
-
-    if (
-      (profile.type === "ssh" || profile.type === "sftp") &&
-      profile.authType === "password"
-    ) {
-      try {
-        savedPassword = await secretGet(profile.id, "password");
-      } catch {
-        savedPassword = null;
-      }
-    }
-
     if (
       (profile.type === "ssh" || profile.type === "sftp") &&
       profile.authType === "password" &&
-      !savedPassword
+      !hasRememberedPassword(profile.id)
     ) {
       setWorkspaceMessage("SFTP 重连需要重新输入 SSH 密码。");
       return null;
     }
+
+    let openedConnectionId: string | null = null;
 
     try {
       setSessionNotice("");
@@ -2247,15 +2363,17 @@ export function usePortivaWorkspace() {
         await terminalClose(sourceTab.terminal.id).catch(() => undefined);
       }
       await connectionClose(sourceTab.connection.id).catch(() => undefined);
+      markConnectionTabsDisconnected(sourceTab.connection.id);
 
       let session = await connectionOpen(profile);
+      openedConnectionId = session.id;
       setPendingKnownHost(null);
 
       if (
         (profile.type === "ssh" || profile.type === "sftp") &&
         profile.authType === "password"
       ) {
-        session = await sshAuthenticatePassword(session.id, savedPassword || "");
+        session = await sshAuthenticateSavedPassword(session.id);
       }
 
       if (
@@ -2330,12 +2448,12 @@ export function usePortivaWorkspace() {
 
         const nextSourceTab: WorkspaceSessionTab = {
           ...sourceTab,
-            id: readySession.id,
-            kind: "terminal",
-            connection: readySession,
-            terminal,
-            terminalSnapshot: initialTerminalSnapshot,
-          };
+          id: readySession.id,
+          kind: "terminal",
+          connection: readySession,
+          terminal,
+          terminalSnapshot: initialTerminalSnapshot,
+        };
 
         return current.map((tab) => {
           const currentTabId = tab.id ?? tab.connection.id;
@@ -2365,6 +2483,9 @@ export function usePortivaWorkspace() {
       await refreshWorkspace().catch(() => undefined);
       return transferSession;
     } catch (error) {
+      if (openedConnectionId) {
+        await connectionClose(openedConnectionId).catch(() => undefined);
+      }
       const trustResult = await resolveHostTrustFailure(profile, error);
       if (trustResult) {
         return null;
@@ -2373,7 +2494,7 @@ export function usePortivaWorkspace() {
       setWorkspaceMessage(`SFTP 重连失败：${String(error)}`);
       return null;
     }
-  }, [activeSessionTab, attachTerminalWithSnapshot, profiles, refreshWorkspace, resolveHostTrustFailure, sessionTabs]);
+  }, [activeSessionTab, attachTerminalWithSnapshot, hasRememberedPassword, markConnectionTabsDisconnected, profiles, refreshWorkspace, resolveHostTrustFailure, sessionTabs]);
 
   const refreshRemoteFiles = useCallback(async (pathOverride?: string) => {
     const targetPath = normalizeRemotePathInput(pathOverride ?? remotePath);

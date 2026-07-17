@@ -8,6 +8,7 @@ use tauri::State;
 
 use crate::domain::logging::LogLevel;
 use crate::domain::profile::{ConnectionProfile, ConnectionType, ProfileGroup, RecentConnection};
+use crate::domain::secret::SecretPurpose;
 use crate::protocol::ssh::probe::probe_ssh_endpoint;
 use crate::security::fingerprint::{display_fingerprint, fingerprint_matches};
 use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
@@ -21,7 +22,6 @@ use crate::services::tcp_terminal_service::TcpTerminalService;
 #[serde(rename_all = "camelCase")]
 pub struct ProfileSaveResult {
     pub profile_id: String,
-    pub reserved_secret_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +31,7 @@ pub struct TestConnectionResult {
     pub message: String,
     pub requires_fingerprint_confirmation: bool,
     pub host: Option<String>,
+    pub port: Option<u16>,
     pub fingerprint: Option<String>,
 }
 
@@ -38,6 +39,7 @@ pub struct TestConnectionResult {
 #[serde(rename_all = "camelCase")]
 pub struct KnownHostTrustResult {
     pub host: String,
+    pub port: u16,
     pub fingerprint: String,
 }
 
@@ -68,21 +70,16 @@ pub fn profile_mark_recent(
 pub fn profile_create(
     profile: ConnectionProfile,
     store: State<'_, ProfileStore>,
-    secrets: State<'_, SecretStore>,
     logs: State<'_, LogService>,
 ) -> Result<ProfileSaveResult, String> {
-    let reserved_secret_id = reserve_secret_if_needed(&profile, &secrets)?;
     let profile_id = store.upsert(profile)?;
     let _ = logs.record(LogLevel::Info, "profile", format!("saved {profile_id}"));
 
-    Ok(ProfileSaveResult {
-        profile_id,
-        reserved_secret_id,
-    })
+    Ok(ProfileSaveResult { profile_id })
 }
 
 #[tauri::command]
-pub fn profile_update(
+pub async fn profile_update(
     profile_id: String,
     profile: ConnectionProfile,
     store: State<'_, ProfileStore>,
@@ -92,16 +89,39 @@ pub fn profile_update(
     if profile.id != profile_id {
         return Err("profile id mismatch".to_string());
     }
+    store.validate(&profile)?;
 
-    profile_create(profile, store, secrets, logs)
+    let previous = store
+        .get(&profile_id)?
+        .ok_or_else(|| format!("profile not found: {profile_id}"))?;
+    if should_clear_saved_password(&previous, &profile) {
+        let secret_store = secrets.inner().clone();
+        let secret_profile_id = profile_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            secret_store.delete_for_profile_purpose(&secret_profile_id, SecretPurpose::Password)
+        })
+        .await
+        .map_err(|error| format!("系统凭据清理任务执行失败：{error}"))??;
+    }
+
+    profile_create(profile, store, logs)
 }
 
 #[tauri::command]
-pub fn profile_delete(
+pub async fn profile_delete(
     profile_id: String,
     store: State<'_, ProfileStore>,
+    secrets: State<'_, SecretStore>,
     logs: State<'_, LogService>,
 ) -> Result<(), String> {
+    let secret_store = secrets.inner().clone();
+    let secret_profile_id = profile_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        secret_store.delete_for_profile(&secret_profile_id)
+    })
+    .await
+    .map_err(|error| format!("系统凭据清理任务执行失败：{error}"))??;
+
     store.delete(&profile_id)?;
     let _ = logs.record(LogLevel::Info, "profile", format!("deleted {profile_id}"));
     Ok(())
@@ -121,7 +141,8 @@ pub async fn profile_test_connection(
         let probe = probe_ssh_endpoint(&profile).await?;
         let host = probe.transport.host.as_str();
         let fingerprint = probe.host_key_fingerprint.as_str();
-        let decision = known_hosts.verify_host_key(host, fingerprint)?;
+        let port = probe.transport.port;
+        let decision = known_hosts.verify_host_key(host, port, fingerprint)?;
 
         return Ok(match decision {
             KnownHostDecision::Trusted => {
@@ -137,6 +158,7 @@ pub async fn profile_test_connection(
                             ),
                             requires_fingerprint_confirmation: false,
                             host: Some(host.to_string()),
+                            port: Some(port),
                             fingerprint: Some(display_fingerprint(fingerprint)),
                         },
                         Err(error) => TestConnectionResult {
@@ -144,6 +166,7 @@ pub async fn profile_test_connection(
                             message: format!("SSH 密码认证失败：{error}"),
                             requires_fingerprint_confirmation: false,
                             host: Some(host.to_string()),
+                            port: Some(port),
                             fingerprint: Some(display_fingerprint(fingerprint)),
                         },
                     }
@@ -158,6 +181,7 @@ pub async fn profile_test_connection(
                         ),
                         requires_fingerprint_confirmation: false,
                         host: Some(host.to_string()),
+                        port: Some(port),
                         fingerprint: Some(display_fingerprint(fingerprint)),
                     }
                 }
@@ -173,6 +197,7 @@ pub async fn profile_test_connection(
                 ),
                 requires_fingerprint_confirmation: true,
                 host: Some(host.to_string()),
+                port: Some(port),
                 fingerprint: Some(display_fingerprint(fingerprint)),
             },
             KnownHostDecision::Changed => TestConnectionResult {
@@ -180,6 +205,7 @@ pub async fn profile_test_connection(
                 message: "host key changed; connection must be blocked".to_string(),
                 requires_fingerprint_confirmation: false,
                 host: Some(host.to_string()),
+                port: Some(port),
                 fingerprint: Some(display_fingerprint(fingerprint)),
             },
         });
@@ -195,6 +221,7 @@ pub async fn profile_test_connection(
                 ),
                 requires_fingerprint_confirmation: false,
                 host: None,
+                port: None,
                 fingerprint: None,
             }),
             Err(error) => Ok(TestConnectionResult {
@@ -202,6 +229,7 @@ pub async fn profile_test_connection(
                 message: error,
                 requires_fingerprint_confirmation: false,
                 host: None,
+                port: None,
                 fingerprint: None,
             }),
         };
@@ -221,6 +249,7 @@ pub async fn profile_test_connection(
                 ),
                 requires_fingerprint_confirmation: false,
                 host: profile.host.clone(),
+                port: profile.port,
                 fingerprint: None,
             }),
             Err(error) => Ok(TestConnectionResult {
@@ -228,6 +257,7 @@ pub async fn profile_test_connection(
                 message: error,
                 requires_fingerprint_confirmation: false,
                 host: profile.host.clone(),
+                port: profile.port,
                 fingerprint: None,
             }),
         };
@@ -235,9 +265,10 @@ pub async fn profile_test_connection(
 
     Ok(TestConnectionResult {
         ok: false,
-        message: "TODO: protocol backend not implemented yet".to_string(),
+        message: "当前连接类型不支持连通性测试。".to_string(),
         requires_fingerprint_confirmation: false,
         host: None,
+        port: None,
         fingerprint: None,
     })
 }
@@ -245,24 +276,45 @@ pub async fn profile_test_connection(
 #[tauri::command]
 pub fn known_host_trust_placeholder(
     host: String,
+    port: u16,
     fingerprint: String,
     known_hosts: State<'_, KnownHostsStore>,
 ) -> Result<KnownHostTrustResult, String> {
-    known_hosts.trust_host_key(&host, &fingerprint)?;
+    known_hosts.trust_host_key(&host, port, &fingerprint)?;
 
     Ok(KnownHostTrustResult {
         host,
+        port,
         fingerprint: display_fingerprint(&fingerprint),
     })
 }
 
-fn reserve_secret_if_needed(
-    profile: &ConnectionProfile,
-    secrets: &State<'_, SecretStore>,
-) -> Result<Option<String>, String> {
-    let _ = (profile, secrets);
+fn should_clear_saved_password(previous: &ConnectionProfile, updated: &ConnectionProfile) -> bool {
+    ssh_password_scope(previous) != ssh_password_scope(updated)
+}
 
-    Ok(None)
+fn ssh_password_scope(profile: &ConnectionProfile) -> Option<(String, u16, String)> {
+    if !matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp)
+        || profile.auth_type.as_deref() != Some("password")
+    {
+        return None;
+    }
+
+    Some((
+        profile
+            .host
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase(),
+        profile.port.unwrap_or(22),
+        profile
+            .username
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    ))
 }
 
 async fn test_ssh_password_auth(
@@ -335,6 +387,45 @@ async fn test_ssh_password_auth(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_clear_saved_password;
+    use crate::domain::profile::ConnectionType;
+    use crate::services::profile_store::ProfileStore;
+
+    #[test]
+    fn keeps_saved_password_when_only_profile_name_changes() {
+        let store = ProfileStore::in_memory();
+        let profile = store.get("prod-ssh").unwrap().unwrap();
+        let mut updated = profile.clone();
+        updated.name = "Renamed".to_string();
+
+        assert!(!should_clear_saved_password(&profile, &updated));
+    }
+
+    #[test]
+    fn clears_saved_password_when_ssh_identity_or_auth_changes() {
+        let store = ProfileStore::in_memory();
+        let profile = store.get("prod-ssh").unwrap().unwrap();
+
+        let mut changed_host = profile.clone();
+        changed_host.host = Some("other.example.com".to_string());
+        assert!(should_clear_saved_password(&profile, &changed_host));
+
+        let mut changed_username = profile.clone();
+        changed_username.username = Some("other-user".to_string());
+        assert!(should_clear_saved_password(&profile, &changed_username));
+
+        let mut changed_auth = profile.clone();
+        changed_auth.auth_type = Some("agent".to_string());
+        assert!(should_clear_saved_password(&profile, &changed_auth));
+
+        let mut sftp = profile.clone();
+        sftp.r#type = ConnectionType::Sftp;
+        assert!(!should_clear_saved_password(&profile, &sftp));
+    }
 }
 
 struct TestSshAuthHandler {

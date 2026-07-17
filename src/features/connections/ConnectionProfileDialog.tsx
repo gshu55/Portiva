@@ -90,7 +90,10 @@ export function ConnectionProfileDialog({
   const canSave = canSaveProfile(draft);
   const needsConnectionSecret =
     (draft.type === "ssh" || draft.type === "sftp") && draft.authType === "password";
-  const canUseRememberedSecret = needsConnectionSecret && rememberSecret && rememberedSecret;
+  const rememberedSecretApplies =
+    rememberedSecret && hasSameSshPasswordScope(profile, draft);
+  const canUseRememberedSecret =
+    needsConnectionSecret && rememberSecret && rememberedSecretApplies;
   const canConnect = canSave && (!needsConnectionSecret || Boolean(secret) || canUseRememberedSecret);
   const canTest = canSave && (!needsConnectionSecret || Boolean(secret));
 
@@ -174,11 +177,16 @@ export function ConnectionProfileDialog({
             {draft.type === "ssh" || draft.type === "sftp" ? (
               <>
                 <SshProfileForm
-                  hasRememberedSecret={rememberSecret && rememberedSecret}
+                  hasRememberedSecret={rememberSecret && rememberedSecretApplies}
                   profile={draft}
                   rememberSecret={rememberSecret}
                   secret={secret}
-                  onChange={(profile) => setDraft(profile)}
+                  onChange={(nextProfile) => {
+                    if (!hasSameSshPasswordScope(profile, nextProfile)) {
+                      setRememberSecret(false);
+                    }
+                    setDraft(nextProfile);
+                  }}
                   onRememberSecretChange={setRememberSecret}
                   onSecretChange={setSecret}
                 />
@@ -514,6 +522,26 @@ function canSaveProfile(profile: ConnectionProfile) {
   }
 
   return true;
+}
+
+function hasSameSshPasswordScope(
+  original: ConnectionProfile,
+  draft: ConnectionProfile,
+) {
+  if (
+    (original.type !== "ssh" && original.type !== "sftp") ||
+    (draft.type !== "ssh" && draft.type !== "sftp") ||
+    original.authType !== "password" ||
+    draft.authType !== "password"
+  ) {
+    return false;
+  }
+
+  return (
+    original.host.trim().toLowerCase() === draft.host.trim().toLowerCase() &&
+    original.port === draft.port &&
+    original.username.trim() === draft.username.trim()
+  );
 }
 
 function isUnsupportedSerialParity(parity: SerialProfile["parity"]) {
