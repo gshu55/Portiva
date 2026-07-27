@@ -8529,6 +8529,13 @@ body.http-workbench-resizing {
   padding: 12px;
 }
 
+.http-editor-panel > .http-parameter-table,
+.http-editor-panel > .http-body-editor,
+.http-editor-panel > .http-auth-editor,
+.http-editor-panel > .http-preview-panel {
+  min-height: 260px;
+}
+
 .http-body-editor {
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
