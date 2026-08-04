@@ -333,6 +333,26 @@ impl SshSessionService {
         list_dir_with_sftp(&sftp, remote_path).await
     }
 
+    pub async fn entry_kind(
+        &self,
+        connection_id: &str,
+        remote_path: &str,
+    ) -> Result<Option<RemoteEntryKind>, String> {
+        let sftp = self.sftp_handle(connection_id)?;
+        let sftp = sftp.lock().await;
+        let result = remote_entry_kind_with_sftp(&sftp, remote_path).await;
+        drop(sftp);
+
+        if !is_sftp_session_closed_result(&result) {
+            return result;
+        }
+
+        self.reopen_sftp(connection_id).await?;
+        let sftp = self.sftp_handle(connection_id)?;
+        let sftp = sftp.lock().await;
+        remote_entry_kind_with_sftp(&sftp, remote_path).await
+    }
+
     pub async fn mkdir(&self, connection_id: &str, remote_path: &str) -> Result<(), String> {
         let sftp = self.sftp_handle(connection_id)?;
         let sftp = sftp.lock().await;
@@ -936,6 +956,36 @@ async fn list_dir_with_sftp(
     Ok(entries)
 }
 
+async fn remote_entry_kind_with_sftp(
+    sftp: &SftpSession,
+    remote_path: &str,
+) -> Result<Option<RemoteEntryKind>, String> {
+    let path = normalize_remote_path(remote_path);
+    if !sftp
+        .try_exists(path.clone())
+        .await
+        .map_err(|error| format!("failed to inspect remote entry: {error}"))?
+    {
+        return Ok(None);
+    }
+
+    let metadata = sftp
+        .symlink_metadata(path)
+        .await
+        .map_err(|error| format!("failed to inspect remote entry: {error}"))?;
+    let kind = if metadata.is_dir() {
+        RemoteEntryKind::Directory
+    } else if metadata.is_regular() {
+        RemoteEntryKind::File
+    } else if metadata.is_symlink() {
+        RemoteEntryKind::Symlink
+    } else {
+        RemoteEntryKind::Other
+    };
+
+    Ok(Some(kind))
+}
+
 async fn remove_remote_directory_tree(sftp: &SftpSession, remote_path: &str) -> Result<(), String> {
     let mut directories = vec![normalize_remote_path(remote_path)];
     let mut files = Vec::new();
@@ -970,7 +1020,7 @@ async fn remove_remote_directory_tree(sftp: &SftpSession, remote_path: &str) -> 
 }
 
 async fn remove_remote_entry_with_sftp(sftp: &SftpSession, path: &str) -> Result<(), String> {
-    match sftp.metadata(path.to_string()).await {
+    match sftp.symlink_metadata(path.to_string()).await {
         Ok(metadata) if metadata.is_dir() => remove_remote_directory_tree(sftp, path).await,
         Ok(_) => sftp
             .remove_file(path.to_string())

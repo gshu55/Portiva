@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use tauri::State;
 
 use crate::domain::capability::ConnectionCapabilities;
@@ -17,6 +19,8 @@ use crate::services::ssh_session_service::SshSessionService;
 use crate::services::tcp_terminal_service::TcpTerminalService;
 use crate::services::terminal_service::TerminalService;
 use crate::services::transfer_service::TransferService;
+
+const SAVED_CREDENTIAL_READ_TIMEOUT_SECS: u64 = 30;
 
 #[tauri::command]
 pub async fn connection_open(
@@ -218,13 +222,41 @@ pub async fn ssh_authenticate_saved_password(
     ssh_sessions.ensure_matches_profile(&connection_id, &profile)?;
 
     let profile_id = session.profile_id;
+    let credential_profile_id = profile_id.clone();
     let secret_store = secrets.inner().clone();
-    let password = tauri::async_runtime::spawn_blocking(move || {
-        secret_store.get_secret(&profile_id, SecretPurpose::Password)
-    })
+    let read_task = tauri::async_runtime::spawn_blocking(move || {
+        secret_store.get_secret(&credential_profile_id, SecretPurpose::Password)
+    });
+    let password = match tokio::time::timeout(
+        Duration::from_secs(SAVED_CREDENTIAL_READ_TIMEOUT_SECS),
+        read_task,
+    )
     .await
-    .map_err(|error| format!("系统凭据库任务执行失败：{error}"))??
-    .ok_or_else(|| "未找到已保存的 SSH 密码，请重新输入".to_string())?;
+    {
+        Err(_) => {
+            let error = format!(
+                "读取已保存的 SSH 凭据超时（{} 秒）。请检查系统凭据库授权窗口，或重新输入密码",
+                SAVED_CREDENTIAL_READ_TIMEOUT_SECS
+            );
+            record_saved_credential_failure(logs.inner(), &profile_id, &error);
+            return Err(error);
+        }
+        Ok(Err(join_error)) => {
+            let error = format!("系统凭据库任务执行失败：{join_error}");
+            record_saved_credential_failure(logs.inner(), &profile_id, &error);
+            return Err(error);
+        }
+        Ok(Ok(Err(read_error))) => {
+            record_saved_credential_failure(logs.inner(), &profile_id, &read_error);
+            return Err(read_error);
+        }
+        Ok(Ok(Ok(None))) => {
+            let error = "未找到已保存的 SSH 密码，请重新输入".to_string();
+            record_saved_credential_failure(logs.inner(), &profile_id, &error);
+            return Err(error);
+        }
+        Ok(Ok(Ok(Some(password)))) => password,
+    };
 
     authenticate_ssh_password(
         &connection_id,
@@ -234,6 +266,14 @@ pub async fn ssh_authenticate_saved_password(
         logs.inner(),
     )
     .await
+}
+
+fn record_saved_credential_failure(logs: &LogService, profile_id: &str, error: &str) {
+    let _ = logs.record(
+        LogLevel::Warn,
+        "credential",
+        format!("saved credential access failed for profile {profile_id}: {error}"),
+    );
 }
 
 async fn authenticate_ssh_password(

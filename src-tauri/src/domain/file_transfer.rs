@@ -37,17 +37,30 @@ pub struct TransferTask {
     pub connection_id: String,
     pub direction: TransferDirection,
     pub protocol: TransferProtocol,
+    pub item_kind: TransferTaskItemKind,
     pub local_path: String,
     pub remote_path: String,
     pub status: TransferStatus,
     pub conflict_policy: TransferConflictPolicy,
+    pub conflict_path: Option<String>,
     pub retry_count: u8,
     pub total_bytes: Option<u64>,
     pub transferred_bytes: u64,
+    pub total_items: Option<u64>,
+    pub completed_items: u64,
+    pub skipped_items: u64,
+    pub failed_items: u64,
     pub speed_bytes_per_second: Option<u64>,
     pub error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransferTaskItemKind {
+    File,
+    Directory,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,8 +86,10 @@ pub enum TransferStatus {
     Pending,
     Running,
     Paused,
+    WaitingConflict,
     Cancelled,
     Failed,
+    Partial,
     Completed,
 }
 
@@ -83,6 +98,8 @@ pub enum TransferStatus {
 pub enum TransferConflictPolicy {
     Ask,
     Overwrite,
+    OverwriteAll,
     Rename,
     Skip,
+    SkipAll,
 }

@@ -1,22 +1,23 @@
+use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use std::{env, fs};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::domain::file_transfer::{
-    FileTransferSession, RemoteEntry, RemoteEntryKind, TransferDirection, TransferStatus,
-    TransferTask,
+    FileTransferSession, RemoteEntry, RemoteEntryKind, TransferConflictPolicy, TransferDirection,
+    TransferStatus, TransferTask, TransferTaskItemKind,
 };
 use crate::domain::logging::LogLevel;
 use crate::services::connection_manager::ConnectionManager;
 use crate::services::file_transfer_service::FileTransferService;
 use crate::services::log_service::LogService;
 use crate::services::ssh_session_service::{SftpTransferDirective, SshSessionService};
-use crate::services::transfer_service::TransferService;
-use crate::utils::remote_path::normalize_remote_path;
+use crate::services::transfer_service::{ConflictDirective, TransferService};
+use crate::utils::remote_path::{join_remote_path, normalize_remote_path};
 
 const TRANSFER_CANCELLED: &str = "transfer cancelled";
 const SFTP_MAX_RUNNING_TRANSFERS_PER_CONNECTION: usize = 1;
@@ -29,6 +30,29 @@ pub struct LocalFileListResult {
 }
 
 const LOCAL_ROOTS_PATH: &str = "portiva://local-roots";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileUploadRequest {
+    local_path: String,
+    remote_path: String,
+}
+
+#[derive(Debug)]
+struct PlannedUploadFile {
+    local_path: PathBuf,
+    remote_path: String,
+}
+
+#[derive(Debug)]
+struct DirectoryUploadPlan {
+    directories: Vec<String>,
+    files: Vec<PlannedUploadFile>,
+    skipped_items: u64,
+    failed_items: u64,
+    last_error: Option<String>,
+    total_bytes: u64,
+}
 
 #[tauri::command]
 pub fn local_download_directory() -> Result<String, String> {
@@ -261,7 +285,13 @@ pub async fn file_transfer_upload(
     let session = file_transfer_service.session(&session_id)?;
     let connection_id = session.connection_id.clone();
     require_sftp(&ssh_sessions, &connection_id)?;
-    let task = transfer_service.upload(connection_id.clone(), local_path.clone(), remote_path)?;
+    let item_kind = local_upload_item_kind(&local_path)?;
+    let task = transfer_service.upload_with_kind(
+        connection_id.clone(),
+        local_path,
+        remote_path,
+        item_kind,
+    )?;
     let _ = logs.record(
         LogLevel::Info,
         "transfer",
@@ -270,6 +300,57 @@ pub async fn file_transfer_upload(
 
     start_queued_sftp_transfers(app_handle, connection_id)?;
     transfer_service.get(&task.id)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn file_transfer_upload_batch(
+    session_id: String,
+    uploads: Vec<FileUploadRequest>,
+    app_handle: AppHandle,
+    file_transfer_service: State<'_, FileTransferService>,
+    ssh_sessions: State<'_, SshSessionService>,
+    transfer_service: State<'_, TransferService>,
+    logs: State<'_, LogService>,
+) -> Result<Vec<TransferTask>, String> {
+    if uploads.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let session = file_transfer_service.session(&session_id)?;
+    let connection_id = session.connection_id.clone();
+    require_sftp(&ssh_sessions, &connection_id)?;
+
+    // 先校验整批拖入项，确保所有可见任务创建完成后再启动后台传输。
+    let prepared = uploads
+        .into_iter()
+        .map(|upload| {
+            let item_kind = local_upload_item_kind(&upload.local_path)?;
+            Ok((upload, item_kind))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let mut tasks = Vec::with_capacity(prepared.len());
+    for (upload, item_kind) in prepared {
+        let task = transfer_service.upload_with_kind(
+            connection_id.clone(),
+            upload.local_path,
+            upload.remote_path,
+            item_kind,
+        )?;
+        let _ = logs.record(
+            LogLevel::Info,
+            "transfer",
+            format!("queued upload {}", task.remote_path),
+        );
+        tasks.push(task);
+    }
+
+    start_queued_sftp_transfers(app_handle, connection_id)?;
+    tasks
+        .iter()
+        .map(|task| transfer_service.get(&task.id))
+        .collect()
 }
 
 #[tauri::command]
@@ -304,24 +385,433 @@ fn spawn_sftp_upload(app_handle: AppHandle, connection_id: String, task: Transfe
         let transfer_service = app_handle.state::<TransferService>();
         let ssh_sessions = app_handle.state::<SshSessionService>();
 
+        let result = match task.item_kind.clone() {
+            TransferTaskItemKind::File => {
+                upload_single_file_task(&ssh_sessions, &transfer_service, &connection_id, &task)
+                    .await
+            }
+            TransferTaskItemKind::Directory => {
+                upload_directory_task(&ssh_sessions, &transfer_service, &connection_id, &task).await
+            }
+        };
+
+        finish_background_transfer(app_handle, connection_id, task_id, result);
+    });
+}
+
+async fn upload_single_file_task(
+    ssh_sessions: &SshSessionService,
+    transfer_service: &TransferService,
+    connection_id: &str,
+    task: &TransferTask,
+) -> Result<crate::services::ssh_session_service::SftpTransferOutcome, String> {
+    let total_bytes = tokio::fs::metadata(&task.local_path)
+        .await
+        .map_err(|error| format!("failed to inspect local upload source: {error}"))?
+        .len();
+    transfer_service.set_totals(&task.id, total_bytes, 1)?;
+
+    match upload_file_with_task_conflict(
+        ssh_sessions,
+        transfer_service,
+        connection_id,
+        &task.id,
+        &task.local_path,
+        &task.remote_path,
+        0,
+        total_bytes,
+    )
+    .await?
+    {
+        Some(outcome) => {
+            transfer_service.mark_item_completed(&task.id)?;
+            Ok(outcome)
+        }
+        None => {
+            transfer_service.mark_item_skipped(&task.id)?;
+            Ok(crate::services::ssh_session_service::SftpTransferOutcome {
+                total_bytes: Some(total_bytes),
+                transferred_bytes: 0,
+            })
+        }
+    }
+}
+
+async fn upload_directory_task(
+    ssh_sessions: &SshSessionService,
+    transfer_service: &TransferService,
+    connection_id: &str,
+    task: &TransferTask,
+) -> Result<crate::services::ssh_session_service::SftpTransferOutcome, String> {
+    let plan = scan_upload_directory(
+        &task.local_path,
+        &task.remote_path,
+        transfer_service,
+        &task.id,
+    )
+    .await?;
+    let total_items = plan.directories.len() as u64
+        + plan.files.len() as u64
+        + plan.skipped_items
+        + plan.failed_items;
+    transfer_service.set_totals(&task.id, plan.total_bytes, total_items)?;
+    if plan.skipped_items > 0 {
+        transfer_service.mark_items_skipped(&task.id, plan.skipped_items)?;
+    }
+    if plan.failed_items > 0 {
+        transfer_service.mark_items_failed(
+            &task.id,
+            plan.failed_items,
+            plan.last_error
+                .clone()
+                .unwrap_or_else(|| "failed to scan part of the local directory".to_string()),
+        )?;
+    }
+
+    let mut blocked_remote_directories: Vec<String> = Vec::new();
+    for remote_directory in &plan.directories {
+        wait_for_transfer_ready(
+            transfer_service,
+            &task.id,
+            transfer_service.get(&task.id)?.transferred_bytes,
+            Some(plan.total_bytes),
+        )
+        .await?;
+
+        if blocked_remote_directories
+            .iter()
+            .any(|blocked| remote_path_is_within(remote_directory, blocked))
+        {
+            transfer_service.mark_item_skipped(&task.id)?;
+            continue;
+        }
+
+        match ensure_remote_directory_for_task(
+            ssh_sessions,
+            transfer_service,
+            connection_id,
+            &task.id,
+            remote_directory,
+        )
+        .await
+        {
+            Ok(true) => {
+                transfer_service.mark_item_completed(&task.id)?;
+            }
+            Ok(false) => {
+                transfer_service.mark_item_skipped(&task.id)?;
+                blocked_remote_directories.push(remote_directory.clone());
+            }
+            Err(error) if error == TRANSFER_CANCELLED => return Err(error),
+            Err(error) => {
+                transfer_service.mark_item_failed(&task.id, error)?;
+                blocked_remote_directories.push(remote_directory.clone());
+            }
+        }
+    }
+
+    let mut transferred_bytes = 0_u64;
+    for file in &plan.files {
+        wait_for_transfer_ready(
+            transfer_service,
+            &task.id,
+            transferred_bytes,
+            Some(plan.total_bytes),
+        )
+        .await?;
+
+        if blocked_remote_directories
+            .iter()
+            .any(|blocked| remote_path_is_within(&file.remote_path, blocked))
+        {
+            transfer_service.mark_item_skipped(&task.id)?;
+            continue;
+        }
+
+        match upload_file_with_task_conflict(
+            ssh_sessions,
+            transfer_service,
+            connection_id,
+            &task.id,
+            &file.local_path.to_string_lossy(),
+            &file.remote_path,
+            transferred_bytes,
+            plan.total_bytes,
+        )
+        .await
+        {
+            Ok(Some(outcome)) => {
+                transferred_bytes = transferred_bytes.saturating_add(outcome.transferred_bytes);
+                transfer_service.mark_progress(
+                    &task.id,
+                    transferred_bytes,
+                    Some(plan.total_bytes),
+                )?;
+                transfer_service.mark_item_completed(&task.id)?;
+            }
+            Ok(None) => {
+                transfer_service.mark_item_skipped(&task.id)?;
+            }
+            Err(error) if error == TRANSFER_CANCELLED => return Err(error),
+            Err(error) => {
+                transfer_service.mark_item_failed(&task.id, error)?;
+            }
+        }
+    }
+
+    Ok(crate::services::ssh_session_service::SftpTransferOutcome {
+        total_bytes: Some(plan.total_bytes),
+        transferred_bytes,
+    })
+}
+
+async fn scan_upload_directory(
+    local_root: &str,
+    remote_root: &str,
+    transfer_service: &TransferService,
+    task_id: &str,
+) -> Result<DirectoryUploadPlan, String> {
+    let root = PathBuf::from(local_root);
+    let mut pending = VecDeque::from([(root.clone(), normalize_remote_path(remote_root))]);
+    let mut directories = vec![normalize_remote_path(remote_root)];
+    let mut files = Vec::new();
+    let mut skipped_items = 0_u64;
+    let mut failed_items = 0_u64;
+    let mut last_error = None;
+    let mut total_bytes = 0_u64;
+
+    while let Some((local_directory, remote_directory)) = pending.pop_front() {
+        wait_for_transfer_ready(transfer_service, task_id, 0, None).await?;
+        let mut entries = match tokio::fs::read_dir(&local_directory).await {
+            Ok(entries) => entries,
+            Err(error) if local_directory == root => {
+                return Err(format!(
+                    "failed to scan local upload directory {}: {error}",
+                    local_directory.display()
+                ));
+            }
+            Err(error) => {
+                failed_items = failed_items.saturating_add(1);
+                last_error = Some(format!(
+                    "failed to scan local upload directory {}: {error}",
+                    local_directory.display()
+                ));
+                continue;
+            }
+        };
+
+        loop {
+            let entry = match entries.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(error) => {
+                    failed_items = failed_items.saturating_add(1);
+                    last_error = Some(format!(
+                        "failed to read local upload directory {}: {error}",
+                        local_directory.display()
+                    ));
+                    break;
+                }
+            };
+            let local_path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.is_empty() || name.contains('\u{fffd}') {
+                skipped_items = skipped_items.saturating_add(1);
+                continue;
+            }
+            let metadata = match tokio::fs::symlink_metadata(&local_path).await {
+                Ok(metadata) => metadata,
+                Err(error) => {
+                    failed_items = failed_items.saturating_add(1);
+                    last_error = Some(format!(
+                        "failed to inspect local upload entry {}: {error}",
+                        local_path.display()
+                    ));
+                    continue;
+                }
+            };
+            let remote_path = join_remote_path(&remote_directory, &name);
+
+            if metadata.file_type().is_symlink() {
+                skipped_items = skipped_items.saturating_add(1);
+            } else if metadata.is_dir() {
+                directories.push(remote_path.clone());
+                pending.push_back((local_path, remote_path));
+            } else if metadata.is_file() {
+                total_bytes = total_bytes.saturating_add(metadata.len());
+                files.push(PlannedUploadFile {
+                    local_path,
+                    remote_path,
+                });
+            } else {
+                skipped_items = skipped_items.saturating_add(1);
+            }
+        }
+    }
+
+    Ok(DirectoryUploadPlan {
+        directories,
+        files,
+        skipped_items,
+        failed_items,
+        last_error,
+        total_bytes,
+    })
+}
+
+async fn ensure_remote_directory_for_task(
+    ssh_sessions: &SshSessionService,
+    transfer_service: &TransferService,
+    connection_id: &str,
+    task_id: &str,
+    remote_path: &str,
+) -> Result<bool, String> {
+    match ssh_sessions.entry_kind(connection_id, remote_path).await? {
+        Some(RemoteEntryKind::Directory) => Ok(true),
+        Some(_) => {
+            if !wait_for_conflict_choice(transfer_service, task_id, remote_path).await? {
+                return Ok(false);
+            }
+            ssh_sessions.remove(connection_id, remote_path).await?;
+            ssh_sessions.mkdir(connection_id, remote_path).await?;
+            Ok(true)
+        }
+        None => ssh_sessions
+            .mkdir(connection_id, remote_path)
+            .await
+            .map(|_| true),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upload_file_with_task_conflict(
+    ssh_sessions: &SshSessionService,
+    transfer_service: &TransferService,
+    connection_id: &str,
+    task_id: &str,
+    local_path: &str,
+    remote_path: &str,
+    transferred_before_file: u64,
+    task_total_bytes: u64,
+) -> Result<Option<crate::services::ssh_session_service::SftpTransferOutcome>, String> {
+    loop {
+        wait_for_transfer_ready(
+            transfer_service,
+            task_id,
+            transferred_before_file,
+            Some(task_total_bytes),
+        )
+        .await?;
+
+        if ssh_sessions
+            .entry_kind(connection_id, remote_path)
+            .await?
+            .is_some()
+        {
+            if !wait_for_conflict_choice(transfer_service, task_id, remote_path).await? {
+                return Ok(None);
+            }
+            ssh_sessions.remove(connection_id, remote_path).await?;
+        }
+
         let result = ssh_sessions
             .upload_file_with_progress(
-                &connection_id,
-                &task.local_path,
-                &task.remote_path,
-                |transferred_bytes, total_bytes| {
+                connection_id,
+                local_path,
+                remote_path,
+                |file_transferred_bytes, _| {
                     transfer_progress_directive(
-                        &transfer_service,
-                        &task_id,
-                        transferred_bytes,
-                        total_bytes,
+                        transfer_service,
+                        task_id,
+                        transferred_before_file.saturating_add(file_transferred_bytes),
+                        Some(task_total_bytes),
                     )
                 },
             )
             .await;
 
-        finish_background_transfer(app_handle, connection_id, task_id, result);
-    });
+        match result {
+            Ok(outcome) => return Ok(Some(outcome)),
+            Err(error) if is_upload_conflict_error(&error) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+async fn wait_for_conflict_choice(
+    transfer_service: &TransferService,
+    task_id: &str,
+    remote_path: &str,
+) -> Result<bool, String> {
+    loop {
+        let requested = transfer_service.request_conflict(task_id, remote_path.to_string())?;
+        match requested.status {
+            TransferStatus::WaitingConflict => break,
+            TransferStatus::Running => match requested.conflict_policy {
+                TransferConflictPolicy::OverwriteAll => return Ok(true),
+                TransferConflictPolicy::SkipAll => return Ok(false),
+                policy => {
+                    return Err(format!(
+                        "cannot apply transfer conflict policy {policy:?} while running"
+                    ))
+                }
+            },
+            TransferStatus::Paused => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            TransferStatus::Cancelled => return Err(TRANSFER_CANCELLED.to_string()),
+            status => {
+                return Err(format!(
+                    "cannot wait for transfer conflict while status is {status:?}"
+                ))
+            }
+        }
+    }
+
+    loop {
+        match transfer_service.take_conflict_directive(task_id)? {
+            ConflictDirective::Wait => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            ConflictDirective::Overwrite => return Ok(true),
+            ConflictDirective::Skip => return Ok(false),
+            ConflictDirective::Cancel => return Err(TRANSFER_CANCELLED.to_string()),
+        }
+    }
+}
+
+async fn wait_for_transfer_ready(
+    transfer_service: &TransferService,
+    task_id: &str,
+    transferred_bytes: u64,
+    total_bytes: Option<u64>,
+) -> Result<(), String> {
+    loop {
+        match transfer_progress_directive(
+            transfer_service,
+            task_id,
+            transferred_bytes,
+            total_bytes,
+        )? {
+            SftpTransferDirective::Continue => return Ok(()),
+            SftpTransferDirective::Pause => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
+}
+
+fn remote_path_is_within(path: &str, directory: &str) -> bool {
+    directory == "/"
+        || path == directory
+        || path
+            .strip_prefix(directory)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn is_upload_conflict_error(error: &str) -> bool {
+    error.contains("upload target already exists")
+        || error.contains("upload target appeared during transfer")
 }
 
 fn spawn_sftp_download(app_handle: AppHandle, connection_id: String, task: TransferTask) {
@@ -525,6 +1015,15 @@ pub fn file_transfer_resume(
 }
 
 #[tauri::command]
+pub fn file_transfer_resolve_conflict(
+    transfer_id: String,
+    policy: TransferConflictPolicy,
+    transfer_service: State<'_, TransferService>,
+) -> Result<TransferTask, String> {
+    transfer_service.resolve_conflict(&transfer_id, policy)
+}
+
+#[tauri::command]
 pub fn file_transfer_retry(
     transfer_id: String,
     app_handle: AppHandle,
@@ -548,6 +1047,25 @@ fn require_sftp(ssh_sessions: &SshSessionService, connection_id: &str) -> Result
     Err(format!(
         "SFTP connection is unavailable for {connection_id}; reconnect before continuing"
     ))
+}
+
+fn local_upload_item_kind(local_path: &str) -> Result<TransferTaskItemKind, String> {
+    let metadata = fs::symlink_metadata(local_path)
+        .map_err(|error| format!("failed to inspect local upload source {local_path}: {error}"))?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "symbolic link upload is not supported: {local_path}"
+        ));
+    }
+    if metadata.is_dir() {
+        return Ok(TransferTaskItemKind::Directory);
+    }
+    if metadata.is_file() {
+        return Ok(TransferTaskItemKind::File);
+    }
+
+    Err(format!("unsupported local upload source: {local_path}"))
 }
 
 #[tauri::command]
@@ -707,7 +1225,7 @@ fn local_entry_from_metadata(path: &Path, metadata: fs::Metadata) -> Result<Remo
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_remote_list_path, resolve_local_path};
+    use super::{normalize_remote_list_path, remote_path_is_within, resolve_local_path};
 
     #[test]
     fn remote_list_root_is_absolute_slash() {
@@ -724,6 +1242,20 @@ mod tests {
         assert!(resolve_local_path(".").unwrap().is_absolute());
         assert!(resolve_local_path("src").unwrap().is_absolute());
         assert!(resolve_local_path("./src").unwrap().ends_with("src"));
+    }
+
+    #[test]
+    fn blocked_remote_directory_matches_only_its_own_tree() {
+        assert!(remote_path_is_within("/srv/upload", "/srv/upload"));
+        assert!(remote_path_is_within(
+            "/srv/upload/nested/file.txt",
+            "/srv/upload"
+        ));
+        assert!(!remote_path_is_within(
+            "/srv/upload-other/file.txt",
+            "/srv/upload"
+        ));
+        assert!(remote_path_is_within("/any/path", "/"));
     }
 }
 

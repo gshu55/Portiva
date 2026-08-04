@@ -51,7 +51,15 @@ impl CredentialBackend for OsCredentialBackend {
 }
 
 fn credential_error(action: &str, error: keyring::Error) -> String {
-    format!("系统凭据库{action}失败：{error}")
+    match error {
+        keyring::Error::NoStorageAccess(detail) if action == "读取凭据" => format!(
+            "系统凭据库读取凭据失败：当前应用没有访问权限，或系统凭据库已锁定（{detail}）。请重新输入并保存"
+        ),
+        keyring::Error::PlatformFailure(detail) if action == "读取凭据" => format!(
+            "系统凭据库读取凭据失败：系统拒绝了当前应用的读取请求（{detail}）。请重新输入并保存"
+        ),
+        error => format!("系统凭据库{action}失败：{error}"),
+    }
 }
 
 #[cfg(test)]
@@ -554,10 +562,24 @@ fn unprotect_legacy_windows_secret(_value: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MemoryCredentialBackend, SecretStore, OS_KEYRING_PROTECTION};
+    use super::{credential_error, MemoryCredentialBackend, SecretStore, OS_KEYRING_PROTECTION};
     use crate::domain::secret::SecretPurpose;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn credential_access_failure_explains_how_to_recover() {
+        let error = credential_error(
+            "读取凭据",
+            keyring::Error::NoStorageAccess(Box::new(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "permission denied",
+            ))),
+        );
+
+        assert!(error.contains("当前应用没有访问权限"));
+        assert!(error.contains("请重新输入并保存"));
+    }
 
     #[test]
     fn deletes_secret_metadata() {

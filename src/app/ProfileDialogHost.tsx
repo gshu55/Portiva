@@ -17,6 +17,7 @@ interface HostTrustRequestInput extends ConnectionSecretInput {
 }
 
 interface ProfileDialogState {
+  forceSecretEntry?: boolean;
   mode: "create" | "edit";
   profile: ConnectionProfile;
 }
@@ -54,14 +55,22 @@ export function ProfileDialogHost({
 
   return (
     <ConnectionProfileDialog
+      credentialNotice={
+        dialog.forceSecretEntry
+          ? "无法读取原来保存的系统凭据。请重新输入密码；需要继续保存时，请重新勾选“记住密码”。"
+          : undefined
+      }
       mode={dialog.mode}
       profile={dialog.profile}
-      rememberedSecret={workspace.secrets.some(
-        (secret) =>
-          secret.profileId === dialog.profile.id &&
-          secret.purpose === "password" &&
-          secret.hasValue,
-      )}
+      rememberedSecret={
+        !dialog.forceSecretEntry &&
+        workspace.secrets.some(
+          (secret) =>
+            secret.profileId === dialog.profile.id &&
+            secret.purpose === "password" &&
+            secret.hasValue,
+        )
+      }
       serialPorts={workspace.serialPorts}
       onCreateDraft={workspace.createProfileDraft}
       onClose={() => {

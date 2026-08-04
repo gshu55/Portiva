@@ -291,9 +291,11 @@ export function Select<T extends string | number>({
 }
 
 export interface ConfirmDialogProps {
+  actions?: ReactNode;
   cancelLabel?: ReactNode;
   confirmLabel?: ReactNode;
   description?: ReactNode;
+  dismissible?: boolean;
   open: boolean;
   title: ReactNode;
   tone?: "default" | "danger";
@@ -302,9 +304,11 @@ export interface ConfirmDialogProps {
 }
 
 export function ConfirmDialog({
+  actions,
   cancelLabel = "取消",
   confirmLabel = "确认",
   description,
+  dismissible = true,
   open,
   title,
   tone = "default",
@@ -312,7 +316,7 @@ export function ConfirmDialog({
   onConfirm,
 }: ConfirmDialogProps) {
   useEffect(() => {
-    if (!open) {
+    if (!open || !dismissible) {
       return;
     }
 
@@ -324,7 +328,7 @@ export function ConfirmDialog({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onCancel, open]);
+  }, [dismissible, onCancel, open]);
 
   if (!open || typeof document === "undefined") {
     return null;
@@ -333,7 +337,12 @@ export function ConfirmDialog({
   const themeStyle = getPortalThemeStyle();
 
   return createPortal(
-    <div className="modal-backdrop ui-confirm-backdrop" onPointerDown={onCancel} role="presentation" style={themeStyle}>
+    <div
+      className="modal-backdrop ui-confirm-backdrop"
+      onPointerDown={dismissible ? onCancel : undefined}
+      role="presentation"
+      style={themeStyle}
+    >
       <section
         aria-modal="true"
         className="ui-confirm-dialog"
@@ -345,17 +354,21 @@ export function ConfirmDialog({
           {description ? <p>{description}</p> : null}
         </div>
         <div className="ui-confirm-actions">
-          <Button onClick={onCancel} tone="muted">
-            {cancelLabel}
-          </Button>
-          <Button
-            className={tone === "danger" ? "danger-action" : undefined}
-            icon={tone === "danger" ? "trash" : undefined}
-            onClick={onConfirm}
-            tone={tone}
-          >
-            {confirmLabel}
-          </Button>
+          {actions ?? (
+            <>
+              <Button onClick={onCancel} tone="muted">
+                {cancelLabel}
+              </Button>
+              <Button
+                className={tone === "danger" ? "danger-action" : undefined}
+                icon={tone === "danger" ? "trash" : undefined}
+                onClick={onConfirm}
+                tone={tone}
+              >
+                {confirmLabel}
+              </Button>
+            </>
+          )}
         </div>
       </section>
     </div>,

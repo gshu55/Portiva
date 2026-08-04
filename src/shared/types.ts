@@ -163,13 +163,27 @@ export interface TransferTask {
   connectionId: string;
   direction: "upload" | "download";
   protocol: "sftp" | "scp" | "ftp" | "webdav" | "s3";
+  itemKind: "file" | "directory";
   localPath: string;
   remotePath: string;
-  status: "pending" | "running" | "paused" | "cancelled" | "failed" | "completed";
-  conflictPolicy: "ask" | "overwrite" | "rename" | "skip";
+  status:
+    | "pending"
+    | "running"
+    | "paused"
+    | "waiting-conflict"
+    | "cancelled"
+    | "failed"
+    | "partial"
+    | "completed";
+  conflictPolicy: "ask" | "overwrite" | "overwrite-all" | "rename" | "skip" | "skip-all";
+  conflictPath?: string;
   retryCount: number;
   totalBytes?: number;
   transferredBytes: number;
+  totalItems?: number;
+  completedItems: number;
+  skippedItems: number;
+  failedItems: number;
   speedBytesPerSecond?: number;
   error?: string;
   createdAt: string;

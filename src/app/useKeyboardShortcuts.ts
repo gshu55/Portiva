@@ -15,6 +15,10 @@ export function useKeyboardShortcuts(settings: AppSettings, handlers: ShortcutHa
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (isBrowserReloadShortcut(event)) {
+        if (isTerminalCtrlR(event)) {
+          return;
+        }
+
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -52,4 +56,18 @@ function isBrowserReloadShortcut(event: KeyboardEvent) {
 
   const key = event.key.toLowerCase();
   return key === "r" && (event.ctrlKey || event.metaKey);
+}
+
+function isTerminalCtrlR(event: KeyboardEvent) {
+  if (
+    event.key.toLowerCase() !== "r" ||
+    !event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.shiftKey
+  ) {
+    return false;
+  }
+
+  return event.target instanceof HTMLElement && Boolean(event.target.closest(".xterm"));
 }

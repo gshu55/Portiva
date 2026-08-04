@@ -18,7 +18,6 @@ interface TerminalPaneProps {
   autoScroll?: boolean;
   clearRevision?: number;
   isActive?: boolean;
-  outputPaused?: boolean;
   reportSizeWhenVisible?: boolean;
   terminal: TerminalSession | null;
   terminalConfirmMultilinePaste?: boolean;
@@ -88,6 +87,28 @@ type SearchStatus = "idle" | "found" | "empty" | "error";
 
 const wordSeparators = " ~!@#$%^&*()+`-=[]{}|\\;:\"',./<>?\r\n\t";
 
+function isTerminalSearchShortcut(event: KeyboardEvent) {
+  if (event.key.toLowerCase() !== "f" || event.altKey) {
+    return false;
+  }
+
+  return event.metaKey || (event.ctrlKey && event.shiftKey);
+}
+
+function readTerminalPlainText(instance: Terminal | null) {
+  if (!instance) {
+    return "";
+  }
+
+  const buffer = instance.buffer.active;
+  const lines: string[] = [];
+  for (let index = 0; index < buffer.length; index += 1) {
+    lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+  }
+
+  return lines.join("\n");
+}
+
 function isWholeWordMatch(source: string, index: number, termLength: number) {
   const before = index === 0 ? "" : source[index - 1];
   const afterIndex = index + termLength;
@@ -135,7 +156,6 @@ export function TerminalPane({
   onCloseDisconnected,
   onReconnectDisconnected,
   onSendData,
-  outputPaused = false,
   reportSizeWhenVisible = false,
   terminal,
   terminalConfirmMultilinePaste = true,
@@ -152,12 +172,14 @@ export function TerminalPane({
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pasteTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastBufferRef = useRef("");
+  const renderInitializedRef = useRef(false);
+  const replayingSnapshotRef = useRef(false);
+  const snapshotReplayRevisionRef = useRef(0);
   const lastClearRevisionRef = useRef(clearRevision);
   const pendingOutputRef = useRef("");
   const outputFrameRef = useRef<number | null>(null);
   const lastReportedSizeRef = useRef<TerminalSize | null>(null);
   const autoScrollRef = useRef(autoScroll);
-  const outputPausedRef = useRef(outputPaused);
   const resizeTerminalRef = useRef(onResizeTerminal);
   const sendDataRef = useRef(onSendData);
   const inputQueueRef = useRef(Promise.resolve());
@@ -224,17 +246,6 @@ export function TerminalPane({
     autoScrollRef.current = autoScroll;
   }, [autoScroll]);
 
-  useEffect(() => {
-    outputPausedRef.current = outputPaused;
-    if (outputPaused) {
-      pendingOutputRef.current = "";
-      if (outputFrameRef.current !== null) {
-        window.cancelAnimationFrame(outputFrameRef.current);
-        outputFrameRef.current = null;
-      }
-    }
-  }, [outputPaused]);
-
   const enqueueInput = (data: string, terminalId: string) => {
     inputQueueRef.current = inputQueueRef.current
       .then(() => Promise.resolve(sendDataRef.current(data, terminalId)))
@@ -252,11 +263,24 @@ export function TerminalPane({
     return instance.buffer.active.baseY - instance.buffer.active.viewportY <= 1;
   };
 
-  const writeOutput = (instance: Terminal, output: string) => {
+  const writeOutput = (instance: Terminal, output: string, onParsed?: () => void) => {
     const keepScrollAtBottom = shouldKeepScrollAtBottom(instance);
     instance.write(output, () => {
       if (keepScrollAtBottom && instance.buffer.active.type !== "alternate") {
         instance.scrollToBottom();
+      }
+      onParsed?.();
+    });
+  };
+
+  const replaySnapshot = (instance: Terminal, output: string) => {
+    snapshotReplayRevisionRef.current += 1;
+    const revision = snapshotReplayRevisionRef.current;
+    // 历史 ANSI 数据可能包含设备状态查询；重放只用于恢复画面，不能再次回写远端。
+    replayingSnapshotRef.current = true;
+    writeOutput(instance, output, () => {
+      if (xtermRef.current === instance && snapshotReplayRevisionRef.current === revision) {
+        replayingSnapshotRef.current = false;
       }
     });
   };
@@ -266,7 +290,7 @@ export function TerminalPane({
     const instance = xtermRef.current;
     const output = pendingOutputRef.current;
 
-    if (!instance || !output || outputPausedRef.current) {
+    if (!instance || !output) {
       return;
     }
 
@@ -315,12 +339,13 @@ export function TerminalPane({
     });
   };
 
-  const sendPastedText = async (text: string) => {
+  const sendPastedText = (text: string) => {
     if (!terminal || terminalStatus === "closed" || !text) {
       return;
     }
 
-    await enqueueInput(text, terminal.id);
+    // 由 xterm 根据当前 bracketed-paste 模式统一处理换行和粘贴边界。
+    xtermRef.current?.paste(text);
   };
 
   const queuePastedText = async (text: string) => {
@@ -337,13 +362,13 @@ export function TerminalPane({
       return;
     }
 
-    await sendPastedText(text);
+    sendPastedText(text);
   };
 
   const confirmPasteDraft = async () => {
     const text = pasteText;
     setPasteDraft(null);
-    await sendPastedText(text);
+    sendPastedText(text);
     window.requestAnimationFrame(() => {
       xtermRef.current?.focus();
     });
@@ -455,15 +480,18 @@ export function TerminalPane({
       xtermRef.current = null;
       fitAddonRef.current = null;
       lastBufferRef.current = "";
+      renderInitializedRef.current = false;
+      replayingSnapshotRef.current = false;
+      snapshotReplayRevisionRef.current += 1;
       return;
     }
 
     container.replaceChildren();
     const instance = new Terminal({
       allowProposedApi: false,
-      convertEol: true,
       cursorBlink: true,
-      cursorStyle: "block",
+      cursorStyle: "bar",
+      cursorWidth: 2,
       disableStdin: false,
       fontFamily: "var(--terminal-font-family), Cascadia Mono, Consolas, monospace",
       fontSize: Number.parseInt(
@@ -481,7 +509,7 @@ export function TerminalPane({
     instance.loadAddon(serializeAddon);
     instance.open(container);
     instance.attachCustomKeyEventHandler((event) => {
-      if (event.type === "keydown" && event.key.toLowerCase() === "f" && (event.ctrlKey || event.metaKey)) {
+      if (event.type === "keydown" && isTerminalSearchShortcut(event)) {
         event.preventDefault();
         openSearchRef.current();
         return false;
@@ -506,7 +534,7 @@ export function TerminalPane({
       return false;
     });
     instance.onData((data) => {
-      if (terminalStatusRef.current === "closed") {
+      if (terminalStatusRef.current === "closed" || replayingSnapshotRef.current) {
         return;
       }
 
@@ -517,6 +545,9 @@ export function TerminalPane({
     searchAddonRef.current = searchAddon;
     serializeAddonRef.current = serializeAddon;
     lastBufferRef.current = "";
+    renderInitializedRef.current = false;
+    replayingSnapshotRef.current = false;
+    snapshotReplayRevisionRef.current += 1;
 
     const reportSize = () => {
       const fitAddonInstance = fitAddonRef.current;
@@ -589,6 +620,9 @@ export function TerminalPane({
         searchAddonRef.current = null;
         serializeAddonRef.current = null;
         lastBufferRef.current = "";
+        renderInitializedRef.current = false;
+        replayingSnapshotRef.current = false;
+        snapshotReplayRevisionRef.current += 1;
         lastReportedSizeRef.current = null;
         reportSizeRef.current = null;
         inputQueueRef.current = Promise.resolve();
@@ -627,18 +661,25 @@ export function TerminalPane({
       return;
     }
 
-    if (outputPausedRef.current) {
+    if (!renderInitializedRef.current) {
+      replaySnapshot(instance, terminalBuffer);
+      lastBufferRef.current = terminalBuffer;
+      renderInitializedRef.current = true;
       return;
     }
 
     const previousBuffer = lastBufferRef.current;
-    const canAppendChunk =
-      terminalOutputChunk && terminalBuffer === `${previousBuffer}${terminalOutputChunk}`;
+    if (terminalOutputChunk) {
+      const appendedBuffer = `${previousBuffer}${terminalOutputChunk}`;
+      // 预览缓冲区会从头部截断；只要新预览仍是累计输出的后缀，就可以安全地增量解析。
+      const canAppendChunk =
+        terminalBuffer === appendedBuffer || appendedBuffer.endsWith(terminalBuffer);
 
-    if (canAppendChunk) {
-      enqueueOutput(terminalOutputChunk);
-      lastBufferRef.current = terminalBuffer;
-      return;
+      if (canAppendChunk) {
+        enqueueOutput(terminalOutputChunk);
+        lastBufferRef.current = terminalBuffer;
+        return;
+      }
     }
 
     if (terminalBuffer !== previousBuffer) {
@@ -648,10 +689,10 @@ export function TerminalPane({
         outputFrameRef.current = null;
       }
       instance.reset();
-      writeOutput(instance, terminalBuffer);
+      replaySnapshot(instance, terminalBuffer);
       lastBufferRef.current = terminalBuffer;
     }
-  }, [terminal, terminalBuffer, terminalOutputChunk, terminalSnapshot, outputPaused]);
+  }, [terminal?.id, terminalBuffer, terminalOutputChunk, terminalSnapshot]);
 
   useEffect(() => {
     if (lastClearRevisionRef.current === clearRevision) {
@@ -671,8 +712,8 @@ export function TerminalPane({
   const closeContextMenu = () => setContextMenu(null);
 
   const copyTerminalText = async () => {
-    const selection = xtermRef.current?.getSelection().trim();
-    const text = selection || terminalBuffer;
+    const selection = xtermRef.current?.getSelection() ?? "";
+    const text = selection || readTerminalPlainText(xtermRef.current);
 
     if (!text) {
       closeContextMenu();
@@ -723,8 +764,8 @@ export function TerminalPane({
   };
 
   const copyTerminalPlainText = async () => {
-    const selection = xtermRef.current?.getSelection().trim();
-    const text = selection || terminalBuffer;
+    const selection = xtermRef.current?.getSelection() ?? "";
+    const text = selection || readTerminalPlainText(xtermRef.current);
 
     try {
       if (text) {
@@ -754,7 +795,7 @@ export function TerminalPane({
   };
 
   const handleSmartCopyOrPaste = async () => {
-    const selection = xtermRef.current?.getSelection().trim();
+    const selection = xtermRef.current?.getSelection() ?? "";
 
     if (selection) {
       await copySelectedTerminalText(selection);

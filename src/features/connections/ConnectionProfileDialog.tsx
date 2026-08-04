@@ -25,6 +25,7 @@ export interface ConnectionActionResult {
 }
 
 interface ConnectionProfileDialogProps {
+  credentialNotice?: string;
   mode: "create" | "edit";
   profile: ConnectionProfile;
   rememberedSecret?: boolean;
@@ -47,6 +48,7 @@ const profileTypeIcons: Record<ConnectionProfile["type"], IconName> = {
 };
 
 export function ConnectionProfileDialog({
+  credentialNotice,
   mode,
   onCreateDraft,
   onClose,
@@ -65,6 +67,7 @@ export function ConnectionProfileDialog({
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [connectResult, setConnectResult] = useState<ConnectionActionResult | null>(null);
   const [saveResult, setSaveResult] = useState<ConnectionActionResult | null>(null);
+  const [busyAction, setBusyAction] = useState<"connect" | "save" | "test" | null>(null);
 
   useEffect(() => {
     setDraft(profile);
@@ -73,18 +76,19 @@ export function ConnectionProfileDialog({
     setTestResult(null);
     setConnectResult(null);
     setSaveResult(null);
+    setBusyAction(null);
   }, [profile, rememberedSecret]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !busyAction) {
         onClose();
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [busyAction, onClose]);
 
   const title = `${mode === "create" ? "新建" : "编辑"} ${protocolLabel(draft.type)} 配置`;
   const canSave = canSaveProfile(draft);
@@ -98,34 +102,69 @@ export function ConnectionProfileDialog({
   const canTest = canSave && (!needsConnectionSecret || Boolean(secret));
 
   const connectDraft = async () => {
+    if (busyAction) {
+      return;
+    }
+
+    setBusyAction("connect");
     setConnectResult(null);
     setSaveResult(null);
     setTestResult(null);
 
-    const result = await onConnect(draft, { rememberSecret, secret });
-    if (!result.ok && !result.needsTrust) {
-      setConnectResult(result);
+    try {
+      const result = await onConnect(draft, { rememberSecret, secret });
+      if (!result.ok && !result.needsTrust) {
+        setConnectResult(result);
+      }
+    } finally {
+      setBusyAction(null);
     }
   };
   const testDraft = async () => {
+    if (busyAction) {
+      return;
+    }
+
+    setBusyAction("test");
     setTestResult(null);
     setConnectResult(null);
     setSaveResult(null);
-    const result = await onTest(draft, { rememberSecret, secret });
-    setTestResult(result);
+    try {
+      const result = await onTest(draft, { rememberSecret, secret });
+      setTestResult(result);
+    } finally {
+      setBusyAction(null);
+    }
   };
   const saveDraft = async () => {
+    if (busyAction) {
+      return;
+    }
+
+    setBusyAction("save");
     setSaveResult(null);
     setConnectResult(null);
     setTestResult(null);
-    const result = await onSave(draft, { rememberSecret, secret });
-    if (!result.ok) {
-      setSaveResult(result);
+    try {
+      const result = await onSave(draft, { rememberSecret, secret });
+      if (!result.ok) {
+        setSaveResult(result);
+      }
+    } finally {
+      setBusyAction(null);
     }
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div
+      className="modal-backdrop"
+      role="presentation"
+      onMouseDown={() => {
+        if (!busyAction) {
+          onClose();
+        }
+      }}
+    >
       <section
         aria-label={title}
         aria-modal="true"
@@ -138,7 +177,13 @@ export function ConnectionProfileDialog({
             <strong>{title}</strong>
             <span>{mode === "create" ? "填写连接参数后保存" : "修改名称即可重命名"}</span>
           </div>
-          <IconButton aria-label="关闭弹窗" icon="x" onClick={onClose} title="关闭弹窗" />
+          <IconButton
+            aria-label="关闭弹窗"
+            disabled={Boolean(busyAction)}
+            icon="x"
+            onClick={onClose}
+            title={busyAction ? "当前操作完成后可关闭" : "关闭弹窗"}
+          />
         </div>
 
         <div className="profile-dialog-body">
@@ -206,6 +251,18 @@ export function ConnectionProfileDialog({
             {draft.type === "raw-tcp" ? (
               <RawTcpFields profile={draft} onChange={(profile) => setDraft(profile)} />
             ) : null}
+            {credentialNotice ? (
+              <p className="profile-dialog-note attention">{credentialNotice}</p>
+            ) : null}
+            {busyAction ? (
+              <p className="profile-dialog-note attention" role="status">
+                {busyAction === "connect"
+                  ? "正在读取凭据并连接…"
+                  : busyAction === "test"
+                    ? "正在测试连接…"
+                    : "正在保存配置…"}
+              </p>
+            ) : null}
             {testResult ? (
               <p className={["profile-dialog-note", testResult.ok ? "success" : "danger"].join(" ")}>
                 {testResult.ok ? "测试成功：" : "测试失败："}{testResult.message}
@@ -226,25 +283,46 @@ export function ConnectionProfileDialog({
           <div className="profile-dialog-actions">
             <div className="profile-dialog-actions-left">
               {mode === "edit" ? (
-                <IconButton aria-label="删除配置" className="danger-action" icon="trash" onClick={() => onDelete(draft.id)} title="删除配置" tone="danger" />
+                <IconButton
+                  aria-label="删除配置"
+                  className="danger-action"
+                  disabled={Boolean(busyAction)}
+                  icon="trash"
+                  onClick={() => onDelete(draft.id)}
+                  title="删除配置"
+                  tone="danger"
+                />
               ) : null}
               <IconButton
                 aria-label="测试连接"
-                disabled={!canTest}
+                disabled={Boolean(busyAction) || !canTest}
                 icon="terminal"
                 onClick={() => void testDraft()}
-                title={canTest ? "测试连接" : "请输入密码后再测试连接"}
+                title={
+                  busyAction
+                    ? "正在处理当前操作"
+                    : canTest
+                      ? "测试连接"
+                      : "请输入密码后再测试连接"
+                }
               />
             </div>
             <div className="profile-dialog-actions-right">
               <IconButton
                 aria-label="连接"
-                disabled={!canConnect}
+                disabled={Boolean(busyAction) || !canConnect}
                 icon="plug"
                 onClick={() => void connectDraft()}
-                title="连接"
+                title={busyAction === "connect" ? "正在连接" : "连接"}
               />
-              <IconButton aria-label="保存配置" disabled={!canSave} icon="save" onClick={() => void saveDraft()} title="保存配置" tone="primary" />
+              <IconButton
+                aria-label="保存配置"
+                disabled={Boolean(busyAction) || !canSave}
+                icon="save"
+                onClick={() => void saveDraft()}
+                title={busyAction === "save" ? "正在保存" : "保存配置"}
+                tone="primary"
+              />
             </div>
           </div>
         </div>

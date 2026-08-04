@@ -8,7 +8,11 @@ import {
   useState,
 } from "react";
 import { Icon, type IconName } from "../../shared/Icon";
-import { transferDirectionLabel, transferStatusLabel } from "../../shared/labels";
+import {
+  transferDirectionLabel,
+  transferProgressPercent,
+  transferTaskSummary,
+} from "../../shared/labels";
 import type { RemoteEntry, TransferTask } from "../../shared/types";
 import { writeClipboardText } from "../../shared/clipboard";
 import { localDownloadDirectory, localFileList, localRevealItemInDirectory } from "../../shared/ipc/commands";
@@ -54,8 +58,7 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
       workspace.transfers
         .filter((task) => !connectionId || task.connectionId === connectionId)
         .slice()
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.updatedAt.localeCompare(a.updatedAt))
-        .slice(0, 8),
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.updatedAt.localeCompare(a.updatedAt)),
     [connectionId, workspace.transfers],
   );
 
@@ -915,20 +918,22 @@ function SimpleTransferQueue({
       <div className="simple-sftp-transfer-list">
         {tasks.length > 0 ? (
           tasks.map((task) => {
-            const progress = task.totalBytes
-              ? Math.min(100, Math.round((task.transferredBytes / task.totalBytes) * 100))
-              : task.status === "completed"
-                ? 100
-                : 0;
-            const active = task.status === "running" || task.status === "paused";
-            const canOpenLocalFolder = task.status === "completed" && Boolean(task.localPath.trim());
+            const progress = transferProgressPercent(task);
+            const active =
+              task.status === "running"
+              || task.status === "paused"
+              || task.status === "waiting-conflict";
+            const cancellable = task.status === "pending" || active;
+            const canOpenLocalFolder =
+              (task.status === "completed" || task.status === "partial")
+              && Boolean(task.localPath.trim());
 
             return (
               <div className="simple-sftp-transfer-item" key={task.id} title={`${task.remotePath}\n${task.localPath}`}>
                 <div>
                   <strong>{transferDirectionLabel(task.direction)}</strong>
                   <span>{pathBaseName(task.direction === "download" ? task.remotePath : task.localPath)}</span>
-                  <small>{task.error ? `失败：${task.error}` : transferStatusLabel(task.status)}</small>
+                  <small>{transferTaskSummary(task)}</small>
                 </div>
                 <progress max="100" value={progress} />
                 <div className="simple-sftp-transfer-actions">
@@ -946,17 +951,21 @@ function SimpleTransferQueue({
                     <button aria-label="继续传输" onClick={() => onResume(task.id)} title="继续传输" type="button">
                       <Icon name="play" />
                     </button>
-                  ) : (
+                  ) : task.status === "running" ? (
                     <button aria-label="暂停传输" onClick={() => onPause(task.id)} title="暂停传输" type="button">
                       <Icon name="pause" />
                     </button>
-                  )}
-                  <button aria-label="重试传输" onClick={() => onRetry(task.id)} title="重试传输" type="button">
-                    <Icon name="rotate-ccw" />
-                  </button>
-                  <button aria-label="取消传输" onClick={() => onCancel(task.id)} title="取消传输" type="button">
-                    <Icon name="ban" />
-                  </button>
+                  ) : null}
+                  {task.status === "failed" ? (
+                    <button aria-label="重试传输" onClick={() => onRetry(task.id)} title="重试传输" type="button">
+                      <Icon name="rotate-ccw" />
+                    </button>
+                  ) : null}
+                  {cancellable ? (
+                    <button aria-label="取消传输" onClick={() => onCancel(task.id)} title="取消传输" type="button">
+                      <Icon name="ban" />
+                    </button>
+                  ) : null}
                   <button
                     aria-label="删除传输记录"
                     disabled={active}

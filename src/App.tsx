@@ -1,5 +1,5 @@
 import "./App.css";
-import { type CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActiveFileTransferPanel } from "./app/ActiveFileTransferPanel";
 import { AppTitlebar } from "./app/AppTitlebar";
 import { GlobalNotice } from "./app/GlobalNotice";
@@ -12,6 +12,7 @@ import { ConnectionList } from "./features/connections/ConnectionList";
 import { SimpleSftpPanel } from "./features/file-transfer/SimpleSftpPanel";
 import type { ConnectionSecretInput } from "./features/connections/ConnectionProfileDialog";
 import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
+import { Button, ConfirmDialog } from "./shared/ui";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
 
@@ -141,9 +142,19 @@ function isSessionWindowLabel(label: string) {
   );
 }
 
+function requiresSavedCredentialRecovery(message: string) {
+  return (
+    message.includes("系统凭据库读取凭据失败") ||
+    message.includes("系统凭据库任务执行失败") ||
+    message.includes("读取已保存的 SSH 凭据超时") ||
+    message.includes("未找到已保存的 SSH 密码")
+  );
+}
+
 function App() {
   const workspace = usePortivaWorkspace();
   const [profileDialog, setProfileDialog] = useState<{
+    forceSecretEntry?: boolean;
     mode: "create" | "edit";
     profile: ConnectionProfile;
   } | null>(null);
@@ -155,6 +166,8 @@ function App() {
   const [appTabOrder, setAppTabOrder] = useState<string[]>([]);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
+  const [connectingProfileId, setConnectingProfileId] = useState<string | null>(null);
+  const connectingProfileIdRef = useRef<string | null>(null);
   const detachedTarget = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const tabId = params.get("detachedSession");
@@ -762,6 +775,13 @@ function App() {
         setReconnectTabId(null);
       } else if (result.status === "needs-trust") {
         setHostTrustRequest(request);
+      } else if (requiresSavedCredentialRecovery(result.message)) {
+        setReconnectTabId(request.reconnectTabId ?? null);
+        setProfileDialog({
+          forceSecretEntry: true,
+          mode: "edit",
+          profile: request.profile,
+        });
       }
     }
 
@@ -798,11 +818,15 @@ function App() {
           profile,
           reconnectTabId: tabId,
         });
+        if (requiresSavedCredentialRecovery(result.message)) {
+          setReconnectTabId(tabId);
+          setProfileDialog({ forceSecretEntry: true, mode: "edit", profile });
+        }
       }
     })();
   };
 
-  const openSavedConnection = (profile: ConnectionProfile) => {
+  const openSavedConnection = async (profile: ConnectionProfile) => {
     if (
       (profile.type === "ssh" || profile.type === "sftp") &&
       profile.authType === "password" &&
@@ -814,26 +838,52 @@ function App() {
       )
     ) {
       setProfileDialog({ mode: "edit", profile });
-      return;
+      return null;
     }
 
     const input = {
       authenticate: profile.type === "ssh" || profile.type === "sftp",
     };
 
-    void (async () => {
-      const result = await workspace.openProfileConnection(profile, input);
-      registerHostTrustRequest(result, {
-        connectAfterTrust: true,
-        input,
-        profile,
-      });
-    })();
+    const result = await workspace.openProfileConnection(profile, input);
+    registerHostTrustRequest(result, {
+      connectAfterTrust: true,
+      input,
+      profile,
+    });
+    return result;
   };
-  const connectSavedConnection = (profile: ConnectionProfile) => {
-    setSavedConnectionsOpen(false);
-    setActiveShellTabId(null);
-    openSavedConnection(profile);
+  const connectSavedConnection = async (profile: ConnectionProfile) => {
+    if (connectingProfileIdRef.current) {
+      return;
+    }
+
+    connectingProfileIdRef.current = profile.id;
+    setConnectingProfileId(profile.id);
+    try {
+      const result = await openSavedConnection(profile);
+      if (!result) {
+        setSavedConnectionsOpen(false);
+        return;
+      }
+
+      if (result.status === "opened" || result.status === "needs-trust") {
+        setSavedConnectionsOpen(false);
+        setActiveShellTabId(null);
+        return;
+      }
+
+      if (requiresSavedCredentialRecovery(result.message)) {
+        setSavedConnectionsOpen(false);
+        setProfileDialog({ forceSecretEntry: true, mode: "edit", profile });
+        workspace.reportWorkspaceMessage(
+          `${result.message} 请重新输入密码；需要继续记住时，请重新勾选“记住密码”。`,
+        );
+      }
+    } finally {
+      connectingProfileIdRef.current = null;
+      setConnectingProfileId(null);
+    }
   };
   const editSavedConnection = (profile: ConnectionProfile) => {
     setSavedConnectionsOpen(false);
@@ -1007,6 +1057,54 @@ function App() {
       onConfirm={() => void confirmHostTrust()}
     />
   ) : null;
+  const pendingTransferConflict = workspace.transfers.find(
+    (task) => task.status === "waiting-conflict" && task.conflictPolicy === "ask",
+  );
+  const globalTransferConflictDialog = pendingTransferConflict ? (
+    <ConfirmDialog
+      actions={
+        <>
+          <Button
+            onClick={() => void workspace.resolveTransferConflict(pendingTransferConflict.id, "skip")}
+            tone="muted"
+          >
+            跳过
+          </Button>
+          <Button
+            onClick={() => void workspace.resolveTransferConflict(pendingTransferConflict.id, "skip-all")}
+            tone="muted"
+          >
+            全部跳过
+          </Button>
+          <Button
+            onClick={() => void workspace.resolveTransferConflict(pendingTransferConflict.id, "overwrite")}
+          >
+            覆盖
+          </Button>
+          <Button
+            onClick={() => void workspace.resolveTransferConflict(pendingTransferConflict.id, "overwrite-all")}
+            tone="primary"
+          >
+            全部覆盖
+          </Button>
+        </>
+      }
+      description={
+        <>
+          远端目标已经存在：
+          <br />
+          <code>{pendingTransferConflict.conflictPath ?? pendingTransferConflict.remotePath}</code>
+          <br />
+          “全部”仅应用于当前传输任务的后续冲突。
+        </>
+      }
+      dismissible={false}
+      open
+      title="文件冲突"
+      onCancel={() => void workspace.resolveTransferConflict(pendingTransferConflict.id, "skip")}
+      onConfirm={() => void workspace.resolveTransferConflict(pendingTransferConflict.id, "overwrite")}
+    />
+  ) : null;
 
   useEffect(() => {
     if (!pendingHostTrust) {
@@ -1066,6 +1164,7 @@ function App() {
 	        />
 	        <GlobalNotice message={workspace.workspaceMessage} />
 	        {globalHostTrustDialog}
+	        {globalTransferConflictDialog}
 	      </main>
     );
   }
@@ -1087,6 +1186,7 @@ function App() {
         {savedConnectionsOpen ? (
           <ConnectionList
             activeProfileId={workspace.activeProfileId}
+            connectingProfileId={connectingProfileId}
             profiles={workspace.profiles}
             onClose={() => setSavedConnectionsOpen(false)}
             onConnectProfile={connectSavedConnection}
@@ -1156,6 +1256,7 @@ function App() {
         onReconnectTabChange={setReconnectTabId}
       />
       {globalHostTrustDialog}
+      {globalTransferConflictDialog}
     </main>
   );
 }

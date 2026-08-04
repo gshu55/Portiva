@@ -80,7 +80,9 @@ export function transferStatusLabel(status: TransferStatus) {
     pending: "等待中",
     running: "传输中",
     paused: "已暂停",
+    "waiting-conflict": "等待处理冲突",
     completed: "已完成",
+    partial: "已完成（有跳过）",
     failed: "失败",
     cancelled: "已取消",
   };
@@ -88,10 +90,49 @@ export function transferStatusLabel(status: TransferStatus) {
   return labels[status];
 }
 
+export function transferProgressPercent(task: TransferTask) {
+  if (task.status === "completed" || task.status === "partial") {
+    return 100;
+  }
+  if (task.totalBytes) {
+    return Math.min(100, Math.round((task.transferredBytes / task.totalBytes) * 100));
+  }
+  if (task.totalItems) {
+    const handledItems = task.completedItems + task.skippedItems + task.failedItems;
+    return Math.min(100, Math.round((handledItems / task.totalItems) * 100));
+  }
+
+  return 0;
+}
+
+export function transferTaskSummary(task: TransferTask) {
+  if (task.status === "failed" && task.error) {
+    return `失败：${task.error}`;
+  }
+  if (task.itemKind === "directory" && task.status === "running" && task.totalItems === undefined) {
+    return "正在扫描文件夹";
+  }
+
+  const status = transferStatusLabel(task.status);
+  if (!task.totalItems) {
+    return status;
+  }
+
+  const counts = [
+    `${task.completedItems}/${task.totalItems}`,
+    task.skippedItems ? `跳过 ${task.skippedItems}` : "",
+    task.failedItems ? `失败 ${task.failedItems}` : "",
+  ].filter(Boolean);
+
+  return `${status} · ${counts.join("，")}`;
+}
+
 export function conflictPolicyLabel(policy: TransferConflictPolicy) {
   const labels: Record<TransferConflictPolicy, string> = {
     overwrite: "覆盖",
+    "overwrite-all": "全部覆盖",
     skip: "跳过",
+    "skip-all": "全部跳过",
     rename: "重命名",
     ask: "询问",
   };

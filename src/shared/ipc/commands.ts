@@ -64,6 +64,7 @@ export const commandNames = {
   fileTransferClose: "file_transfer_close",
   fileTransferList: "file_transfer_list",
   fileTransferUpload: "file_transfer_upload",
+  fileTransferUploadBatch: "file_transfer_upload_batch",
   fileTransferDownload: "file_transfer_download",
   fileTransferMkdir: "file_transfer_mkdir",
   fileTransferRemove: "file_transfer_remove",
@@ -71,6 +72,7 @@ export const commandNames = {
   fileTransferCancel: "file_transfer_cancel",
   fileTransferPause: "file_transfer_pause",
   fileTransferResume: "file_transfer_resume",
+  fileTransferResolveConflict: "file_transfer_resolve_conflict",
   fileTransferRetry: "file_transfer_retry",
   fileTransferDelete: "file_transfer_delete",
   localDownloadDirectory: "local_download_directory",
@@ -362,6 +364,13 @@ export function fileTransferUpload(sessionId: string, localPath: string, remoteP
   return invoke<TransferTask>(commandNames.fileTransferUpload, { sessionId, localPath, remotePath });
 }
 
+export function fileTransferUploadBatch(
+  sessionId: string,
+  uploads: Array<{ localPath: string; remotePath: string }>,
+) {
+  return invoke<TransferTask[]>(commandNames.fileTransferUploadBatch, { sessionId, uploads });
+}
+
 export function fileTransferDownload(sessionId: string, remotePath: string, localPath: string) {
   return invoke<TransferTask>(commandNames.fileTransferDownload, { sessionId, remotePath, localPath });
 }
@@ -412,6 +421,13 @@ export function fileTransferPause(transferId: string) {
 
 export function fileTransferResume(transferId: string) {
   return invoke<TransferTask>(commandNames.fileTransferResume, { transferId });
+}
+
+export function fileTransferResolveConflict(
+  transferId: string,
+  policy: "overwrite" | "overwrite-all" | "skip" | "skip-all",
+) {
+  return invoke<TransferTask>(commandNames.fileTransferResolveConflict, { transferId, policy });
 }
 
 export function fileTransferRetry(transferId: string) {

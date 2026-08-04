@@ -20,6 +20,8 @@ import {
   fileTransferRetry,
   fileTransferSession,
   fileTransferUpload,
+  fileTransferUploadBatch,
+  fileTransferResolveConflict,
   localFileList,
   localFileMkdir,
   localFileRemove,
@@ -350,6 +352,8 @@ export function usePortivaWorkspace() {
   const [terminalSnapshotState, setTerminalSnapshotState] = useState<TerminalSnapshot | null>(null);
   const [remotePath, setRemotePathState] = useState(remoteRootPath);
   const [localPath, setLocalPathState] = useState("");
+  const remotePathRef = useRef(remoteRootPath);
+  const localPathRef = useRef("");
   const [selectedRemoteEntry, setSelectedRemoteEntry] = useState<RemoteEntry | null>(null);
   const [selectedLocalEntry, setSelectedLocalEntry] = useState<RemoteEntry | null>(null);
   const [activeProfileId, setActiveProfileId] = useState(sampleProfiles[0]?.id ?? "");
@@ -359,6 +363,8 @@ export function usePortivaWorkspace() {
   const [workspaceMessage, setWorkspaceMessage] = useState("正在加载 Tauri 工作区状态...");
   const [sshPassword, setSshPassword] = useState("");
   const transferStatusRef = useRef<Map<string, TransferTask["status"]>>(new Map());
+  remotePathRef.current = remotePath;
+  localPathRef.current = localPath;
 
   const fallbackProfile = useMemo(() => newConnectionProfile("ssh"), []);
   const activeProfile = useMemo(
@@ -831,8 +837,13 @@ export function usePortivaWorkspace() {
   }, []);
 
   useEffect(() => {
-    const hasRunningTransfer = transfers.some((task) => task.status === "running");
-    if (dataSource !== "tauri" || !hasRunningTransfer) {
+    const hasActiveTransfer = transfers.some((task) =>
+      task.status === "pending"
+      || task.status === "running"
+      || task.status === "paused"
+      || task.status === "waiting-conflict",
+    );
+    if (dataSource !== "tauri" || !hasActiveTransfer) {
       return;
     }
 
@@ -1232,6 +1243,7 @@ export function usePortivaWorkspace() {
 
       const message = `连接失败：${String(error)}`;
       setWorkspaceMessage(message);
+      void logList().then(setLogs).catch(() => undefined);
       return connectionResult("failed", message);
     }
   }, [attachTerminalWithSnapshot, clearFileTransferView, forgetRememberedPassword, hasRememberedPassword, refreshWorkspace, remotePath, resolveHostTrustFailure]);
@@ -2515,11 +2527,55 @@ export function usePortivaWorkspace() {
     }
   }, [ensureFileTransferSession, reconnectActiveFileTransfer, remotePath]);
 
+  const refreshVisibleLocalFiles = useCallback(async (targetPath: string) => {
+    if (localPathRef.current !== targetPath) {
+      return false;
+    }
+
+    try {
+      const result = await localFileList(targetPath);
+      if (localPathRef.current !== targetPath) {
+        return false;
+      }
+      setLocalEntries(result.entries);
+      setSelectedLocalEntry((current) =>
+        current ? result.entries.find((entry) => entry.path === current.path) ?? null : null,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const refreshVisibleRemoteFiles = useCallback(async (targetPath: string) => {
+    const normalizedTarget = normalizeRemotePathInput(targetPath);
+    if (normalizeRemotePathInput(remotePathRef.current) !== normalizedTarget) {
+      return false;
+    }
+
+    try {
+      const session = await ensureFileTransferSession();
+      const entries = await fileTransferList(session.id, normalizedTarget);
+      if (normalizeRemotePathInput(remotePathRef.current) !== normalizedTarget) {
+        return false;
+      }
+      setRemoteEntries(entries);
+      setSelectedRemoteEntry((current) =>
+        current ? entries.find((entry) => entry.path === current.path) ?? null : null,
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }, [ensureFileTransferSession]);
+
   useEffect(() => {
     const previousStatuses = transferStatusRef.current;
     const completedTasks = transfers.filter((task) => {
       const previousStatus = previousStatuses.get(task.id);
-      return task.status === "completed" && Boolean(previousStatus) && previousStatus !== "completed";
+      const finished = task.status === "completed" || task.status === "partial";
+      const wasFinished = previousStatus === "completed" || previousStatus === "partial";
+      return finished && Boolean(previousStatus) && !wasFinished;
     });
 
     transferStatusRef.current = new Map(transfers.map((task) => [task.id, task.status]));
@@ -2535,7 +2591,11 @@ export function usePortivaWorkspace() {
     for (const task of completedTasks) {
       if (task.direction === "download") {
         const targetDirectory = localDirectoryName(task.localPath);
-        if (targetDirectory && !isVirtualLocalPath(targetDirectory)) {
+        if (
+          targetDirectory
+          && !isVirtualLocalPath(targetDirectory)
+          && targetDirectory === localPath
+        ) {
           localRefreshPaths.add(targetDirectory);
         }
         continue;
@@ -2545,7 +2605,10 @@ export function usePortivaWorkspace() {
         continue;
       }
 
-      remoteRefreshPaths.add(remoteDirectoryName(task.remotePath));
+      const targetDirectory = remoteDirectoryName(task.remotePath);
+      if (normalizeRemotePathInput(targetDirectory) === normalizeRemotePathInput(remotePath)) {
+        remoteRefreshPaths.add(targetDirectory);
+      }
     }
 
     if (localRefreshPaths.size === 0 && remoteRefreshPaths.size === 0) {
@@ -2557,13 +2620,13 @@ export function usePortivaWorkspace() {
       let refreshedRemoteCount = 0;
 
       for (const targetPath of localRefreshPaths) {
-        if (await refreshLocalFiles(targetPath)) {
+        if (await refreshVisibleLocalFiles(targetPath)) {
           refreshedLocalCount += 1;
         }
       }
 
       for (const targetPath of remoteRefreshPaths) {
-        if (await refreshRemoteFiles(targetPath)) {
+        if (await refreshVisibleRemoteFiles(targetPath)) {
           refreshedRemoteCount += 1;
         }
       }
@@ -2577,7 +2640,15 @@ export function usePortivaWorkspace() {
         setWorkspaceMessage(`传输完成，已刷新 ${refreshedParts.join("、")}。`);
       }
     })();
-  }, [activeFileTransferSession?.connectionId, dataSource, refreshLocalFiles, refreshRemoteFiles, transfers]);
+  }, [
+    activeFileTransferSession?.connectionId,
+    dataSource,
+    localPath,
+    refreshVisibleLocalFiles,
+    refreshVisibleRemoteFiles,
+    remotePath,
+    transfers,
+  ]);
 
   const openFileTransferTab = useCallback(async (
     connectionId?: string,
@@ -2861,55 +2932,6 @@ export function usePortivaWorkspace() {
     [ensureFileTransferSession],
   );
 
-  const queueUploadDirectory = useCallback(
-    async (sessionId: string, localRootPath: string, remoteRootPath: string) => {
-      let directoryCount = 0;
-      let fileCount = 0;
-      let skippedCount = 0;
-
-      const ensureRemoteDirectory = async (targetPath: string) => {
-        await fileTransferMkdir(sessionId, targetPath).catch((error) => {
-          if (!isAlreadyExistsError(error)) {
-            throw error;
-          }
-          return fileTransferList(sessionId, targetPath).catch(() => {
-            throw new Error(`远程目标已存在但不是可读取的目录：${targetPath}`);
-          });
-        });
-      };
-
-      const visit = async (sourceDirectory: string, targetDirectory: string) => {
-        const result = await localFileList(sourceDirectory);
-
-        for (const entry of result.entries) {
-          if (entry.kind === "directory") {
-            const nextTargetDirectory = joinRemotePath(targetDirectory, entry.name);
-            await ensureRemoteDirectory(nextTargetDirectory);
-            directoryCount += 1;
-            await visit(entry.path, nextTargetDirectory);
-            continue;
-          }
-
-          if (entry.kind === "file") {
-            await fileTransferUpload(sessionId, entry.path, joinRemotePath(targetDirectory, entry.name));
-            fileCount += 1;
-            continue;
-          }
-
-          skippedCount += 1;
-        }
-      };
-
-      const normalizedRemoteRoot = normalizeRemotePathInput(remoteRootPath);
-      await ensureRemoteDirectory(normalizedRemoteRoot);
-      directoryCount += 1;
-      await visit(localRootPath, normalizedRemoteRoot);
-
-      return { directoryCount, fileCount, skippedCount };
-    },
-    [],
-  );
-
   const queueDownloadDirectory = useCallback(
     async (sessionId: string, remoteRootPath: string, localRootPath: string) => {
       let directoryCount = 0;
@@ -2968,31 +2990,13 @@ export function usePortivaWorkspace() {
       return;
     }
 
-    if (entry.kind === "directory") {
-      try {
-        const session = await ensureFileTransferSession();
-        const remoteTargetPath = joinRemotePath(remotePath, entry.name);
-        setWorkspaceMessage(`正在扫描本地文件夹并加入上传队列：${entry.path}`);
-        const summary = await queueUploadDirectory(session.id, entry.path, remoteTargetPath);
-        setTransfers(await transferList());
-        setWorkspaceMessage(
-          `已加入递归上传队列：${entry.name}，${summary.directoryCount} 个文件夹、${summary.fileCount} 个文件${
-            summary.skippedCount ? `，跳过 ${summary.skippedCount} 个特殊条目` : ""
-          }。`,
-        );
-      } catch (error) {
-        setWorkspaceMessage(`递归上传文件夹失败：${String(error)}`);
-      }
-      return;
-    }
-
-    if (entry.kind !== "file") {
+    if (entry.kind !== "file" && entry.kind !== "directory") {
       setWorkspaceMessage("当前仅支持上传普通文件或文件夹。");
       return;
     }
 
     await queueUpload(entry.path, joinRemotePath(remotePath, entry.name));
-  }, [ensureFileTransferSession, queueUpload, queueUploadDirectory, remotePath]);
+  }, [queueUpload, remotePath]);
 
   const uploadSelectedLocalEntry = useCallback(async () => {
     await uploadLocalEntry(selectedLocalEntry);
@@ -3009,30 +3013,21 @@ export function usePortivaWorkspace() {
 
       try {
         const session = await ensureFileTransferSession();
-
-        for (const localPath of paths) {
-          const targetName = localPathBaseName(localPath);
-          const directory = await localFileList(localPath).catch(() => null);
-
-          if (directory) {
-            const summary = await queueUploadDirectory(session.id, localPath, joinRemotePath(remotePath, targetName));
-            if (summary.skippedCount) {
-              setWorkspaceMessage(`拖拽上传跳过 ${summary.skippedCount} 个特殊条目。`);
-            }
-          } else {
-            await fileTransferUpload(
-              session.id,
-              localPath,
-              joinRemotePath(remotePath, targetName),
-            );
-          }
-        }
-
-        setTransfers(await transferList());
+        const queuedTasks = await fileTransferUploadBatch(
+          session.id,
+          paths.map((localPath) => ({
+            localPath,
+            remotePath: joinRemotePath(remotePath, localPathBaseName(localPath)),
+          })),
+        );
+        setTransfers((current) => {
+          const queuedIds = new Set(queuedTasks.map((task) => task.id));
+          return [...current.filter((task) => !queuedIds.has(task.id)), ...queuedTasks];
+        });
         setWorkspaceMessage(
           paths.length === 1
             ? `已加入拖拽上传队列：${localPathBaseName(paths[0])}。`
-            : `已加入拖拽上传队列：${paths.length} 个文件。`,
+            : `已加入拖拽上传队列：${paths.length} 个文件或文件夹。`,
         );
       } catch (error) {
         try {
@@ -3043,7 +3038,7 @@ export function usePortivaWorkspace() {
         setWorkspaceMessage(`拖拽上传失败：${String(error)}`);
       }
     },
-    [ensureFileTransferSession, queueUploadDirectory, remotePath],
+    [ensureFileTransferSession, remotePath],
   );
 
   const queueDownload = useCallback(
@@ -3202,6 +3197,31 @@ export function usePortivaWorkspace() {
     [reconnectActiveFileTransfer, remotePath, transfers],
   );
 
+  const resolveTransferConflict = useCallback(
+    async (
+      transferId: string,
+      policy: "overwrite" | "overwrite-all" | "skip" | "skip-all",
+    ) => {
+      try {
+        const updated = await fileTransferResolveConflict(transferId, policy);
+        setTransfers((current) =>
+          current.map((task) => (task.id === transferId ? updated : task)),
+        );
+        const target = updated.conflictPath ?? updated.remotePath;
+        const messages = {
+          overwrite: `已选择覆盖冲突目标：${target}。`,
+          "overwrite-all": `已选择全部覆盖；当前任务后续冲突将自动覆盖：${target}。`,
+          skip: `已选择跳过冲突目标：${target}。`,
+          "skip-all": `已选择全部跳过；当前任务后续冲突将自动跳过：${target}。`,
+        };
+        setWorkspaceMessage(messages[policy]);
+      } catch (error) {
+        setWorkspaceMessage(`处理传输冲突失败：${String(error)}`);
+      }
+    },
+    [],
+  );
+
   const changeRemotePath = useCallback((path: string) => {
     setRemotePathState(path.trim() || remoteRootPath);
     setSelectedRemoteEntry(null);
@@ -3325,6 +3345,7 @@ export function usePortivaWorkspace() {
     renameRemoteEntry,
     reorderSessionTabs,
     reportWorkspaceMessage,
+    resolveTransferConflict,
     restoreDetachedSessionTab,
     resizeActiveTerminal,
     saveProfile,

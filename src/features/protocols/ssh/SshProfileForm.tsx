@@ -25,15 +25,6 @@ export function SshProfileForm({
   const update = (patch: Partial<SshCredentialProfile>) =>
     onChange({ ...profile, ...patch } as SshCredentialProfile);
   const showsRememberedSecretMask = profile.authType === "password" && hasRememberedSecret && !secret;
-  const passwordValue = showsRememberedSecretMask ? "*****" : secret;
-  const updatePassword = (value: string) => {
-    if (showsRememberedSecretMask && value.startsWith("*****")) {
-      onSecretChange?.(value.slice(5));
-      return;
-    }
-
-    onSecretChange?.(value);
-  };
 
   return (
     <div className="protocol-form">
@@ -76,26 +67,12 @@ export function SshProfileForm({
           SSH 密码
           <TextInput
             autoComplete="current-password"
+            placeholder={showsRememberedSecretMask ? "••••••••" : undefined}
             type="password"
-            value={passwordValue}
-            onFocus={(event) => {
-              if (showsRememberedSecretMask) {
-                event.currentTarget.select();
-              }
-            }}
-            onMouseUp={(event) => {
-              if (showsRememberedSecretMask) {
-                event.preventDefault();
-              }
-            }}
-            onChange={(event) => updatePassword(event.target.value)}
+            value={secret}
+            onChange={(event) => onSecretChange?.(event.target.value)}
             onCopy={(event) => event.preventDefault()}
             onCut={(event) => event.preventDefault()}
-            onContextMenu={(event) => {
-              if (showsRememberedSecretMask) {
-                event.preventDefault();
-              }
-            }}
           />
         </label>
       ) : null}

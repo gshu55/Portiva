@@ -4,11 +4,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::domain::file_transfer::{
     TransferConflictPolicy, TransferDirection, TransferProtocol, TransferStatus, TransferTask,
+    TransferTaskItemKind,
 };
 use crate::utils::remote_path::normalize_remote_path;
 use crate::utils::transfer_progress::progress_percent;
 
 pub const DEFAULT_MAX_RUNNING_TRANSFERS_PER_CONNECTION: usize = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictDirective {
+    Wait,
+    Overwrite,
+    Skip,
+    Cancel,
+}
 
 pub struct TransferService {
     tasks: Mutex<HashMap<String, TransferTask>>,
@@ -25,15 +34,32 @@ impl Default for TransferService {
 }
 
 impl TransferService {
+    #[cfg(test)]
     pub fn upload(
         &self,
         connection_id: String,
         local_path: String,
         remote_path: String,
     ) -> Result<TransferTask, String> {
+        self.upload_with_kind(
+            connection_id,
+            local_path,
+            remote_path,
+            TransferTaskItemKind::File,
+        )
+    }
+
+    pub fn upload_with_kind(
+        &self,
+        connection_id: String,
+        local_path: String,
+        remote_path: String,
+        item_kind: TransferTaskItemKind,
+    ) -> Result<TransferTask, String> {
         self.create_task(
             connection_id,
             TransferDirection::Upload,
+            item_kind,
             local_path,
             normalize_remote_path(&remote_path),
         )
@@ -48,6 +74,7 @@ impl TransferService {
         self.create_task(
             connection_id,
             TransferDirection::Download,
+            TransferTaskItemKind::File,
             local_path,
             normalize_remote_path(&remote_path),
         )
@@ -57,7 +84,10 @@ impl TransferService {
         self.transition(transfer_id, "cancel", |status| {
             matches!(
                 status,
-                TransferStatus::Pending | TransferStatus::Running | TransferStatus::Paused
+                TransferStatus::Pending
+                    | TransferStatus::Running
+                    | TransferStatus::Paused
+                    | TransferStatus::WaitingConflict
             )
             .then_some(TransferStatus::Cancelled)
         })
@@ -73,6 +103,128 @@ impl TransferService {
         self.transition(transfer_id, "resume", |status| {
             matches!(status, TransferStatus::Paused).then_some(TransferStatus::Running)
         })
+    }
+
+    pub fn request_conflict(
+        &self,
+        transfer_id: &str,
+        remote_path: String,
+    ) -> Result<TransferTask, String> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| "transfer service lock poisoned".to_string())?;
+        let task = tasks
+            .get_mut(transfer_id)
+            .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
+
+        if matches!(
+            task.status,
+            TransferStatus::Cancelled | TransferStatus::Paused
+        ) {
+            return Ok(task.clone());
+        }
+        if !matches!(task.status, TransferStatus::Running) {
+            return Err(format!(
+                "cannot request conflict resolution while status is {:?}",
+                task.status
+            ));
+        }
+        if matches!(
+            task.conflict_policy,
+            TransferConflictPolicy::OverwriteAll | TransferConflictPolicy::SkipAll
+        ) {
+            return Ok(task.clone());
+        }
+
+        task.status = TransferStatus::WaitingConflict;
+        task.conflict_policy = TransferConflictPolicy::Ask;
+        task.conflict_path = Some(remote_path);
+        task.updated_at = now_stamp();
+        Ok(task.clone())
+    }
+
+    pub fn resolve_conflict(
+        &self,
+        transfer_id: &str,
+        policy: TransferConflictPolicy,
+    ) -> Result<TransferTask, String> {
+        if !matches!(
+            policy,
+            TransferConflictPolicy::Overwrite
+                | TransferConflictPolicy::OverwriteAll
+                | TransferConflictPolicy::Skip
+                | TransferConflictPolicy::SkipAll
+        ) {
+            return Err(
+                "transfer conflict resolution must be overwrite, overwrite-all, skip, or skip-all"
+                    .to_string(),
+            );
+        }
+
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| "transfer service lock poisoned".to_string())?;
+        let task = tasks
+            .get_mut(transfer_id)
+            .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
+
+        if !matches!(task.status, TransferStatus::WaitingConflict) {
+            return Err(format!(
+                "cannot resolve conflict while status is {:?}",
+                task.status
+            ));
+        }
+
+        task.conflict_policy = policy;
+        task.updated_at = now_stamp();
+        Ok(task.clone())
+    }
+
+    pub fn take_conflict_directive(&self, transfer_id: &str) -> Result<ConflictDirective, String> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| "transfer service lock poisoned".to_string())?;
+        let task = tasks
+            .get_mut(transfer_id)
+            .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
+
+        if matches!(task.status, TransferStatus::Cancelled) {
+            return Ok(ConflictDirective::Cancel);
+        }
+        if !matches!(task.status, TransferStatus::WaitingConflict) {
+            return Err(format!(
+                "transfer is not waiting for conflict resolution: {:?}",
+                task.status
+            ));
+        }
+
+        let keep_policy = matches!(
+            task.conflict_policy,
+            TransferConflictPolicy::OverwriteAll | TransferConflictPolicy::SkipAll
+        );
+        let directive = match task.conflict_policy {
+            TransferConflictPolicy::Ask => return Ok(ConflictDirective::Wait),
+            TransferConflictPolicy::Overwrite | TransferConflictPolicy::OverwriteAll => {
+                ConflictDirective::Overwrite
+            }
+            TransferConflictPolicy::Skip | TransferConflictPolicy::SkipAll => {
+                ConflictDirective::Skip
+            }
+            TransferConflictPolicy::Rename => {
+                return Err("rename conflict resolution is not supported".to_string())
+            }
+        };
+
+        task.status = TransferStatus::Running;
+        if !keep_policy {
+            task.conflict_policy = TransferConflictPolicy::Ask;
+        }
+        task.conflict_path = None;
+        task.updated_at = now_stamp();
+        Ok(directive)
     }
 
     pub fn retry(&self, transfer_id: &str) -> Result<TransferTask, String> {
@@ -95,7 +247,14 @@ impl TransferService {
         task.retry_count = task.retry_count.saturating_add(1);
         task.status = TransferStatus::Pending;
         task.error = None;
+        task.conflict_policy = TransferConflictPolicy::Ask;
+        task.conflict_path = None;
+        task.total_bytes = None;
         task.transferred_bytes = 0;
+        task.total_items = None;
+        task.completed_items = 0;
+        task.skipped_items = 0;
+        task.failed_items = 0;
         task.speed_bytes_per_second = None;
         task.updated_at = now_stamp();
         Ok(task.clone())
@@ -113,7 +272,7 @@ impl TransferService {
 
         if matches!(
             task.status,
-            TransferStatus::Running | TransferStatus::Paused
+            TransferStatus::Running | TransferStatus::Paused | TransferStatus::WaitingConflict
         ) {
             return Err("cancel the active transfer before deleting it".to_string());
         }
@@ -182,6 +341,72 @@ impl TransferService {
         Ok(task.clone())
     }
 
+    pub fn set_totals(
+        &self,
+        transfer_id: &str,
+        total_bytes: u64,
+        total_items: u64,
+    ) -> Result<TransferTask, String> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| "transfer service lock poisoned".to_string())?;
+        let task = tasks
+            .get_mut(transfer_id)
+            .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
+
+        if matches!(task.status, TransferStatus::Cancelled) {
+            return Ok(task.clone());
+        }
+        if !matches!(
+            task.status,
+            TransferStatus::Running | TransferStatus::Paused
+        ) {
+            return Err(format!(
+                "cannot set transfer totals while status is {:?}",
+                task.status
+            ));
+        }
+
+        task.total_bytes = Some(total_bytes);
+        task.total_items = Some(total_items);
+        task.updated_at = now_stamp();
+        Ok(task.clone())
+    }
+
+    pub fn mark_item_completed(&self, transfer_id: &str) -> Result<TransferTask, String> {
+        self.update_item_counts(transfer_id, 1, 0, 0, None)
+    }
+
+    pub fn mark_item_skipped(&self, transfer_id: &str) -> Result<TransferTask, String> {
+        self.update_item_counts(transfer_id, 0, 1, 0, None)
+    }
+
+    pub fn mark_items_skipped(
+        &self,
+        transfer_id: &str,
+        count: u64,
+    ) -> Result<TransferTask, String> {
+        self.update_item_counts(transfer_id, 0, count, 0, None)
+    }
+
+    pub fn mark_item_failed(
+        &self,
+        transfer_id: &str,
+        error: String,
+    ) -> Result<TransferTask, String> {
+        self.update_item_counts(transfer_id, 0, 0, 1, Some(error))
+    }
+
+    pub fn mark_items_failed(
+        &self,
+        transfer_id: &str,
+        count: u64,
+        error: String,
+    ) -> Result<TransferTask, String> {
+        self.update_item_counts(transfer_id, 0, 0, count, Some(error))
+    }
+
     pub fn mark_completed(
         &self,
         transfer_id: &str,
@@ -200,20 +425,68 @@ impl TransferService {
             return Ok(task.clone());
         }
 
-        if !matches!(task.status, TransferStatus::Running) {
+        if !matches!(
+            task.status,
+            TransferStatus::Running | TransferStatus::Paused
+        ) {
             return Err(format!(
                 "cannot complete transfer while status is {:?}",
                 task.status
             ));
         }
 
-        task.status = TransferStatus::Completed;
+        task.status = if task.skipped_items > 0 || task.failed_items > 0 {
+            TransferStatus::Partial
+        } else {
+            TransferStatus::Completed
+        };
         task.transferred_bytes = transferred_bytes;
         task.total_bytes = total_bytes.or(Some(transferred_bytes));
         task.speed_bytes_per_second = None;
-        task.error = None;
+        if matches!(task.status, TransferStatus::Completed) {
+            task.error = None;
+        }
         task.updated_at = now_stamp();
 
+        Ok(task.clone())
+    }
+
+    fn update_item_counts(
+        &self,
+        transfer_id: &str,
+        completed: u64,
+        skipped: u64,
+        failed: u64,
+        error: Option<String>,
+    ) -> Result<TransferTask, String> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| "transfer service lock poisoned".to_string())?;
+        let task = tasks
+            .get_mut(transfer_id)
+            .ok_or_else(|| format!("transfer not found: {transfer_id}"))?;
+
+        if matches!(task.status, TransferStatus::Cancelled) {
+            return Ok(task.clone());
+        }
+        if !matches!(
+            task.status,
+            TransferStatus::Running | TransferStatus::Paused
+        ) {
+            return Err(format!(
+                "cannot update transfer items while status is {:?}",
+                task.status
+            ));
+        }
+
+        task.completed_items = task.completed_items.saturating_add(completed);
+        task.skipped_items = task.skipped_items.saturating_add(skipped);
+        task.failed_items = task.failed_items.saturating_add(failed);
+        if error.is_some() {
+            task.error = error;
+        }
+        task.updated_at = now_stamp();
         Ok(task.clone())
     }
 
@@ -232,7 +505,7 @@ impl TransferService {
 
         if !matches!(
             task.status,
-            TransferStatus::Running | TransferStatus::Paused
+            TransferStatus::Running | TransferStatus::Paused | TransferStatus::WaitingConflict
         ) {
             return Err(format!(
                 "cannot fail transfer while status is {:?}",
@@ -294,7 +567,9 @@ impl TransferService {
                 task.connection_id == connection_id
                     && matches!(
                         task.status,
-                        TransferStatus::Running | TransferStatus::Paused
+                        TransferStatus::Running
+                            | TransferStatus::Paused
+                            | TransferStatus::WaitingConflict
                     )
             })
             .count();
@@ -336,7 +611,10 @@ impl TransferService {
             if task.connection_id != connection_id
                 || !matches!(
                     task.status,
-                    TransferStatus::Pending | TransferStatus::Running | TransferStatus::Paused
+                    TransferStatus::Pending
+                        | TransferStatus::Running
+                        | TransferStatus::Paused
+                        | TransferStatus::WaitingConflict
                 )
             {
                 continue;
@@ -372,6 +650,7 @@ impl TransferService {
         &self,
         connection_id: String,
         direction: TransferDirection,
+        item_kind: TransferTaskItemKind,
         local_path: String,
         remote_path: String,
     ) -> Result<TransferTask, String> {
@@ -400,13 +679,19 @@ impl TransferService {
             connection_id,
             direction,
             protocol: TransferProtocol::Sftp,
+            item_kind,
             local_path,
             remote_path,
             status: TransferStatus::Pending,
             conflict_policy: TransferConflictPolicy::Ask,
+            conflict_path: None,
             retry_count: 0,
             total_bytes: None,
             transferred_bytes: 0,
+            total_items: None,
+            completed_items: 0,
+            skipped_items: 0,
+            failed_items: 0,
             speed_bytes_per_second: None,
             error: None,
             created_at: now.clone(),
@@ -460,8 +745,10 @@ fn transfer_sequence(transfer_id: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::TransferService;
-    use crate::domain::file_transfer::TransferStatus;
+    use super::{ConflictDirective, TransferService};
+    use crate::domain::file_transfer::{
+        TransferConflictPolicy, TransferStatus, TransferTaskItemKind,
+    };
 
     #[test]
     fn can_pause_resume_and_cancel_transfer() {
@@ -845,5 +1132,131 @@ mod tests {
             service.get(&task.id).unwrap().status,
             TransferStatus::Running
         ));
+    }
+
+    #[test]
+    fn directory_task_waits_for_explicit_conflict_resolution() {
+        let service = TransferService::default();
+        let task = service
+            .upload_with_kind(
+                "connection-1".to_string(),
+                "local-directory".to_string(),
+                "/tmp/remote-directory".to_string(),
+                TransferTaskItemKind::Directory,
+            )
+            .unwrap();
+        service.mark_running(&task.id, None).unwrap();
+
+        let waiting = service
+            .request_conflict(&task.id, "/tmp/remote-directory/file.txt".to_string())
+            .unwrap();
+        assert!(matches!(waiting.status, TransferStatus::WaitingConflict));
+        assert_eq!(
+            waiting.conflict_path.as_deref(),
+            Some("/tmp/remote-directory/file.txt")
+        );
+        assert_eq!(
+            service.take_conflict_directive(&task.id).unwrap(),
+            ConflictDirective::Wait
+        );
+
+        service
+            .resolve_conflict(&task.id, TransferConflictPolicy::Overwrite)
+            .unwrap();
+        assert_eq!(
+            service.take_conflict_directive(&task.id).unwrap(),
+            ConflictDirective::Overwrite
+        );
+        let running = service.get(&task.id).unwrap();
+        assert!(matches!(running.status, TransferStatus::Running));
+        assert!(running.conflict_path.is_none());
+    }
+
+    #[test]
+    fn overwrite_all_policy_is_kept_for_remaining_conflicts() {
+        let service = TransferService::default();
+        let task = service
+            .upload_with_kind(
+                "connection-1".to_string(),
+                "local-directory".to_string(),
+                "/tmp/remote-directory".to_string(),
+                TransferTaskItemKind::Directory,
+            )
+            .unwrap();
+        service.mark_running(&task.id, None).unwrap();
+        service
+            .request_conflict(&task.id, "/tmp/remote-directory/a.txt".to_string())
+            .unwrap();
+        service
+            .resolve_conflict(&task.id, TransferConflictPolicy::OverwriteAll)
+            .unwrap();
+
+        assert_eq!(
+            service.take_conflict_directive(&task.id).unwrap(),
+            ConflictDirective::Overwrite
+        );
+        let next = service
+            .request_conflict(&task.id, "/tmp/remote-directory/b.txt".to_string())
+            .unwrap();
+        assert!(matches!(next.status, TransferStatus::Running));
+        assert!(matches!(
+            next.conflict_policy,
+            TransferConflictPolicy::OverwriteAll
+        ));
+        assert!(next.conflict_path.is_none());
+    }
+
+    #[test]
+    fn skip_all_policy_is_kept_for_remaining_conflicts() {
+        let service = TransferService::default();
+        let task = service
+            .upload_with_kind(
+                "connection-1".to_string(),
+                "local-directory".to_string(),
+                "/tmp/remote-directory".to_string(),
+                TransferTaskItemKind::Directory,
+            )
+            .unwrap();
+        service.mark_running(&task.id, None).unwrap();
+        service
+            .request_conflict(&task.id, "/tmp/remote-directory/a.txt".to_string())
+            .unwrap();
+        service
+            .resolve_conflict(&task.id, TransferConflictPolicy::SkipAll)
+            .unwrap();
+
+        assert_eq!(
+            service.take_conflict_directive(&task.id).unwrap(),
+            ConflictDirective::Skip
+        );
+        let next = service
+            .request_conflict(&task.id, "/tmp/remote-directory/b.txt".to_string())
+            .unwrap();
+        assert!(matches!(next.status, TransferStatus::Running));
+        assert!(matches!(
+            next.conflict_policy,
+            TransferConflictPolicy::SkipAll
+        ));
+        assert!(next.conflict_path.is_none());
+    }
+
+    #[test]
+    fn completed_task_with_skipped_items_is_partial() {
+        let service = TransferService::default();
+        let task = service
+            .upload(
+                "connection-1".to_string(),
+                "local.txt".to_string(),
+                "/tmp/remote.txt".to_string(),
+            )
+            .unwrap();
+        service.mark_running(&task.id, Some(10)).unwrap();
+        service.set_totals(&task.id, 10, 1).unwrap();
+        service.mark_item_skipped(&task.id).unwrap();
+
+        let completed = service.mark_completed(&task.id, 0, Some(10)).unwrap();
+
+        assert!(matches!(completed.status, TransferStatus::Partial));
+        assert_eq!(completed.skipped_items, 1);
     }
 }

@@ -233,6 +233,10 @@ export function TerminalWorkspace({
   ]
     .filter(Boolean)
     .join(" ");
+  const hasVisibleSshTerminal = isTerminalSplitActive
+    ? (isLeftTerminalTabActive && leftActiveTab?.connection.transport?.kind === "ssh") ||
+      (isRightTerminalTabActive && splitRightTab?.connection.transport?.kind === "ssh")
+    : isTerminalTabActive && activeTab?.connection.transport?.kind === "ssh";
   const terminalBodyClassName = [
     "terminal-body",
     isSerialTabActive
@@ -240,6 +244,7 @@ export function TerminalWorkspace({
       : isTerminalSplitActive || isTerminalTabActive
         ? "terminal-body-terminal-content"
         : "terminal-body-app-content",
+    hasVisibleSshTerminal ? "terminal-body-ssh-content" : "",
     activeTab?.kind === "http-console" ? "terminal-body-http-content" : "",
   ]
     .filter(Boolean)
@@ -450,7 +455,6 @@ export function TerminalWorkspace({
     tab: WorkspaceSessionTab,
     isActivePane: boolean,
     reportSizeWhenVisible = false,
-    outputPaused = false,
   ) => {
     const serialProfile = serialProfileForTab(tab);
 
@@ -480,7 +484,6 @@ export function TerminalWorkspace({
     return (
       <TerminalPane
         isActive={isActivePane}
-        outputPaused={outputPaused}
         reportSizeWhenVisible={reportSizeWhenVisible}
         terminal={tab.terminal}
         terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
@@ -499,13 +502,10 @@ export function TerminalWorkspace({
     tab: WorkspaceSessionTab,
     isActivePane: boolean,
     reportSizeWhenVisible = false,
-    outputPaused = false,
   ) => {
-    const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible, outputPaused);
-
-    if (!sftpSidePanel || !isActivePane || isTerminalSplitActive) {
-      return terminalPane;
-    }
+    // Vim/tmux 等全屏程序依赖连续解析控制序列；隐藏标签页也必须保持 xterm 状态同步。
+    const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible);
+    const showSftpPanel = Boolean(sftpSidePanel && isActivePane && !isTerminalSplitActive);
 
     const panelWidth = Math.round(sftpPanelRatio * 100);
     const terminalWidth = Math.round((1 - sftpPanelRatio) * 100);
@@ -513,33 +513,50 @@ export function TerminalWorkspace({
       sftpPanelSide === "right"
         ? `minmax(260px, calc(${terminalWidth}% - 4px)) 8px minmax(240px, calc(${panelWidth}% - 4px))`
         : `minmax(240px, calc(${panelWidth}% - 4px)) 8px minmax(260px, calc(${terminalWidth}% - 4px))`;
-    const resizer = (
+    const resizer = showSftpPanel ? (
       <div
         aria-label="调整 SFTP 面板宽度"
         className="terminal-sftp-resizer"
         onPointerDown={startSftpPanelResize}
         role="separator"
+        style={{ gridColumn: "2", gridRow: "1" }}
         title="调整 SFTP 面板宽度"
       />
-    );
-    const resolvedSftpPanel = (
-      <div className="terminal-sftp-side-pane">
+    ) : null;
+    const resolvedSftpPanel = showSftpPanel && sftpSidePanel ? (
+      <div
+        className="terminal-sftp-side-pane"
+        style={{ gridColumn: sftpPanelSide === "right" ? "3" : "1", gridRow: "1" }}
+      >
         {sftpSidePanel({
           layoutSide: sftpPanelSide,
           onToggleLayoutSide: toggleSftpPanelSide,
         })}
       </div>
-    );
+    ) : null;
 
     return (
       <div
-        className="terminal-with-sftp"
-        ref={sftpLayoutRef}
-        style={{ gridTemplateColumns }}
+        className={[
+          "terminal-content-shell",
+          showSftpPanel ? "terminal-with-sftp" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        ref={showSftpPanel ? sftpLayoutRef : undefined}
+        style={showSftpPanel ? { gridTemplateColumns } : undefined}
       >
-        {sftpPanelSide === "left" ? resolvedSftpPanel : <div className="terminal-primary-pane">{terminalPane}</div>}
+        <div
+          className="terminal-primary-pane"
+          style={{
+            gridColumn: showSftpPanel && sftpPanelSide === "left" ? "3" : "1",
+            gridRow: "1",
+          }}
+        >
+          {terminalPane}
+        </div>
         {resizer}
-        {sftpPanelSide === "right" ? resolvedSftpPanel : <div className="terminal-primary-pane">{terminalPane}</div>}
+        {resolvedSftpPanel}
       </div>
     );
   };
@@ -967,7 +984,6 @@ export function TerminalWorkspace({
                           tab,
                           isActivePane && splitFocusedPane === "left",
                           true,
-                          !isActivePane,
                         )}
                       </div>
                     );
@@ -1003,7 +1019,7 @@ export function TerminalWorkspace({
               }}
             >
               {isRightTerminalTabActive ? (
-                renderTerminalContent(splitRightTab, splitFocusedPane === "right", true, false)
+                renderTerminalContent(splitRightTab, splitFocusedPane === "right", true)
               ) : isRightFileTransferTabActive && resolvedActiveTabId === rightSplitTabId && fileTransferPanel ? (
                 <div className="terminal-file-tab">{fileTransferPanel}</div>
               ) : (
@@ -1032,7 +1048,7 @@ export function TerminalWorkspace({
                     .join(" ")}
                   key={tabId}
                 >
-                  {renderTerminalContent(tab, isActivePane, false, !isActivePane)}
+                  {renderTerminalContent(tab, isActivePane)}
                 </div>
               );
             })}

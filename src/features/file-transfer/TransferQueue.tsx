@@ -1,5 +1,10 @@
 import type { TransferTask } from "../../shared/types";
-import { conflictPolicyLabel, transferDirectionLabel, transferStatusLabel } from "../../shared/labels";
+import {
+  conflictPolicyLabel,
+  transferDirectionLabel,
+  transferProgressPercent,
+  transferTaskSummary,
+} from "../../shared/labels";
 import { Icon } from "../../shared/Icon";
 
 interface TransferQueueProps {
@@ -19,8 +24,11 @@ export function TransferQueue({ onCancel, onDelete, onPause, onResume, onRetry, 
         <span>{tasks.length}</span>
       </div>
       {tasks.map((task) => {
-        const progress = task.totalBytes ? Math.round((task.transferredBytes / task.totalBytes) * 100) : 0;
-        const active = task.status === "running" || task.status === "paused";
+        const progress = transferProgressPercent(task);
+        const active =
+          task.status === "running"
+          || task.status === "paused"
+          || task.status === "waiting-conflict";
         const cancellable = task.status === "pending" || active;
 
         return (
@@ -40,7 +48,7 @@ export function TransferQueue({ onCancel, onDelete, onPause, onResume, onRetry, 
             <progress max="100" value={progress} />
             <span>{conflictPolicyLabel(task.conflictPolicy)}</span>
             <span>{task.retryCount}</span>
-            <span>{task.error ? `失败：${task.error}` : transferStatusLabel(task.status)}</span>
+            <span>{transferTaskSummary(task)}</span>
             <span className="transfer-actions">
               {task.status === "paused" ? (
                 <button aria-label="继续传输" onClick={() => onResume(task.id)} title="继续传输" type="button">
