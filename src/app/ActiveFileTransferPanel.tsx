@@ -2,10 +2,16 @@ import type { usePortivaWorkspace } from "./usePortivaWorkspace";
 import { FileTransferPanel } from "../features/file-transfer/FileTransferPanel";
 
 interface ActiveFileTransferPanelProps {
+  onOpenSsh: () => void;
+  openSshPending?: boolean;
   workspace: ReturnType<typeof usePortivaWorkspace>;
 }
 
-export function ActiveFileTransferPanel({ workspace }: ActiveFileTransferPanelProps) {
+export function ActiveFileTransferPanel({
+  onOpenSsh,
+  openSshPending = false,
+  workspace,
+}: ActiveFileTransferPanelProps) {
   if (workspace.activeSessionTabKind !== "file-transfer") {
     return null;
   }
@@ -13,7 +19,7 @@ export function ActiveFileTransferPanel({ workspace }: ActiveFileTransferPanelPr
   return (
     <FileTransferPanel
       capabilities={workspace.capabilities}
-      sftpConnectionOptions={workspace.sftpConnectionOptions}
+      openSshPending={openSshPending}
       localEntries={workspace.localEntries}
       localPath={workspace.localPath}
       remoteEntries={workspace.remoteEntries}
@@ -23,7 +29,7 @@ export function ActiveFileTransferPanel({ workspace }: ActiveFileTransferPanelPr
       transfers={workspace.transfers}
       onCancelTransfer={(transferId) => workspace.updateTransferTask(transferId, "cancel")}
       onDeleteTransfer={(transferId) => workspace.updateTransferTask(transferId, "delete")}
-      onOpenConnectionFileTransfer={workspace.openFileTransferTab}
+      onOpenSsh={onOpenSsh}
       onCreateLocalDirectory={workspace.createLocalDirectory}
       onCreateRemoteDirectory={workspace.createRemoteDirectory}
       onDownloadEntry={workspace.downloadRemoteEntry}

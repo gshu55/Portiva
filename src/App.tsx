@@ -15,6 +15,7 @@ import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
 import { Button, ConfirmDialog } from "./shared/ui";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
+import { sshCollectHostOverview } from "./shared/ipc/commands";
 
 const detachedReattachRequestEvent = "portiva://detached-reattach-request";
 const detachedReattachCompleteEvent = "portiva://detached-reattach-complete";
@@ -28,6 +29,7 @@ const detachedWindowMinWidth = 480;
 const detachedWindowMinHeight = 480;
 const settingsTabId = "portiva-settings";
 const httpConsoleTabId = "portiva-http-console";
+const hostDashboardTabId = "portiva-host-dashboard";
 const HttpConsolePanel = lazy(() =>
   import("./features/http/HttpConsolePanel").then((module) => ({ default: module.HttpConsolePanel })),
 );
@@ -66,6 +68,19 @@ const httpConsoleSessionTab: WorkspaceSessionTab = {
     profileId: httpConsoleTabId,
     status: "ready",
     title: "HTTP Console",
+  },
+  terminal: null,
+  terminalSnapshot: null,
+};
+const hostDashboardSessionTab: WorkspaceSessionTab = {
+  id: hostDashboardTabId,
+  kind: "host-dashboard",
+  connection: {
+    capabilities: inactiveCapabilities,
+    id: hostDashboardTabId,
+    profileId: hostDashboardTabId,
+    status: "ready",
+    title: "主机概览",
   },
   terminal: null,
   terminalSnapshot: null,
@@ -199,12 +214,10 @@ function App() {
     setProfileDialog({ mode: "create", profile: workspace.createProfileDraft("ssh") });
   }, [workspace]);
   const openLocalTerminalTab = useCallback(() => {
-    setSavedConnectionsOpen(false);
     setActiveShellTabId(null);
     void workspace.openLocalShellTab();
   }, [workspace]);
   const openSerialTerminalTab = useCallback(() => {
-    setSavedConnectionsOpen(false);
     setActiveShellTabId(null);
     void workspace.openSerialTerminalTab();
   }, [workspace]);
@@ -320,7 +333,6 @@ function App() {
 
             setDetachedReattachHint(false);
             setActiveShellTabId(null);
-            setSavedConnectionsOpen(false);
             void workspace.attachDetachedSessionTab(target)
               .then(async () => {
                 try {
@@ -826,7 +838,10 @@ function App() {
     })();
   };
 
-  const openSavedConnection = async (profile: ConnectionProfile) => {
+  const openSavedConnection = async (
+    profile: ConnectionProfile,
+    credentialProfile: ConnectionProfile = profile,
+  ) => {
     if (
       (profile.type === "ssh" || profile.type === "sftp") &&
       profile.authType === "password" &&
@@ -837,7 +852,7 @@ function App() {
           secret.hasValue,
       )
     ) {
-      setProfileDialog({ mode: "edit", profile });
+      setProfileDialog({ mode: "edit", profile: credentialProfile });
       return null;
     }
 
@@ -853,7 +868,10 @@ function App() {
     });
     return result;
   };
-  const connectSavedConnection = async (profile: ConnectionProfile) => {
+  const connectSavedConnection = async (
+    profile: ConnectionProfile,
+    target: "terminal" | "file-transfer" = "terminal",
+  ) => {
     if (connectingProfileIdRef.current) {
       return;
     }
@@ -861,20 +879,23 @@ function App() {
     connectingProfileIdRef.current = profile.id;
     setConnectingProfileId(profile.id);
     try {
-      const result = await openSavedConnection(profile);
+      const connectionProfile: ConnectionProfile =
+        target === "file-transfer" && profile.type === "ssh"
+          ? { ...profile, type: "sftp" }
+          : target === "terminal" && profile.type === "sftp"
+          ? { ...profile, type: "ssh" }
+          : profile;
+      const result = await openSavedConnection(connectionProfile, profile);
       if (!result) {
-        setSavedConnectionsOpen(false);
         return;
       }
 
       if (result.status === "opened" || result.status === "needs-trust") {
-        setSavedConnectionsOpen(false);
         setActiveShellTabId(null);
         return;
       }
 
       if (requiresSavedCredentialRecovery(result.message)) {
-        setSavedConnectionsOpen(false);
         setProfileDialog({ forceSecretEntry: true, mode: "edit", profile });
         workspace.reportWorkspaceMessage(
           `${result.message} 请重新输入密码；需要继续记住时，请重新勾选“记住密码”。`,
@@ -885,9 +906,63 @@ function App() {
       setConnectingProfileId(null);
     }
   };
+  const openSshFromActiveFileTransfer = () => {
+    const fileTab = workspace.sessionTabs.find(
+      (tab) =>
+        (tab.id ?? tab.connection.id) === workspace.activeSessionTabId &&
+        (tab.kind ?? "terminal") === "file-transfer",
+    );
+
+    if (!fileTab) {
+      workspace.reportWorkspaceMessage("当前未打开 SFTP 文件管理标签。");
+      return;
+    }
+
+    const parentTerminal = fileTab.parentConnectionId
+      ? workspace.sessionTabs.find(
+          (tab) =>
+            (tab.id ?? tab.connection.id) === fileTab.parentConnectionId &&
+            (tab.kind ?? "terminal") === "terminal" &&
+            tab.connection.transport?.authenticated,
+        )
+      : null;
+    const matchingTerminal =
+      parentTerminal ??
+      workspace.sessionTabs.find(
+        (tab) =>
+          (tab.kind ?? "terminal") === "terminal" &&
+          tab.connection.profileId === fileTab.connection.profileId &&
+          tab.connection.transport?.authenticated,
+      );
+
+    setActiveShellTabId(null);
+    if (matchingTerminal) {
+      workspace.switchSessionTab(matchingTerminal.id ?? matchingTerminal.connection.id);
+      return;
+    }
+
+    const profile = workspace.profiles.find(
+      (item) => item.id === fileTab.connection.profileId,
+    );
+    if (!profile) {
+      workspace.reportWorkspaceMessage(
+        `未找到 SFTP 对应的连接配置：${fileTab.connection.profileId}。`,
+      );
+      return;
+    }
+
+    void connectSavedConnection(profile, "terminal");
+  };
   const editSavedConnection = (profile: ConnectionProfile) => {
-    setSavedConnectionsOpen(false);
     setProfileDialog({ mode: "edit", profile });
+  };
+  const openHostDashboardTab = () => {
+    setSavedConnectionsOpen(true);
+    setActiveShellTabId(hostDashboardTabId);
+  };
+  const closeHostDashboardTab = () => {
+    setSavedConnectionsOpen(false);
+    setActiveShellTabId((current) => (current === hostDashboardTabId ? null : current));
   };
   const closeSettingsTab = () => {
     setSettingsTabOpen(false);
@@ -898,22 +973,21 @@ function App() {
     setActiveShellTabId((current) => (current === httpConsoleTabId ? null : current));
   };
   const openSettingsTab = () => {
-    setSavedConnectionsOpen(false);
     setSettingsTabOpen(true);
     setActiveShellTabId(settingsTabId);
   };
   const openHttpConsoleTab = () => {
-    setSavedConnectionsOpen(false);
     setHttpConsoleOpen(true);
     setActiveShellTabId(httpConsoleTabId);
   };
   const appTabSourceIds = useMemo(
     () => [
       ...workspace.sessionTabs.map(getAppSessionTabId),
+      ...(savedConnectionsOpen ? [hostDashboardTabId] : []),
       ...(httpConsoleOpen ? [httpConsoleTabId] : []),
       ...(settingsTabOpen ? [settingsTabId] : []),
     ],
-    [httpConsoleOpen, settingsTabOpen, workspace.sessionTabs],
+    [httpConsoleOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs],
   );
 
   useEffect(() => {
@@ -930,6 +1004,10 @@ function App() {
       tabById.set(getAppSessionTabId(tab), tab);
     });
 
+    if (savedConnectionsOpen) {
+      tabById.set(hostDashboardTabId, hostDashboardSessionTab);
+    }
+
     if (httpConsoleOpen) {
       tabById.set(httpConsoleTabId, httpConsoleSessionTab);
     }
@@ -941,24 +1019,34 @@ function App() {
     return appendMissingTabIds(appTabOrder, appTabSourceIds)
       .map((tabId) => tabById.get(tabId))
       .filter((tab): tab is WorkspaceSessionTab => Boolean(tab));
-  }, [appTabOrder, appTabSourceIds, httpConsoleOpen, settingsTabOpen, workspace.sessionTabs]);
+  }, [appTabOrder, appTabSourceIds, httpConsoleOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs]);
   const activeToolTabId =
-    activeShellTabId === settingsTabId && settingsTabOpen
-      ? settingsTabId
-      : activeShellTabId === httpConsoleTabId && httpConsoleOpen
-        ? httpConsoleTabId
-        : null;
-  const fallbackAppTabId = !workspace.activeSessionTabId
-    ? httpConsoleOpen
-      ? httpConsoleTabId
-      : settingsTabOpen
+    activeShellTabId === hostDashboardTabId && savedConnectionsOpen
+      ? hostDashboardTabId
+      : activeShellTabId === settingsTabId && settingsTabOpen
         ? settingsTabId
-        : undefined
+        : activeShellTabId === httpConsoleTabId && httpConsoleOpen
+          ? httpConsoleTabId
+          : null;
+  const fallbackAppTabId = !workspace.activeSessionTabId
+    ? savedConnectionsOpen
+      ? hostDashboardTabId
+      : httpConsoleOpen
+        ? httpConsoleTabId
+        : settingsTabOpen
+          ? settingsTabId
+          : undefined
     : workspace.activeSessionTabId;
   const activeAppTabId = activeToolTabId ?? fallbackAppTabId;
+  const hostDashboardActive = activeAppTabId === hostDashboardTabId;
   const settingsTabActive = activeAppTabId === settingsTabId;
   const httpConsoleActive = activeAppTabId === httpConsoleTabId;
   const selectAppSessionTab = (tabId: string) => {
+    if (tabId === hostDashboardTabId) {
+      setSavedConnectionsOpen(true);
+      setActiveShellTabId(hostDashboardTabId);
+      return;
+    }
     if (tabId === settingsTabId) {
       setSettingsTabOpen(true);
       setActiveShellTabId(settingsTabId);
@@ -974,6 +1062,10 @@ function App() {
     workspace.switchSessionTab(tabId);
   };
   const closeAppSessionTab = (tabId: string) => {
+    if (tabId === hostDashboardTabId) {
+      closeHostDashboardTab();
+      return;
+    }
     if (tabId === settingsTabId) {
       closeSettingsTab();
       return;
@@ -986,14 +1078,14 @@ function App() {
     void workspace.closeConnection(tabId);
   };
   const openAppSessionWindow = (tabId: string) => {
-    if (tabId === settingsTabId || tabId === httpConsoleTabId) {
+    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId) {
       return;
     }
 
     openSessionWindow(tabId);
   };
   const reconnectAppSessionTab = (tabId: string) => {
-    if (tabId === settingsTabId || tabId === httpConsoleTabId) {
+    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId) {
       return;
     }
 
@@ -1004,7 +1096,9 @@ function App() {
       sourceTabId === settingsTabId ||
       targetTabId === settingsTabId ||
       sourceTabId === httpConsoleTabId ||
-      targetTabId === httpConsoleTabId
+      targetTabId === httpConsoleTabId ||
+      sourceTabId === hostDashboardTabId ||
+      targetTabId === hostDashboardTabId
     ) {
       return;
     }
@@ -1016,7 +1110,13 @@ function App() {
     });
     workspace.reorderSessionTabs(sourceTabId, targetTabId);
   };
-  const fileTransferPanel = <ActiveFileTransferPanel workspace={workspace} />;
+  const fileTransferPanel = (
+    <ActiveFileTransferPanel
+      onOpenSsh={openSshFromActiveFileTransfer}
+      openSshPending={Boolean(connectingProfileId)}
+      workspace={workspace}
+    />
+  );
   const shouldShowInlineSftpPanel = Boolean(
     workspace.activeSessionTabKind === "terminal" &&
       workspace.activeConnection?.capabilities.fileTransfer &&
@@ -1173,39 +1273,49 @@ function App() {
     <main className="app-shell" data-theme={workspace.settings.theme.mode} style={themeStyle}>
       <AppTitlebar
         httpConsoleActive={httpConsoleActive}
-        savedConnectionsOpen={savedConnectionsOpen}
+        savedConnectionsOpen={hostDashboardActive}
         settingsTabActive={settingsTabActive}
         onCreateProfile={openCreateProfileDialog}
         onOpenHttpConsole={openHttpConsoleTab}
         onOpenLocalShell={openLocalTerminalTab}
         onOpenSerialTerminal={openSerialTerminalTab}
-        onOpenSavedConnections={() => setSavedConnectionsOpen(true)}
+        onOpenSavedConnections={openHostDashboardTab}
         onOpenSettings={openSettingsTab}
       />
       <section className="workspace">
-        {savedConnectionsOpen ? (
-          <ConnectionList
-            activeProfileId={workspace.activeProfileId}
-            connectingProfileId={connectingProfileId}
-            profiles={workspace.profiles}
-            onClose={() => setSavedConnectionsOpen(false)}
-            onConnectProfile={connectSavedConnection}
-            onCreateProfile={() => {
-              setSavedConnectionsOpen(false);
-              openCreateProfileDialog();
-            }}
-            onDeleteProfile={workspace.deleteProfile}
-            onEditProfile={editSavedConnection}
-            onSelectProfile={workspace.setActiveProfileId}
-          />
-        ) : null}
-
         <div className="content-grid without-file-manager">
           <TerminalWorkspace
             activeTabId={activeAppTabId}
-            capabilities={settingsTabActive || httpConsoleActive ? inactiveCapabilities : workspace.capabilities}
-            connection={settingsTabActive || httpConsoleActive ? null : workspace.activeConnection}
+            capabilities={hostDashboardActive || settingsTabActive || httpConsoleActive ? inactiveCapabilities : workspace.capabilities}
+            connection={hostDashboardActive || settingsTabActive || httpConsoleActive ? null : workspace.activeConnection}
             customTabPanels={{
+              [hostDashboardTabId]: (
+                <ConnectionList
+                  activeProfileId={workspace.activeProfileId}
+                  connectingProfileId={connectingProfileId}
+                  profiles={workspace.profiles}
+                  sessionTabs={workspace.sessionTabs}
+                  onConnectProfile={connectSavedConnection}
+                  onCreateProfile={openCreateProfileDialog}
+                  onDeleteProfile={workspace.deleteProfile}
+                  onEditProfile={editSavedConnection}
+                  onOpenFileTransfer={(profile, connectionId) => {
+                    setActiveShellTabId(null);
+                    if (connectionId) {
+                      void workspace.openFileTransferTab(connectionId);
+                      return;
+                    }
+
+                    void connectSavedConnection(profile, "file-transfer");
+                  }}
+                  onOpenSession={(tabId) => {
+                    setActiveShellTabId(null);
+                    workspace.switchSessionTab(tabId);
+                  }}
+                  onRefreshHostOverview={sshCollectHostOverview}
+                  onSelectProfile={workspace.setActiveProfileId}
+                />
+              ),
               [httpConsoleTabId]: (
                 <Suspense fallback={null}>
                   <HttpConsolePanel />
@@ -1215,7 +1325,7 @@ function App() {
             }}
             emptyStateNotice={workspace.sessionNotice}
             fileTransferPanel={fileTransferPanel}
-            sftpSidePanel={settingsTabActive || httpConsoleActive ? undefined : renderInlineSftpPanel}
+            sftpSidePanel={hostDashboardActive || settingsTabActive || httpConsoleActive ? undefined : renderInlineSftpPanel}
             isFullscreen={terminalFullscreen}
             keymap={workspace.settings.keymap}
             reattachHintActive={detachedReattachHint}

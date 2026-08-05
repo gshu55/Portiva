@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::domain::secret::KnownHostEntry;
 use crate::security::fingerprint::{fingerprint_matches, normalize_fingerprint};
 use crate::utils::{app_paths, json_store};
 
+#[derive(Clone)]
 pub struct KnownHostsStore {
-    fingerprints: Mutex<HashMap<String, String>>,
+    fingerprints: Arc<Mutex<HashMap<String, String>>>,
     path: Option<PathBuf>,
 }
 
@@ -21,7 +22,7 @@ impl KnownHostsStore {
     #[cfg(test)]
     pub fn in_memory() -> Self {
         Self {
-            fingerprints: Mutex::new(HashMap::new()),
+            fingerprints: Arc::new(Mutex::new(HashMap::new())),
             path: None,
         }
     }
@@ -32,7 +33,7 @@ impl KnownHostsStore {
             HashMap::new()
         });
         Self {
-            fingerprints: Mutex::new(fingerprints),
+            fingerprints: Arc::new(Mutex::new(fingerprints)),
             path: Some(path),
         }
     }

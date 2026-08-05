@@ -1,9 +1,10 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::domain::capability::ConnectionCapabilities;
-use crate::domain::connection::ConnectionSession;
+use crate::domain::connection::{ConnectionSession, SshHostOverview};
 use crate::domain::logging::LogLevel;
 use crate::domain::profile::{ConnectionProfile, ConnectionType};
 use crate::domain::secret::SecretPurpose;
@@ -21,6 +22,7 @@ use crate::services::terminal_service::TerminalService;
 use crate::services::transfer_service::TransferService;
 
 const SAVED_CREDENTIAL_READ_TIMEOUT_SECS: u64 = 30;
+static HOST_OVERVIEW_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[tauri::command]
 pub async fn connection_open(
@@ -343,6 +345,136 @@ pub fn ssh_authenticate_agent(
     );
 
     Ok(session)
+}
+
+#[tauri::command]
+pub async fn ssh_collect_host_overview(
+    profile_id: String,
+    connection_id: Option<String>,
+    app_handle: AppHandle,
+) -> Result<SshHostOverview, String> {
+    let profile = {
+        let profiles = app_handle.state::<ProfileStore>();
+        profiles
+            .get(&profile_id)?
+            .ok_or_else(|| format!("profile not found: {profile_id}"))?
+    };
+    if !matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp) {
+        return Err("主机概览仅支持 SSH/SFTP 配置".to_string());
+    }
+    let known_hosts = app_handle.state::<KnownHostsStore>().inner().clone();
+    let ssh_sessions = app_handle.state::<SshSessionService>().inner().clone();
+    let secret_store = app_handle.state::<SecretStore>().inner().clone();
+    let reusable_connection_id = match connection_id {
+        Some(active_connection_id) => {
+            let manager = app_handle.state::<ConnectionManager>();
+            let reusable_session = manager
+                .get(&active_connection_id)?
+                .filter(|session| session.profile_id == profile_id && session.is_authenticated());
+            if reusable_session.is_some() && ssh_sessions.describe(&active_connection_id)?.is_some()
+            {
+                Some(active_connection_id)
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    tauri::async_runtime::spawn(async move {
+        collect_profile_host_overview(
+            profile_id,
+            profile,
+            reusable_connection_id,
+            known_hosts,
+            secret_store,
+            ssh_sessions,
+        )
+        .await
+    })
+    .await
+    .map_err(|error| format!("SSH 主机概览任务失败：{error}"))?
+}
+
+async fn collect_profile_host_overview(
+    profile_id: String,
+    profile: ConnectionProfile,
+    reusable_connection_id: Option<String>,
+    known_hosts: KnownHostsStore,
+    secret_store: SecretStore,
+    ssh_sessions: SshSessionService,
+) -> Result<SshHostOverview, String> {
+    if let Some(connection_id) = reusable_connection_id {
+        return ssh_sessions.collect_host_overview(connection_id).await;
+    }
+
+    let sequence = HOST_OVERVIEW_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let overview_connection_id = format!("host-overview-{profile_id}-{sequence}");
+    let auth_type = profile.auth_type.clone().unwrap_or_default();
+    let private_key_path = profile.private_key_path.clone().unwrap_or_default();
+    ssh_sessions
+        .clone()
+        .connect_trusted_owned(overview_connection_id.clone(), profile, known_hosts)
+        .await?;
+
+    let authentication_result = if auth_type == "password" {
+        match read_saved_profile_password(profile_id.clone(), secret_store).await {
+            Ok(password) => ssh_sessions
+                .clone()
+                .authenticate_password_owned(overview_connection_id.clone(), password)
+                .await
+                .map(|_| ()),
+            Err(error) => Err(error),
+        }
+    } else if auth_type == "private-key" {
+        ssh_sessions
+            .clone()
+            .authenticate_private_key_owned(overview_connection_id.clone(), private_key_path, None)
+            .await
+            .map(|_| ())
+    } else if auth_type == "agent" {
+        Err("Agent 认证配置请先打开终端，工作台将复用已认证会话采集指标".to_string())
+    } else {
+        Err("SSH 配置缺少可用的认证方式".to_string())
+    };
+
+    let result = match authentication_result {
+        Ok(()) => {
+            ssh_sessions
+                .clone()
+                .collect_host_overview(overview_connection_id.clone())
+                .await
+        }
+        Err(error) => Err(error),
+    };
+
+    let _ = ssh_sessions.close_owned(overview_connection_id).await;
+    result
+}
+
+async fn read_saved_profile_password(
+    profile_id: String,
+    secret_store: SecretStore,
+) -> Result<String, String> {
+    let read_task = tauri::async_runtime::spawn_blocking(move || {
+        secret_store.get_secret(&profile_id, SecretPurpose::Password)
+    });
+
+    match tokio::time::timeout(
+        Duration::from_secs(SAVED_CREDENTIAL_READ_TIMEOUT_SECS),
+        read_task,
+    )
+    .await
+    {
+        Err(_) => Err(format!(
+            "读取已保存的 SSH 凭据超时（{} 秒）",
+            SAVED_CREDENTIAL_READ_TIMEOUT_SECS
+        )),
+        Ok(Err(error)) => Err(format!("系统凭据库任务执行失败：{error}")),
+        Ok(Ok(Err(error))) => Err(error),
+        Ok(Ok(Ok(None))) => Err("未找到已保存的 SSH 密码，请先编辑连接并保存密码".to_string()),
+        Ok(Ok(Ok(Some(password)))) => Ok(password),
+    }
 }
 
 fn format_connection_opened(session: &ConnectionSession) -> String {

@@ -40,6 +40,8 @@ pub struct TransferTask {
     pub item_kind: TransferTaskItemKind,
     pub local_path: String,
     pub remote_path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub batch_items: Vec<TransferUploadItem>,
     pub status: TransferStatus,
     pub conflict_policy: TransferConflictPolicy,
     pub conflict_path: Option<String>,
@@ -57,10 +59,19 @@ pub struct TransferTask {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferUploadItem {
+    pub local_path: String,
+    pub remote_path: String,
+    pub item_kind: TransferTaskItemKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TransferTaskItemKind {
     File,
     Directory,
+    Batch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -141,6 +141,18 @@ export interface ConnectionTransportInfo {
   fileTransferReady: boolean;
 }
 
+export interface SshHostOverview {
+  hostname: string;
+  operatingSystem: string;
+  kernelVersion: string;
+  cpuLoad1: number | null;
+  cpuCount: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  uptimeSeconds: number | null;
+  latencyMs: number;
+}
+
 export interface RemoteEntry {
   name: string;
   path: string;
@@ -158,14 +170,21 @@ export interface FileTransferSession {
   protocol: TransferTask["protocol"];
 }
 
+export interface TransferUploadItem {
+  localPath: string;
+  remotePath: string;
+  itemKind: "file" | "directory";
+}
+
 export interface TransferTask {
   id: string;
   connectionId: string;
   direction: "upload" | "download";
   protocol: "sftp" | "scp" | "ftp" | "webdav" | "s3";
-  itemKind: "file" | "directory";
+  itemKind: "file" | "directory" | "batch";
   localPath: string;
   remotePath: string;
+  batchItems?: TransferUploadItem[];
   status:
     | "pending"
     | "running"
@@ -261,7 +280,7 @@ export type TerminalRightClickBehavior =
 
 export interface WorkspaceSessionTab {
   id?: string;
-  kind?: "terminal" | "file-transfer" | "settings" | "http-console";
+  kind?: "terminal" | "file-transfer" | "settings" | "http-console" | "host-dashboard";
   connection: ConnectionSummary;
   fileTransferSession?: FileTransferSession | null;
   parentConnectionId?: string;

@@ -3,7 +3,9 @@ import {
   conflictPolicyLabel,
   transferDirectionLabel,
   transferProgressPercent,
+  transferTaskDisplayName,
   transferTaskSummary,
+  transferTaskTooltip,
 } from "../../shared/labels";
 import { Icon } from "../../shared/Icon";
 
@@ -35,16 +37,10 @@ export function TransferQueue({ onCancel, onDelete, onPause, onResume, onRetry, 
           <div
             className="transfer-item"
             key={task.id}
-            title={[
-              `远程：${task.remotePath}`,
-              `本地：${task.localPath}`,
-              task.error ? `错误：${task.error}` : "",
-            ]
-              .filter(Boolean)
-              .join("\n")}
+            title={transferTaskTooltip(task)}
           >
             <span>{transferDirectionLabel(task.direction)}</span>
-            <span>{task.remotePath.split("/").pop() || task.remotePath}</span>
+            <span>{transferTaskDisplayName(task)}</span>
             <progress max="100" value={progress} />
             <span>{conflictPolicyLabel(task.conflictPolicy)}</span>
             <span>{task.retryCount}</span>

@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::domain::file_transfer::{
     TransferConflictPolicy, TransferDirection, TransferProtocol, TransferStatus, TransferTask,
-    TransferTaskItemKind,
+    TransferTaskItemKind, TransferUploadItem,
 };
 use crate::utils::remote_path::normalize_remote_path;
 use crate::utils::transfer_progress::progress_percent;
@@ -62,6 +62,31 @@ impl TransferService {
             item_kind,
             local_path,
             normalize_remote_path(&remote_path),
+            Vec::new(),
+        )
+    }
+
+    pub fn upload_batch(
+        &self,
+        connection_id: String,
+        remote_path: String,
+        batch_items: Vec<TransferUploadItem>,
+    ) -> Result<TransferTask, String> {
+        if batch_items.len() < 2 {
+            return Err("batch upload requires at least two items".to_string());
+        }
+
+        let local_path = batch_items
+            .first()
+            .map(|item| item.local_path.clone())
+            .unwrap_or_default();
+        self.create_task(
+            connection_id,
+            TransferDirection::Upload,
+            TransferTaskItemKind::Batch,
+            local_path,
+            normalize_remote_path(&remote_path),
+            batch_items,
         )
     }
 
@@ -77,6 +102,7 @@ impl TransferService {
             TransferTaskItemKind::File,
             local_path,
             normalize_remote_path(&remote_path),
+            Vec::new(),
         )
     }
 
@@ -653,6 +679,7 @@ impl TransferService {
         item_kind: TransferTaskItemKind,
         local_path: String,
         remote_path: String,
+        batch_items: Vec<TransferUploadItem>,
     ) -> Result<TransferTask, String> {
         let now = now_stamp();
         let direction_label = match direction {
@@ -682,6 +709,7 @@ impl TransferService {
             item_kind,
             local_path,
             remote_path,
+            batch_items,
             status: TransferStatus::Pending,
             conflict_policy: TransferConflictPolicy::Ask,
             conflict_path: None,
@@ -747,8 +775,36 @@ fn transfer_sequence(transfer_id: &str) -> u64 {
 mod tests {
     use super::{ConflictDirective, TransferService};
     use crate::domain::file_transfer::{
-        TransferConflictPolicy, TransferStatus, TransferTaskItemKind,
+        TransferConflictPolicy, TransferStatus, TransferTaskItemKind, TransferUploadItem,
     };
+
+    #[test]
+    fn batch_upload_is_kept_as_one_queue_task() {
+        let service = TransferService::default();
+        let task = service
+            .upload_batch(
+                "connection-1".to_string(),
+                "/srv/upload".to_string(),
+                vec![
+                    TransferUploadItem {
+                        local_path: "C:\\drop\\one.txt".to_string(),
+                        remote_path: "/srv/upload/one.txt".to_string(),
+                        item_kind: TransferTaskItemKind::File,
+                    },
+                    TransferUploadItem {
+                        local_path: "C:\\drop\\folder".to_string(),
+                        remote_path: "/srv/upload/folder".to_string(),
+                        item_kind: TransferTaskItemKind::Directory,
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert!(matches!(task.item_kind, TransferTaskItemKind::Batch));
+        assert_eq!(task.batch_items.len(), 2);
+        assert_eq!(task.remote_path, "/srv/upload");
+        assert_eq!(service.list().unwrap().len(), 1);
+    }
 
     #[test]
     fn can_pause_resume_and_cancel_transfer() {

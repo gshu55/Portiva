@@ -18,6 +18,7 @@ import type {
   SecretMetadata,
   TunnelRule,
   SerialPortInfo,
+  SshHostOverview,
 } from "../types";
 
 export const commandNames = {
@@ -32,6 +33,7 @@ export const commandNames = {
   sshAuthenticateSavedPassword: "ssh_authenticate_saved_password",
   sshAuthenticatePrivateKey: "ssh_authenticate_private_key",
   sshAuthenticateAgent: "ssh_authenticate_agent",
+  sshCollectHostOverview: "ssh_collect_host_overview",
   profileGroups: "profile_groups",
   profileRecent: "profile_recent",
   profileMarkRecent: "profile_mark_recent",
@@ -308,6 +310,13 @@ export function sshAuthenticateAgent(connectionId: string) {
   return invoke<ConnectionSummary>(commandNames.sshAuthenticateAgent, { connectionId });
 }
 
+export function sshCollectHostOverview(profileId: string, connectionId?: string) {
+  return invoke<SshHostOverview>(commandNames.sshCollectHostOverview, {
+    profileId,
+    connectionId,
+  });
+}
+
 export function fileTransferList(sessionId: string, remotePath: string) {
   return invoke<RemoteEntry[]>(commandNames.fileTransferList, { sessionId, remotePath });
 }
@@ -366,9 +375,10 @@ export function fileTransferUpload(sessionId: string, localPath: string, remoteP
 
 export function fileTransferUploadBatch(
   sessionId: string,
+  remotePath: string,
   uploads: Array<{ localPath: string; remotePath: string }>,
 ) {
-  return invoke<TransferTask[]>(commandNames.fileTransferUploadBatch, { sessionId, uploads });
+  return invoke<TransferTask>(commandNames.fileTransferUploadBatch, { sessionId, remotePath, uploads });
 }
 
 export function fileTransferDownload(sessionId: string, remotePath: string, localPath: string) {

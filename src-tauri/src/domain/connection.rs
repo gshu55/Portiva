@@ -26,6 +26,20 @@ pub struct ConnectionTransportInfo {
     pub file_transfer_ready: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshHostOverview {
+    pub hostname: String,
+    pub operating_system: String,
+    pub kernel_version: String,
+    pub cpu_load_1: Option<f64>,
+    pub cpu_count: Option<u32>,
+    pub memory_used_bytes: Option<u64>,
+    pub memory_total_bytes: Option<u64>,
+    pub uptime_seconds: Option<u64>,
+    pub latency_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectionTransportKind {

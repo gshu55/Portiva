@@ -109,8 +109,12 @@ export function transferTaskSummary(task: TransferTask) {
   if (task.status === "failed" && task.error) {
     return `失败：${task.error}`;
   }
-  if (task.itemKind === "directory" && task.status === "running" && task.totalItems === undefined) {
-    return "正在扫描文件夹";
+  if (
+    (task.itemKind === "directory" || task.itemKind === "batch")
+    && task.status === "running"
+    && task.totalItems === undefined
+  ) {
+    return task.itemKind === "batch" ? "正在扫描批量项目" : "正在扫描文件夹";
   }
 
   const status = transferStatusLabel(task.status);
@@ -125,6 +129,30 @@ export function transferTaskSummary(task: TransferTask) {
   ].filter(Boolean);
 
   return `${status} · ${counts.join("，")}`;
+}
+
+export function transferTaskDisplayName(task: TransferTask) {
+  if (task.itemKind === "batch") {
+    return `批量上传 · ${task.batchItems?.length ?? 0} 个项目`;
+  }
+
+  const path = task.direction === "download" ? task.remotePath : task.localPath;
+  const normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
+  return normalized.split("/").pop() || path;
+}
+
+export function transferTaskTooltip(task: TransferTask) {
+  const localSource = task.itemKind === "batch"
+    ? `本地项目：\n${task.batchItems?.map((item) => item.localPath).join("\n") ?? ""}`
+    : `本地：${task.localPath}`;
+
+  return [
+    `远程：${task.remotePath}`,
+    localSource,
+    task.error ? `错误：${task.error}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function conflictPolicyLabel(policy: TransferConflictPolicy) {

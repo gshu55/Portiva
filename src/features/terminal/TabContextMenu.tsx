@@ -31,17 +31,17 @@ export function TabContextMenu({
   tabId,
 }: TabContextMenuProps) {
   const isFileTransferTab = (tab.kind ?? "terminal") === "file-transfer";
-  const isSettingsTab = (tab.kind ?? "terminal") === "settings";
-  const status = isSettingsTab
+  const isCustomPageTab = ["settings", "http-console", "host-dashboard"].includes(tab.kind ?? "terminal");
+  const status = isCustomPageTab
     ? "页面"
     : isFileTransferTab
     ? "文件管理"
     : tab.restored
       ? "已恢复"
       : connectionStatusLabel(tab.connection.status);
-  const reconnectTargetId = isSettingsTab ? undefined : isFileTransferTab ? tab.parentConnectionId : tabId;
+  const reconnectTargetId = isCustomPageTab ? undefined : isFileTransferTab ? tab.parentConnectionId : tabId;
   const canOpenFileTransfer =
-    !isSettingsTab &&
+    !isCustomPageTab &&
     !isFileTransferTab &&
     tab.connection.capabilities.sftp &&
     tab.connection.capabilities.fileTransfer;
@@ -84,20 +84,20 @@ export function TabContextMenu({
           <span>打开 SFTP</span>
         </button>
         <button
-          disabled={isSettingsTab || !canSplitRight}
+          disabled={isCustomPageTab || !canSplitRight}
           onClick={() => runAction(() => onSplitRight?.(tabId))}
           role="menuitem"
-          title={!isSettingsTab && canSplitRight ? "右侧分屏" : "当前标签不支持分屏"}
+          title={!isCustomPageTab && canSplitRight ? "右侧分屏" : "当前标签不支持分屏"}
           type="button"
         >
           <Icon name="columns-2" />
           <span>右侧分屏</span>
         </button>
         <button
-          disabled={isSettingsTab}
+          disabled={isCustomPageTab}
           onClick={() => runAction(() => onOpenWindow(tabId))}
           role="menuitem"
-          title={isSettingsTab ? "设置标签不支持单独窗口" : "单独窗口"}
+          title={isCustomPageTab ? "应用页面标签不支持单独窗口" : "单独窗口"}
           type="button"
         >
           <Icon name="external-link" />

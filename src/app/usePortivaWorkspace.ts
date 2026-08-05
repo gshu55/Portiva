@@ -385,30 +385,6 @@ export function usePortivaWorkspace() {
 
   const capabilities = capabilitiesByType[activeProfile.type];
   const activeConnectionCapabilities = activeConnection?.capabilities ?? capabilities;
-  const activeFileTransferConnectionId =
-    activeSessionTab && (activeSessionTab.kind ?? "terminal") === "file-transfer"
-      ? activeSessionTab.parentConnectionId ?? activeFileTransferSession?.connectionId ?? null
-      : activeConnection?.id ?? null;
-  const sftpConnectionOptions = useMemo(
-    () =>
-      sessionTabs
-        .filter(
-          (tab) =>
-            (tab.kind ?? "terminal") === "terminal" &&
-            tab.connection.capabilities.sftp &&
-            tab.connection.transport?.authenticated,
-        )
-        .map((tab) => {
-          const connectionId = tab.connection.id;
-          return {
-            connectionId,
-            title: tab.connection.title,
-            active: connectionId === activeFileTransferConnectionId,
-          };
-        }),
-    [activeFileTransferConnectionId, sessionTabs],
-  );
-
   const clearFileTransferView = useCallback(() => {
     setActiveFileTransferSession(null);
     setSelectedRemoteEntry(null);
@@ -3013,21 +2989,21 @@ export function usePortivaWorkspace() {
 
       try {
         const session = await ensureFileTransferSession();
-        const queuedTasks = await fileTransferUploadBatch(
+        const queuedTask = await fileTransferUploadBatch(
           session.id,
+          remotePath,
           paths.map((localPath) => ({
             localPath,
             remotePath: joinRemotePath(remotePath, localPathBaseName(localPath)),
           })),
         );
         setTransfers((current) => {
-          const queuedIds = new Set(queuedTasks.map((task) => task.id));
-          return [...current.filter((task) => !queuedIds.has(task.id)), ...queuedTasks];
+          return [...current.filter((task) => task.id !== queuedTask.id), queuedTask];
         });
         setWorkspaceMessage(
           paths.length === 1
             ? `已加入拖拽上传队列：${localPathBaseName(paths[0])}。`
-            : `已加入拖拽上传队列：${paths.length} 个文件或文件夹。`,
+            : `已加入一个批量上传任务：${paths.length} 个文件或文件夹，目录将递归处理。`,
         );
       } catch (error) {
         try {
@@ -3166,6 +3142,12 @@ export function usePortivaWorkspace() {
             await fileTransferDelete(failedTask.id).catch(() => undefined);
             if (failedTask.direction === "download") {
               await fileTransferDownload(session.id, failedTask.remotePath, failedTask.localPath);
+            } else if (failedTask.itemKind === "batch" && failedTask.batchItems?.length) {
+              await fileTransferUploadBatch(
+                session.id,
+                failedTask.remotePath,
+                failedTask.batchItems.map(({ localPath, remotePath }) => ({ localPath, remotePath })),
+              );
             } else {
               await fileTransferUpload(session.id, failedTask.localPath, failedTask.remotePath);
             }
@@ -3295,7 +3277,6 @@ export function usePortivaWorkspace() {
     selectedRemoteEntry,
     sessionTabs,
     sessionNotice,
-    sftpConnectionOptions,
     secrets,
     serialPorts,
     settings,

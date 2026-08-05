@@ -1,21 +1,24 @@
-import { type DragEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Icon } from "../../shared/Icon";
-import { Button, IconButton, Select, TextInput } from "../../shared/ui";
+import { Button, IconButton, TextInput } from "../../shared/ui";
 import type { ConnectionCapabilities, RemoteEntry, TransferTask } from "../../shared/types";
 import { FileEntryContextMenu } from "./FileEntryContextMenu";
+import { fileIconKind, remoteEntryIconName } from "./fileEntryIcons";
+import { SftpDropOverlay } from "./SftpDropOverlay";
 import { TransferQueue } from "./TransferQueue";
+import { useSftpDropUpload } from "./useSftpDropUpload";
 
 export const localRootsPath = "portiva://local-roots";
 
-export interface SftpConnectionOption {
-  connectionId: string;
-  title: string;
-  active: boolean;
-}
-
 interface FileTransferPanelProps {
   capabilities: ConnectionCapabilities;
-  sftpConnectionOptions: SftpConnectionOption[];
+  openSshPending?: boolean;
   localEntries: RemoteEntry[];
   localPath: string;
   remoteEntries: RemoteEntry[];
@@ -25,7 +28,7 @@ interface FileTransferPanelProps {
   transfers: TransferTask[];
   onCancelTransfer: (transferId: string) => void;
   onDeleteTransfer: (transferId: string) => void;
-  onOpenConnectionFileTransfer: (connectionId: string) => void;
+  onOpenSsh: () => void;
   onCreateLocalDirectory: (name: string) => boolean | void | Promise<boolean | void>;
   onCreateRemoteDirectory: (name: string) => boolean | void | Promise<boolean | void>;
   onDownloadEntry: (entry: RemoteEntry) => void | Promise<void>;
@@ -48,12 +51,12 @@ interface FileTransferPanelProps {
 
 export function FileTransferPanel({
   capabilities,
+  openSshPending = false,
   localEntries,
   localPath,
-  sftpConnectionOptions,
   onCancelTransfer,
   onDeleteTransfer,
-  onOpenConnectionFileTransfer,
+  onOpenSsh,
   onCreateLocalDirectory,
   onCreateRemoteDirectory,
   onDownloadEntry,
@@ -78,13 +81,8 @@ export function FileTransferPanel({
   selectedRemoteEntry,
   transfers,
 }: FileTransferPanelProps) {
-  const [remoteDropActive, setRemoteDropActive] = useState(false);
-  const remotePaneRef = useRef<HTMLDivElement | null>(null);
-  const [selectedConnectionId, setSelectedConnectionId] = useState(
-    sftpConnectionOptions.find((option) => option.active)?.connectionId ??
-      sftpConnectionOptions[0]?.connectionId ??
-      "",
-  );
+  const [transferPanelRatio, setTransferPanelRatio] = useState(0.34);
+  const panelRef = useRef<HTMLElement | null>(null);
   const selectedLocalLabel = useMemo(
     () => selectedLocalEntry?.name ?? "未选择",
     [selectedLocalEntry],
@@ -94,43 +92,53 @@ export function FileTransferPanel({
     [selectedRemoteEntry],
   );
   const canUseRemote = capabilities.fileTransfer;
+  const transferPanelPercent = Math.round(transferPanelRatio * 100);
 
-  useEffect(() => {
-    const activeConnectionId = sftpConnectionOptions.find((option) => option.active)?.connectionId;
+  useEffect(
+    () => () => {
+      document.body.classList.remove("file-manager-transfer-resizing");
+    },
+    [],
+  );
 
-    if (activeConnectionId && selectedConnectionId !== activeConnectionId) {
-      setSelectedConnectionId(activeConnectionId);
-      return;
-    }
+  const startTransferPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const updateTransferRatio = (clientY: number) => {
+      const panel = panelRef.current;
 
-    if (!selectedConnectionId && sftpConnectionOptions[0]) {
-      setSelectedConnectionId(sftpConnectionOptions[0].connectionId);
-    }
-  }, [selectedConnectionId, sftpConnectionOptions]);
+      if (!panel) {
+        return;
+      }
+
+      const bounds = panel.getBoundingClientRect();
+      if (bounds.height <= 0) {
+        return;
+      }
+
+      const nextRatio = (bounds.bottom - clientY) / bounds.height;
+      setTransferPanelRatio(Math.min(0.6, Math.max(0.18, nextRatio)));
+    };
+    const onPointerMove = (moveEvent: PointerEvent) => updateTransferRatio(moveEvent.clientY);
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      document.body.classList.remove("file-manager-transfer-resizing");
+    };
+
+    document.body.classList.add("file-manager-transfer-resizing");
+    updateTransferRatio(event.clientY);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
 
   return (
-    <section className="panel file-manager">
-      <div className="sftp-source-row">
-        <label>
-          SSH 连接
-          <Select
-            value={selectedConnectionId}
-            placeholder="没有已认证的 SSH 连接"
-            options={sftpConnectionOptions.map((option) => ({
-              label: option.active ? `${option.title}（当前）` : option.title,
-              value: option.connectionId,
-            }))}
-            onChange={setSelectedConnectionId}
-          />
-        </label>
-        <IconButton
-          aria-label="添加 SFTP 标签"
-          disabled={!selectedConnectionId}
-          icon="plus"
-          onClick={() => onOpenConnectionFileTransfer(selectedConnectionId)}
-          title="添加 SFTP 标签"
-        />
-      </div>
+    <section
+      className="panel file-manager"
+      ref={panelRef}
+      style={{
+        gridTemplateRows: `minmax(0, 1fr) 6px minmax(72px, ${transferPanelPercent}%)`,
+      }}
+    >
       <div className="file-manager-grid">
         <FilePane
           entries={localEntries}
@@ -172,21 +180,20 @@ export function FileTransferPanel({
 
         <FilePane
           disabled={!canUseRemote}
-          dropUploadActive={remoteDropActive}
           dropUploadEnabled={canUseRemote}
           entries={remoteEntries}
-          paneRef={remotePaneRef}
           path={remotePath}
           selectedEntry={selectedRemoteEntry}
           pathKind="remote"
           title="远程 SFTP"
-          onDropUploadActiveChange={setRemoteDropActive}
+          openSshPending={openSshPending}
           onDropUploadLocalPaths={onUploadLocalPaths}
           onCreateDirectory={(name) => onCreateRemoteDirectory(name)}
           onOpenDirectory={(path) => onRefreshRemote(path)}
           onOpenRoot={() => {
             onRefreshRemote("/");
           }}
+          onOpenSsh={onOpenSsh}
           onRefresh={() => onRefreshRemote()}
           copyLabel="传输"
           onCopyToPeer={(entry) => onDownloadEntry(entry)}
@@ -195,6 +202,14 @@ export function FileTransferPanel({
           onSelectEntry={onSelectRemoteEntry}
         />
       </div>
+      <div
+        aria-label="调整传输队列高度"
+        aria-orientation="horizontal"
+        className="file-manager-transfer-resizer"
+        onPointerDown={startTransferPanelResize}
+        role="separator"
+        title="拖动调整传输队列高度"
+      />
       <TransferQueue
         tasks={transfers}
         onCancel={onCancelTransfer}
@@ -209,6 +224,7 @@ export function FileTransferPanel({
 
 interface FilePaneProps {
   disabled?: boolean;
+  openSshPending?: boolean;
   entries: RemoteEntry[];
   path: string;
   pathKind: "local" | "remote";
@@ -220,20 +236,17 @@ interface FilePaneProps {
   onOpenDirectory: (path: string) => boolean | void | Promise<boolean | void>;
   onOpenRoot?: () => void;
   onOpenRoots?: () => void;
+  onOpenSsh?: () => void;
   onRefresh: () => boolean | void | Promise<boolean | void>;
   onRemove: (entry?: RemoteEntry | null) => void | Promise<void>;
   onRename: (entry: RemoteEntry, name: string) => boolean | void | Promise<boolean | void>;
   onSelectEntry: (entry: RemoteEntry) => void;
-  dropUploadActive?: boolean;
   dropUploadEnabled?: boolean;
-  paneRef?: RefObject<HTMLDivElement | null>;
-  onDropUploadActiveChange?: (active: boolean) => void;
   onDropUploadLocalPaths?: (localPaths: string[]) => void;
 }
 
 function FilePane({
   disabled = false,
-  dropUploadActive = false,
   dropUploadEnabled = false,
   entries,
   copyLabel,
@@ -242,18 +255,20 @@ function FilePane({
   onOpenDirectory,
   onOpenRoot,
   onOpenRoots,
+  onOpenSsh,
   onRefresh,
   onRemove,
   onRename,
-  onDropUploadActiveChange,
   onDropUploadLocalPaths,
   onSelectEntry,
-  paneRef,
   path,
   pathKind,
   selectedEntry,
   title,
+  openSshPending = false,
 }: FilePaneProps) {
+  const fileListRef = useRef<HTMLDivElement | null>(null);
+  const paneRef = useRef<HTMLDivElement | null>(null);
   const [pathInput, setPathInput] = useState(path);
   const [editingEntryPath, setEditingEntryPath] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
@@ -264,9 +279,18 @@ function FilePane({
     x: number;
     y: number;
   } | null>(null);
+  const { dropActive, dropZoneProps } = useSftpDropUpload({
+    enabled: dropUploadEnabled && !disabled,
+    onUploadPaths: onDropUploadLocalPaths ?? (() => undefined),
+    targetRef: paneRef,
+  });
 
   useEffect(() => {
     setPathInput(path);
+    if (fileListRef.current) {
+      fileListRef.current.scrollLeft = 0;
+      fileListRef.current.scrollTop = 0;
+    }
   }, [path]);
 
   useEffect(() => {
@@ -369,50 +393,25 @@ function FilePane({
       className={[
         "file-pane",
         dropUploadEnabled ? "file-pane-drop-target" : "",
-        dropUploadActive ? "file-pane-drop-active" : "",
+        dropActive ? "file-pane-drop-active" : "",
       ]
         .filter(Boolean)
         .join(" ")}
       ref={paneRef}
-      onDragEnter={(event) => {
-        if (!dropUploadEnabled || disabled) {
-          return;
-        }
-
-        event.preventDefault();
-        onDropUploadActiveChange?.(true);
-      }}
-      onDragLeave={(event) => {
-        if (!dropUploadEnabled || disabled) {
-          return;
-        }
-
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          onDropUploadActiveChange?.(false);
-        }
-      }}
-      onDragOver={(event) => {
-        if (!dropUploadEnabled || disabled) {
-          return;
-        }
-
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
-        onDropUploadActiveChange?.(true);
-      }}
-      onDrop={(event) => {
-        if (!dropUploadEnabled || disabled) {
-          return;
-        }
-
-        event.preventDefault();
-        onDropUploadActiveChange?.(false);
-        onDropUploadLocalPaths?.(extractLocalFilePaths(event));
-      }}
+      {...dropZoneProps}
     >
       <div className="file-pane-heading">
         <strong>{title}</strong>
         <div className="file-pane-tools">
+          {onOpenSsh ? (
+            <IconButton
+              aria-label="打开此主机的 SSH 终端"
+              disabled={openSshPending}
+              icon="terminal"
+              onClick={onOpenSsh}
+              title={openSshPending ? "正在打开 SSH 终端" : "快速打开 SSH 终端"}
+            />
+          ) : null}
           {onOpenRoot ? (
             <IconButton aria-label="回到远程根目录" disabled={disabled} icon="home" onClick={onOpenRoot} title="回到远程根目录" />
           ) : null}
@@ -472,6 +471,7 @@ function FilePane({
       </div>
       <div
         className="file-list file-browser-list"
+        ref={fileListRef}
         onContextMenu={(event) => {
           event.preventDefault();
           setContextMenu({
@@ -499,7 +499,7 @@ function FilePane({
           tone="muted"
         >
           <span className="file-browser-name" role="cell">
-            <span className="file-browser-icon" aria-hidden="true" />
+            <Icon className="simple-sftp-entry-icon" name="folder-open" />
             <strong>...</strong>
           </span>
           <span role="cell">上级目录</span>
@@ -523,7 +523,13 @@ function FilePane({
                 role="row"
               >
                 <span className="file-browser-name" role="cell">
-                  <span className="file-browser-icon" aria-hidden="true" />
+                  <Icon
+                    className={[
+                      "simple-sftp-entry-icon",
+                      `is-${entry.kind === "directory" ? "folder" : fileIconKind(entry.name)}`,
+                    ].join(" ")}
+                    name={remoteEntryIconName(entry)}
+                  />
                   <TextInput
                     autoFocus
                     className="file-inline-name-input"
@@ -584,7 +590,13 @@ function FilePane({
                 tone="muted"
               >
                 <span className="file-browser-name" role="cell">
-                  <span className="file-browser-icon" aria-hidden="true" />
+                  <Icon
+                    className={[
+                      "simple-sftp-entry-icon",
+                      `is-${entry.kind === "directory" ? "folder" : fileIconKind(entry.name)}`,
+                    ].join(" ")}
+                    name={remoteEntryIconName(entry)}
+                  />
                   <strong>{entry.name}</strong>
                 </span>
                 <span role="cell">{kindLabel(entry.kind)}</span>
@@ -623,36 +635,10 @@ function FilePane({
       ) : null}
       {inlineNotice ? <div className="file-inline-notice">{inlineNotice}</div> : null}
       {dropUploadEnabled ? (
-        <div className="file-drop-overlay" aria-hidden={!dropUploadActive}>
-          <Icon name="upload" />
-          <span>释放上传到当前目录</span>
-        </div>
+        <SftpDropOverlay active={dropActive} className="file-drop-overlay" />
       ) : null}
     </div>
   );
-}
-
-function extractLocalFilePaths(event: DragEvent<HTMLElement>) {
-  const paths: string[] = [];
-
-  for (const file of Array.from(event.dataTransfer.files)) {
-    const path = (file as File & { path?: string }).path;
-
-    if (path) {
-      paths.push(path);
-    }
-  }
-
-  for (const item of Array.from(event.dataTransfer.items)) {
-    const file = item.kind === "file" ? item.getAsFile() : null;
-    const path = (file as (File & { path?: string }) | null)?.path;
-
-    if (path) {
-      paths.push(path);
-    }
-  }
-
-  return [...new Set(paths)];
 }
 
 function uniqueEntryName(entries: RemoteEntry[], baseName: string, ignorePath?: string) {

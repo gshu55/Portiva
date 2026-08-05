@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::domain::connection::SshHostOverview;
 use crate::domain::file_transfer::{RemoteEntry, RemoteEntryKind};
 use crate::domain::profile::ConnectionProfile;
 use crate::domain::terminal::{TerminalRenderPolicy, TerminalSessionStatus, TerminalSize};
@@ -29,6 +30,8 @@ const SFTP_REQUEST_TIMEOUT_SECS: u64 = 60;
 const SSH_CONNECT_TIMEOUT_SECS: u64 = 5;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 15;
 const SSH_KEEPALIVE_MAX_MISSES: usize = 2;
+const SSH_HOST_OVERVIEW_TIMEOUT_SECS: u64 = 8;
+const SSH_COMMAND_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 const TERMINAL_OUTPUT_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 const TERMINAL_OUTPUT_MAX_CHUNK_BYTES: usize = 32 * 1024;
 static TRANSFER_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -68,9 +71,9 @@ pub struct SshConnectedTransport {
     pub host_key_fingerprint: String,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SshSessionService {
-    sessions: Mutex<HashMap<String, SshRuntimeSession>>,
+    sessions: Arc<Mutex<HashMap<String, SshRuntimeSession>>>,
 }
 
 struct SshRuntimeSession {
@@ -86,6 +89,73 @@ struct SshRuntimeSession {
 struct SshPtySession {
     write_half: Arc<AsyncMutex<ChannelWriteHalf<client::Msg>>>,
 }
+
+struct SshCommandOutput {
+    exit_status: Option<u32>,
+    stderr: String,
+    stdout: String,
+}
+
+const HOST_OVERVIEW_COMMAND: &str = r#"LC_ALL=C
+load_1=""
+cpu_count=""
+memory_total_kb=""
+memory_available_kb=""
+memory_free_kb=""
+memory_buffers_kb=""
+memory_cached_kb=""
+uptime_seconds=""
+
+if [ -r /proc/loadavg ]; then
+  read load_1 _ < /proc/loadavg
+fi
+
+if command -v getconf >/dev/null 2>&1; then
+  cpu_count=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+fi
+if [ -z "$cpu_count" ] && command -v nproc >/dev/null 2>&1; then
+  cpu_count=$(nproc 2>/dev/null)
+fi
+
+if [ -r /proc/meminfo ]; then
+  while read key value unit; do
+    case "$key" in
+      MemTotal:) memory_total_kb=$value ;;
+      MemAvailable:) memory_available_kb=$value ;;
+      MemFree:) memory_free_kb=$value ;;
+      Buffers:) memory_buffers_kb=$value ;;
+      Cached:) memory_cached_kb=$value ;;
+    esac
+  done < /proc/meminfo
+fi
+if [ -z "$memory_available_kb" ] && [ -n "$memory_free_kb" ]; then
+  memory_available_kb=$((memory_free_kb + memory_buffers_kb + memory_cached_kb))
+fi
+
+if [ -r /proc/uptime ]; then
+  read uptime_seconds _ < /proc/uptime
+  uptime_seconds=${uptime_seconds%%.*}
+fi
+
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+  operating_system=${PRETTY_NAME:-${NAME:-Linux}}
+else
+  operating_system=$(uname -s 2>/dev/null)
+fi
+hostname_value=$(hostname 2>/dev/null)
+kernel_version=$(uname -r 2>/dev/null)
+
+printf 'portivaOverviewVersion\t1\n'
+printf 'hostname\t%s\n' "$hostname_value"
+printf 'operatingSystem\t%s\n' "$operating_system"
+printf 'kernelVersion\t%s\n' "$kernel_version"
+printf 'cpuLoad1\t%s\n' "$load_1"
+printf 'cpuCount\t%s\n' "$cpu_count"
+printf 'memoryTotalKb\t%s\n' "$memory_total_kb"
+printf 'memoryAvailableKb\t%s\n' "$memory_available_kb"
+printf 'uptimeSeconds\t%s\n' "$uptime_seconds"
+"#;
 
 impl SshSessionService {
     pub fn ensure_matches_profile(
@@ -120,7 +190,7 @@ impl SshSessionService {
         profile: &ConnectionProfile,
         known_hosts: &KnownHostsStore,
     ) -> Result<SshConnectedTransport, String> {
-        let opened = open_ssh_handle(profile).await?;
+        let opened = open_ssh_handle(profile.clone()).await?;
 
         match known_hosts.verify_host_key(&opened.host, opened.port, &opened.fingerprint)? {
             KnownHostDecision::Trusted => {}
@@ -174,6 +244,66 @@ impl SshSessionService {
         })
     }
 
+    pub async fn connect_trusted_owned(
+        self,
+        connection_id: String,
+        profile: ConnectionProfile,
+        known_hosts: KnownHostsStore,
+    ) -> Result<SshConnectedTransport, String> {
+        let opened = open_ssh_handle(profile).await?;
+
+        match known_hosts.verify_host_key(&opened.host, opened.port, &opened.fingerprint)? {
+            KnownHostDecision::Trusted => {}
+            KnownHostDecision::Unknown => {
+                let _ = opened
+                    .handle
+                    .disconnect(
+                        Disconnect::HostKeyNotVerifiable,
+                        "host key not trusted",
+                        "en",
+                    )
+                    .await;
+                return Err(format!(
+                    "SSH host key is not trusted for {}. Confirm the fingerprint first ({})",
+                    opened.host,
+                    display_fingerprint(&opened.fingerprint),
+                ));
+            }
+            KnownHostDecision::Changed => {
+                let _ = opened
+                    .handle
+                    .disconnect(Disconnect::HostKeyNotVerifiable, "host key changed", "en")
+                    .await;
+                return Err(format!(
+                    "SSH host key changed for {}; connection blocked",
+                    opened.host
+                ));
+            }
+        }
+
+        self.sessions
+            .lock()
+            .map_err(|_| "SSH session service lock poisoned".to_string())?
+            .insert(
+                connection_id,
+                SshRuntimeSession {
+                    handle: Arc::new(AsyncMutex::new(opened.handle)),
+                    host: opened.host.clone(),
+                    port: opened.port,
+                    username: opened.username,
+                    enable_sftp: true,
+                    sftp: None,
+                    ptys: HashMap::new(),
+                },
+            );
+
+        Ok(SshConnectedTransport {
+            host: opened.host,
+            port: opened.port,
+            host_key_fingerprint: opened.fingerprint,
+        })
+    }
+
     pub async fn authenticate_password(
         &self,
         connection_id: &str,
@@ -202,6 +332,37 @@ impl SshSessionService {
         .await;
 
         self.put_session(connection_id, session)?;
+        result
+    }
+
+    pub async fn authenticate_password_owned(
+        self,
+        connection_id: String,
+        password: String,
+    ) -> Result<SshAuthOutcome, String> {
+        if password.is_empty() {
+            return Err("SSH password is required".to_string());
+        }
+
+        let session = self.take_session(&connection_id)?;
+        let result = async {
+            let mut handle = session.handle.lock().await;
+            let auth_result = handle
+                .authenticate_password(session.username.clone(), password)
+                .await
+                .map_err(|error| format!("SSH password authentication failed: {error}"))?;
+
+            if !auth_result.success() {
+                return Err("SSH password authentication rejected by server".to_string());
+            }
+
+            Ok(SshAuthOutcome {
+                enable_sftp: session.enable_sftp,
+            })
+        }
+        .await;
+
+        self.put_session(&connection_id, session)?;
         result
     }
 
@@ -249,6 +410,52 @@ impl SshSessionService {
         .await;
 
         self.put_session(connection_id, session)?;
+        result
+    }
+
+    pub async fn authenticate_private_key_owned(
+        self,
+        connection_id: String,
+        private_key_path: String,
+        passphrase: Option<String>,
+    ) -> Result<SshAuthOutcome, String> {
+        if private_key_path.trim().is_empty() {
+            return Err("SSH private key path is required".to_string());
+        }
+
+        let session = self.take_session(&connection_id)?;
+        let result = async {
+            let passphrase = passphrase
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let key_pair = load_secret_key(&private_key_path, passphrase)
+                .map_err(|error| format!("failed to load SSH private key: {error}"))?;
+            let mut handle = session.handle.lock().await;
+            let hash_alg = handle
+                .best_supported_rsa_hash()
+                .await
+                .map_err(|error| format!("failed to negotiate SSH key algorithm: {error}"))?
+                .flatten();
+            let auth_result = handle
+                .authenticate_publickey(
+                    session.username.clone(),
+                    PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
+                )
+                .await
+                .map_err(|error| format!("SSH private key authentication failed: {error}"))?;
+
+            if !auth_result.success() {
+                return Err("SSH private key authentication rejected by server".to_string());
+            }
+
+            Ok(SshAuthOutcome {
+                enable_sftp: session.enable_sftp,
+            })
+        }
+        .await;
+
+        self.put_session(&connection_id, session)?;
         result
     }
 
@@ -301,6 +508,63 @@ impl SshSessionService {
             session.sftp = Some(Arc::new(AsyncMutex::new(sftp)));
         }
         Ok(())
+    }
+
+    pub async fn collect_host_overview(
+        self,
+        connection_id: String,
+    ) -> Result<SshHostOverview, String> {
+        let started_at = Instant::now();
+        let output = self
+            .execute_command(
+                connection_id,
+                HOST_OVERVIEW_COMMAND.to_string(),
+                Duration::from_secs(SSH_HOST_OVERVIEW_TIMEOUT_SECS),
+            )
+            .await?;
+
+        if output.exit_status.is_some_and(|status| status != 0) {
+            let detail = output.stderr.trim();
+            return Err(if detail.is_empty() {
+                format!(
+                    "SSH host overview command failed with exit status {:?}",
+                    output.exit_status
+                )
+            } else {
+                format!("SSH host overview command failed: {detail}")
+            });
+        }
+
+        parse_host_overview(&output.stdout, started_at.elapsed())
+    }
+
+    async fn execute_command(
+        self,
+        connection_id: String,
+        command: String,
+        timeout: Duration,
+    ) -> Result<SshCommandOutput, String> {
+        let handle = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "SSH session service lock poisoned".to_string())?;
+            Arc::clone(
+                &sessions
+                    .get(&connection_id)
+                    .ok_or_else(|| format!("SSH runtime session not found: {connection_id}"))?
+                    .handle,
+            )
+        };
+
+        tokio::time::timeout(timeout, execute_command_with_handle(handle, command))
+            .await
+            .map_err(|_| {
+                format!(
+                    "SSH host overview timed out after {} seconds",
+                    timeout.as_secs()
+                )
+            })?
     }
 
     pub fn has_sftp(&self, connection_id: &str) -> Result<bool, String> {
@@ -636,6 +900,24 @@ impl SshSessionService {
         Ok(true)
     }
 
+    pub async fn close_owned(self, connection_id: String) -> Result<bool, String> {
+        let session = self
+            .sessions
+            .lock()
+            .map_err(|_| "SSH session service lock poisoned".to_string())?
+            .remove(&connection_id);
+
+        let Some(session) = session else {
+            return Ok(false);
+        };
+
+        let handle = session.handle.lock().await;
+        let _ = handle
+            .disconnect(Disconnect::ByApplication, "connection closed", "en")
+            .await;
+        Ok(true)
+    }
+
     pub fn describe(&self, connection_id: &str) -> Result<Option<String>, String> {
         Ok(self
             .sessions
@@ -716,7 +998,7 @@ struct OpenedSshHandle {
     username: String,
 }
 
-async fn open_ssh_handle(profile: &ConnectionProfile) -> Result<OpenedSshHandle, String> {
+async fn open_ssh_handle(profile: ConnectionProfile) -> Result<OpenedSshHandle, String> {
     let host = profile
         .host
         .as_deref()
@@ -741,7 +1023,7 @@ async fn open_ssh_handle(profile: &ConnectionProfile) -> Result<OpenedSshHandle,
 
     let handle = tokio::time::timeout(
         timeout,
-        client::connect(config, (host.as_str(), port), handler),
+        client::connect(config, (host.clone(), port), handler),
     )
     .await
     .map_err(|_| format!("timed out opening SSH session {host}:{port}"))?
@@ -759,6 +1041,111 @@ async fn open_ssh_handle(profile: &ConnectionProfile) -> Result<OpenedSshHandle,
         port,
         username,
     })
+}
+
+async fn execute_command_with_handle(
+    handle: Arc<AsyncMutex<client::Handle<SshRuntimeHandler>>>,
+    command: String,
+) -> Result<SshCommandOutput, String> {
+    let handle = handle.lock().await;
+    let mut channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|error| format!("failed to open SSH command channel: {error}"))?;
+    drop(handle);
+
+    channel
+        .exec(true, command.into_bytes())
+        .await
+        .map_err(|error| format!("failed to execute SSH host overview command: {error}"))?;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit_status = None;
+
+    while let Some(message) = channel.wait().await {
+        match message {
+            ChannelMsg::Data { data } => {
+                append_bounded_command_output(&mut stdout, &data)?;
+            }
+            ChannelMsg::ExtendedData { data, .. } => {
+                append_bounded_command_output(&mut stderr, &data)?;
+            }
+            ChannelMsg::ExitStatus {
+                exit_status: status,
+            } => {
+                exit_status = Some(status);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(SshCommandOutput {
+        exit_status,
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+    })
+}
+
+fn append_bounded_command_output(target: &mut Vec<u8>, data: &[u8]) -> Result<(), String> {
+    if target.len().saturating_add(data.len()) > SSH_COMMAND_OUTPUT_MAX_BYTES {
+        return Err(format!(
+            "SSH host overview output exceeded {} bytes",
+            SSH_COMMAND_OUTPUT_MAX_BYTES
+        ));
+    }
+
+    target.extend_from_slice(data);
+    Ok(())
+}
+
+fn parse_host_overview(output: &str, elapsed: Duration) -> Result<SshHostOverview, String> {
+    let values = output
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .collect::<HashMap<_, _>>();
+
+    if values.get("portivaOverviewVersion") != Some(&"1") {
+        return Err("SSH host overview returned an unsupported response".to_string());
+    }
+
+    let memory_total_kb = parse_optional_number::<u64>(&values, "memoryTotalKb");
+    let memory_available_kb = parse_optional_number::<u64>(&values, "memoryAvailableKb");
+    let memory_total_bytes = memory_total_kb.map(|value| value.saturating_mul(1024));
+    let memory_used_bytes = memory_total_kb
+        .zip(memory_available_kb)
+        .map(|(total, available)| total.saturating_sub(available).saturating_mul(1024));
+    let cpu_load_1 = parse_optional_number::<f64>(&values, "cpuLoad1")
+        .filter(|value| value.is_finite() && *value >= 0.0);
+    let cpu_count = parse_optional_number::<u32>(&values, "cpuCount").filter(|value| *value > 0);
+
+    Ok(SshHostOverview {
+        hostname: value_or_fallback(&values, "hostname", "未知主机"),
+        operating_system: value_or_fallback(&values, "operatingSystem", "未知系统"),
+        kernel_version: value_or_fallback(&values, "kernelVersion", "未知内核"),
+        cpu_load_1,
+        cpu_count,
+        memory_used_bytes,
+        memory_total_bytes,
+        uptime_seconds: parse_optional_number::<u64>(&values, "uptimeSeconds"),
+        latency_ms: elapsed.as_millis().clamp(1, u64::MAX as u128) as u64,
+    })
+}
+
+fn parse_optional_number<T>(values: &HashMap<&str, &str>, key: &str) -> Option<T>
+where
+    T: std::str::FromStr,
+{
+    values.get(key)?.trim().parse().ok()
+}
+
+fn value_or_fallback(values: &HashMap<&str, &str>, key: &str, fallback: &str) -> String {
+    values
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 type DynamicAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
@@ -1554,8 +1941,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        is_sftp_session_closed_result, local_transfer_temp_path, remote_entry_name,
-        remote_transfer_temp_path, ssh_client_config, SshSessionService,
+        is_sftp_session_closed_result, local_transfer_temp_path, parse_host_overview,
+        remote_entry_name, remote_transfer_temp_path, ssh_client_config, SshSessionService,
         SSH_KEEPALIVE_INTERVAL_SECS, SSH_KEEPALIVE_MAX_MISSES,
     };
 
@@ -1564,6 +1951,13 @@ mod tests {
         let service = SshSessionService::default();
 
         assert!(service.describe("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn host_overview_future_is_send() {
+        fn assert_send<T: Send>(_: T) {}
+        let service = SshSessionService::default();
+        assert_send(service.collect_host_overview("missing".to_string()));
     }
 
     #[test]
@@ -1614,5 +2008,22 @@ mod tests {
         );
         assert_eq!(config.keepalive_max, SSH_KEEPALIVE_MAX_MISSES);
         assert!(config.nodelay);
+    }
+
+    #[test]
+    fn parses_linux_host_overview_output() {
+        let overview = parse_host_overview(
+            "portivaOverviewVersion\t1\nhostname\tworker-01\noperatingSystem\tUbuntu 24.04.4 LTS\nkernelVersion\t6.8.0-63-generic\ncpuLoad1\t1.30\ncpuCount\t4\nmemoryTotalKb\t16384000\nmemoryAvailableKb\t8355840\nuptimeSeconds\t421200\n",
+            Duration::from_millis(62),
+        )
+        .unwrap();
+
+        assert_eq!(overview.hostname, "worker-01");
+        assert_eq!(overview.cpu_load_1, Some(1.3));
+        assert_eq!(overview.cpu_count, Some(4));
+        assert_eq!(overview.memory_total_bytes, Some(16_777_216_000));
+        assert_eq!(overview.memory_used_bytes, Some(8_220_835_840));
+        assert_eq!(overview.uptime_seconds, Some(421_200));
+        assert_eq!(overview.latency_ms, 62);
     }
 }

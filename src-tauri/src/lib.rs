@@ -69,6 +69,7 @@ pub fn run() {
             commands::connection::ssh_authenticate_saved_password,
             commands::connection::ssh_authenticate_private_key,
             commands::connection::ssh_authenticate_agent,
+            commands::connection::ssh_collect_host_overview,
             commands::connection::connection_get,
             commands::connection::connection_get_capabilities,
             commands::clipboard::clipboard_read_text,

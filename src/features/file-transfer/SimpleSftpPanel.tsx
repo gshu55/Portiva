@@ -1,5 +1,4 @@
 import {
-  type DragEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -7,18 +6,23 @@ import {
   useRef,
   useState,
 } from "react";
-import { Icon, type IconName } from "../../shared/Icon";
+import { Icon } from "../../shared/Icon";
 import {
   transferDirectionLabel,
   transferProgressPercent,
+  transferTaskDisplayName,
   transferTaskSummary,
+  transferTaskTooltip,
 } from "../../shared/labels";
 import type { RemoteEntry, TransferTask } from "../../shared/types";
 import { writeClipboardText } from "../../shared/clipboard";
 import { localDownloadDirectory, localFileList, localRevealItemInDirectory } from "../../shared/ipc/commands";
 import type { LocalFileListResult } from "../../shared/ipc/commands";
 import type { usePortivaWorkspace } from "../../app/usePortivaWorkspace";
+import { fileIconKind, remoteEntryIconName } from "./fileEntryIcons";
 import { localRootsPath } from "./FileTransferPanel";
+import { SftpDropOverlay } from "./SftpDropOverlay";
+import { useSftpDropUpload } from "./useSftpDropUpload";
 
 interface SimpleSftpPanelProps {
   layoutSide?: "left" | "right";
@@ -42,7 +46,6 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
   } | null>(null);
   const [selectedRemotePaths, setSelectedRemotePaths] = useState<Set<string>>(new Set());
   const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
-  const [dropActive, setDropActive] = useState(false);
   const [transferPanelRatio, setTransferPanelRatio] = useState(0.34);
   const autoLoadedConnectionRef = useRef<string | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -53,6 +56,11 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
       workspace.activeConnection?.capabilities.fileTransfer &&
       workspace.activeConnection.transport?.authenticated,
   );
+  const { dropActive, dropZoneProps } = useSftpDropUpload({
+    enabled: canUseRemote,
+    onUploadPaths: workspace.uploadLocalPaths,
+    targetRef: panelRef,
+  });
   const visibleTransfers = useMemo(
     () =>
       workspace.transfers
@@ -109,70 +117,6 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
       return next.size === current.size ? current : next;
     });
   }, [workspace.remoteEntries, workspace.remotePath]);
-
-  useEffect(() => {
-    if (!canUseRemote) {
-      return;
-    }
-
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    const pointInsidePanel = (position: { x: number; y: number }) => {
-      const panel = panelRef.current;
-
-      if (!panel) {
-        return false;
-      }
-
-      const x = position.x / window.devicePixelRatio;
-      const y = position.y / window.devicePixelRatio;
-      const target = document.elementFromPoint(x, y);
-
-      return Boolean(target && panel.contains(target));
-    };
-
-    void import("@tauri-apps/api/webview")
-      .then(({ getCurrentWebview }) =>
-        getCurrentWebview().onDragDropEvent((event) => {
-          const payload = event.payload;
-
-          if (payload.type === "leave") {
-            setDropActive(false);
-            return;
-          }
-
-          if (payload.type === "enter" || payload.type === "over") {
-            setDropActive(pointInsidePanel(payload.position));
-            return;
-          }
-
-          if (payload.type === "drop") {
-            const isPanelDrop = pointInsidePanel(payload.position);
-            setDropActive(false);
-
-            if (isPanelDrop && payload.paths.length > 0) {
-              void workspace.uploadLocalPaths(payload.paths);
-            }
-          }
-        }),
-      )
-      .then((nextUnlisten) => {
-        if (disposed) {
-          nextUnlisten();
-          return;
-        }
-
-        unlisten = nextUnlisten;
-      })
-      .catch(() => {
-        // Browser preview uses the HTML5 drop handler below.
-      });
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [canUseRemote, workspace.uploadLocalPaths]);
 
   useEffect(() => {
     if (!pendingCreatedDirectory) {
@@ -391,27 +335,9 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
         .filter(Boolean)
         .join(" ")}
       ref={panelRef}
+      {...dropZoneProps}
       style={{
         gridTemplateRows: `auto auto minmax(0, 1fr) 6px minmax(96px, ${transferPanelPercent}%)`,
-      }}
-      onDragEnter={(event) => {
-        event.preventDefault();
-        setDropActive(true);
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setDropActive(false);
-        }
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
-        setDropActive(true);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        setDropActive(false);
-        void workspace.uploadLocalPaths(extractLocalFilePaths(event));
       }}
     >
       <div className="simple-sftp-heading">
@@ -743,10 +669,7 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
         </div>
       ) : null}
 
-      <div className="simple-sftp-drop-overlay" aria-hidden={!dropActive}>
-        <Icon name="upload" />
-        <span>释放上传到当前目录</span>
-      </div>
+      <SftpDropOverlay active={dropActive} className="simple-sftp-drop-overlay" />
     </aside>
   );
 }
@@ -926,13 +849,14 @@ function SimpleTransferQueue({
             const cancellable = task.status === "pending" || active;
             const canOpenLocalFolder =
               (task.status === "completed" || task.status === "partial")
+              && task.itemKind !== "batch"
               && Boolean(task.localPath.trim());
 
             return (
-              <div className="simple-sftp-transfer-item" key={task.id} title={`${task.remotePath}\n${task.localPath}`}>
+              <div className="simple-sftp-transfer-item" key={task.id} title={transferTaskTooltip(task)}>
                 <div>
                   <strong>{transferDirectionLabel(task.direction)}</strong>
-                  <span>{pathBaseName(task.direction === "download" ? task.remotePath : task.localPath)}</span>
+                  <span>{transferTaskDisplayName(task)}</span>
                   <small>{transferTaskSummary(task)}</small>
                 </div>
                 <progress max="100" value={progress} />
@@ -985,29 +909,6 @@ function SimpleTransferQueue({
       </div>
     </section>
   );
-}
-
-function extractLocalFilePaths(event: DragEvent<HTMLElement>) {
-  const paths: string[] = [];
-
-  for (const file of Array.from(event.dataTransfer.files)) {
-    const path = (file as File & { path?: string }).path;
-
-    if (path) {
-      paths.push(path);
-    }
-  }
-
-  for (const item of Array.from(event.dataTransfer.items)) {
-    const file = item.kind === "file" ? item.getAsFile() : null;
-    const path = (file as (File & { path?: string }) | null)?.path;
-
-    if (path) {
-      paths.push(path);
-    }
-  }
-
-  return [...new Set(paths)];
 }
 
 function isTransferableEntry(entry: RemoteEntry | null) {
@@ -1079,111 +980,6 @@ function entryNameInvalidReason(name: string) {
 
   return "";
 }
-
-function remoteEntryIconName(entry: RemoteEntry): IconName {
-  if (entry.kind === "directory") {
-    return "folder";
-  }
-
-  if (entry.kind === "symlink") {
-    return "external-link";
-  }
-
-  const iconKind = fileIconKind(entry.name);
-  const iconNames: Record<string, IconName> = {
-    archive: "file-archive",
-    audio: "file-audio",
-    binary: "file-binary",
-    code: "file-code",
-    image: "file-image",
-    text: "file-text",
-    video: "file-video",
-    file: "file",
-  };
-
-  return iconNames[iconKind] ?? "file";
-}
-
-function fileIconKind(name: string) {
-  const extension = fileExtension(name);
-
-  if (imageExtensions.has(extension)) {
-    return "image";
-  }
-
-  if (videoExtensions.has(extension)) {
-    return "video";
-  }
-
-  if (audioExtensions.has(extension)) {
-    return "audio";
-  }
-
-  if (archiveExtensions.has(extension)) {
-    return "archive";
-  }
-
-  if (codeExtensions.has(extension)) {
-    return "code";
-  }
-
-  if (textExtensions.has(extension)) {
-    return "text";
-  }
-
-  if (binaryExtensions.has(extension)) {
-    return "binary";
-  }
-
-  return "file";
-}
-
-function fileExtension(name: string) {
-  const cleanName = name.trim().toLowerCase();
-  const compoundMatch = /\.(tar\.gz|tar\.bz2|tar\.xz|d\.ts)$/.exec(cleanName);
-
-  if (compoundMatch) {
-    return compoundMatch[1];
-  }
-
-  const dotIndex = cleanName.lastIndexOf(".");
-  return dotIndex >= 0 ? cleanName.slice(dotIndex + 1) : "";
-}
-
-const imageExtensions = new Set(["avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "tif", "tiff", "webp"]);
-const videoExtensions = new Set(["avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "webm", "wmv"]);
-const audioExtensions = new Set(["aac", "flac", "m4a", "mp3", "ogg", "opus", "wav", "wma"]);
-const archiveExtensions = new Set(["7z", "bz2", "gz", "jar", "rar", "tar", "tar.bz2", "tar.gz", "tar.xz", "tgz", "war", "xz", "zip"]);
-const codeExtensions = new Set([
-  "bat",
-  "c",
-  "cmd",
-  "cpp",
-  "cs",
-  "css",
-  "d.ts",
-  "go",
-  "h",
-  "html",
-  "java",
-  "js",
-  "jsx",
-  "kt",
-  "php",
-  "ps1",
-  "py",
-  "rb",
-  "rs",
-  "scss",
-  "sh",
-  "sql",
-  "swift",
-  "ts",
-  "tsx",
-  "vue",
-]);
-const textExtensions = new Set(["conf", "csv", "env", "ini", "json", "log", "md", "properties", "text", "toml", "txt", "xml", "yaml", "yml"]);
-const binaryExtensions = new Set(["bin", "dll", "dmg", "exe", "msi", "o", "obj", "so"]);
 
 function canGoRemoteParent(path: string) {
   const trimmed = path.trim();
@@ -1301,12 +1097,6 @@ function parentLocalPath(path: string) {
   }
 
   return normalized.slice(0, separatorIndex);
-}
-
-function pathBaseName(path: string) {
-  const normalized = path.trim().replace(/[\\/]+$/, "");
-  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-  return separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized;
 }
 
 function formatBytes(size: number) {
