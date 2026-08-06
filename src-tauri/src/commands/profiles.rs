@@ -9,7 +9,7 @@ use tauri::State;
 use crate::domain::logging::LogLevel;
 use crate::domain::profile::{ConnectionProfile, ConnectionType, ProfileGroup, RecentConnection};
 use crate::domain::secret::SecretPurpose;
-use crate::protocol::ssh::probe::probe_ssh_endpoint;
+use crate::protocol::ssh::{probe::probe_ssh_endpoint, SSH_CONNECT_TIMEOUT_SECS};
 use crate::security::fingerprint::{display_fingerprint, fingerprint_matches};
 use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
 use crate::services::log_service::LogService;
@@ -341,7 +341,7 @@ async fn test_ssh_password_auth(
         .filter(|username| !username.is_empty())
         .ok_or_else(|| "SSH username is required".to_string())?
         .to_string();
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS);
     let fingerprint = Arc::new(Mutex::new(None));
     let handler = TestSshAuthHandler {
         fingerprint: Arc::clone(&fingerprint),

@@ -55,6 +55,7 @@ pub fn run() {
             commands::security::secret_list,
             commands::security::secret_set,
             commands::security::secret_delete,
+            commands::security::secret_reveal_password,
             commands::security::known_hosts_list,
             commands::security::known_host_delete,
             commands::protocols::protocol_list,

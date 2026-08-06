@@ -24,7 +24,6 @@ const securityItems = [
 export function ApplicationSettings() {
   return (
     <section className="settings-panel application-settings">
-      <SettingsSectionHeader description="产品信息、隐私声明、服务条款和安全说明。" title="关于 Portiva" />
       <section className="settings-block application-settings-block">
         <SettingsSectionHeader description="面向本机工作流的多协议终端和连接管理工具。" title="产品信息" />
         <div className="application-info-grid">

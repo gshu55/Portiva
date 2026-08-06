@@ -43,6 +43,7 @@ import {
   protocolList,
   secretList,
   secretDelete,
+  secretRevealPassword,
   secretSet,
   serialListPorts,
   serialTerminalCreate,
@@ -80,6 +81,7 @@ import {
   sampleTransfers,
 } from "../shared/mockData";
 import { defaultTerminalColors } from "../shared/terminalThemes";
+import { defaultAppBackground } from "../shared/appBackgrounds";
 import type {
   ConnectionSummary,
   FileTransferSession,
@@ -149,6 +151,7 @@ const connectionResult = (status: OpenConnectionStatus, message: string): OpenCo
 const defaultSettings: AppSettings = {
   theme: {
     mode: "dark",
+    background: defaultAppBackground,
     terminalFontFamily: "Cascadia Mono",
     terminalFontSize: 13,
     terminalColorPreset: "dark",
@@ -347,6 +350,9 @@ export function usePortivaWorkspace() {
   const pendingTerminalSnapshotsRef = useRef<Map<string, TerminalSnapshot>>(new Map());
   const terminalSnapshotFrameRef = useRef<number | null>(null);
   const closingTerminalIdsRef = useRef<Set<string>>(new Set());
+  const settingsRef = useRef<AppSettings>(defaultSettings);
+  const settingsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const settingsSaveSequenceRef = useRef(0);
   const lastDetectedSerialPortNamesRef = useRef<Set<string>>(new Set(sampleSerialPorts.map((port) => port.portName)));
   const sessionTabsRef = useRef<WorkspaceSessionTab[]>([]);
   const [terminalSnapshotState, setTerminalSnapshotState] = useState<TerminalSnapshot | null>(null);
@@ -365,6 +371,7 @@ export function usePortivaWorkspace() {
   const transferStatusRef = useRef<Map<string, TransferTask["status"]>>(new Map());
   remotePathRef.current = remotePath;
   localPathRef.current = localPath;
+  settingsRef.current = settings;
 
   const fallbackProfile = useMemo(() => newConnectionProfile("ssh"), []);
   const activeProfile = useMemo(
@@ -957,18 +964,43 @@ export function usePortivaWorkspace() {
   }, [dataSource]);
 
   const saveSettings = useCallback(async (nextSettings: AppSettings) => {
+    const saveSequence = ++settingsSaveSequenceRef.current;
+    const previousSettings = settingsRef.current;
+    settingsRef.current = nextSettings;
+    setSettings(nextSettings);
+
     if (dataSource === "mock") {
-      setSettings(nextSettings);
       setWorkspaceMessage("设置已应用到演示模式。");
       return;
     }
 
+    const saveRequest = settingsSaveQueueRef.current
+      .catch(() => undefined)
+      .then(() => settingsUpdate(nextSettings));
+    settingsSaveQueueRef.current = saveRequest.then(
+      () => undefined,
+      () => undefined,
+    );
+
     try {
-      const saved = await settingsUpdate(nextSettings);
-      setSettings(saved);
-      setWorkspaceMessage("设置已保存。");
+      const saved = await saveRequest;
+      if (saveSequence === settingsSaveSequenceRef.current) {
+        settingsRef.current = saved;
+        setSettings(saved);
+        setWorkspaceMessage("设置已保存。");
+      }
     } catch (error) {
-      setWorkspaceMessage(`保存设置失败：${String(error)}`);
+      if (saveSequence === settingsSaveSequenceRef.current) {
+        try {
+          const restored = await settingsGet();
+          settingsRef.current = restored;
+          setSettings(restored);
+        } catch {
+          settingsRef.current = previousSettings;
+          setSettings(previousSettings);
+        }
+        setWorkspaceMessage(`保存设置失败：${String(error)}`);
+      }
     }
   }, [dataSource]);
 
@@ -994,6 +1026,13 @@ export function usePortivaWorkspace() {
     },
     [],
   );
+
+  const revealProfilePassword = useCallback(async (profileId: string) => {
+    if (dataSource === "mock") {
+      return null;
+    }
+    return secretRevealPassword(profileId);
+  }, [dataSource]);
 
   const hasRememberedPassword = useCallback(
     (profileId: string) => secrets.some(
@@ -3308,6 +3347,7 @@ export function usePortivaWorkspace() {
     openSerialTerminal,
     openProfileConnection,
     previewRedaction,
+    revealProfilePassword,
     downloadSelectedRemoteEntry,
     downloadRemoteEntry,
     downloadRemoteEntryToDirectory,

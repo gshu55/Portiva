@@ -11,6 +11,8 @@ export type IconName =
   | "copy"
   | "download"
   | "edit"
+  | "eye"
+  | "eye-off"
   | "external-link"
   | "file"
   | "file-archive"
@@ -65,6 +67,8 @@ const iconPaths: Record<IconName, string[]> = {
   copy: ["M8 8h10v10H8z", "M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"],
   download: ["M12 3v12", "m7 10 5 5 5-5", "M5 21h14"],
   edit: ["M12 20h9", "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"],
+  eye: ["M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"],
+  "eye-off": ["m3 3 18 18", "M10.6 10.6a2 2 0 0 0 2.8 2.8", "M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.1 3.2", "M6.6 6.6C3.8 8.5 2 12 2 12s3.5 8 10 8a10.5 10.5 0 0 0 5.4-1.4"],
   "external-link": ["M15 3h6v6", "M10 14 21 3", "M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"],
   file: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6"],
   "file-archive": ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z", "M14 2v6h6", "M10 11h4", "M10 14h4", "M10 17h4"],

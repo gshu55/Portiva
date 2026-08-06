@@ -1,0 +1,67 @@
+/*
+ * Shared component geometry contract.
+ * Controls and compact indicators use one radius; content surfaces use another.
+ * True circular affordances such as status dots, radios and progress tracks stay round.
+ */
+.app-shell {
+  --control-radius: 6px;
+  --surface-radius: 10px;
+  --tag-radius: var(--control-radius);
+}
+
+.ui-button,
+.ui-field,
+.ui-select,
+.ui-field-shell,
+.ui-select-menu,
+.ui-select-option,
+.ui-segmented {
+  border-radius: var(--control-radius, 6px);
+}
+
+.ui-card {
+  border-radius: var(--surface-radius, 10px);
+}
+
+.ui-tag {
+  border-radius: var(--tag-radius, var(--control-radius, 6px));
+}
+
+.app-shell :is(
+  .serial-chip-row span,
+  .serial-toggle-pill,
+  .settings-section-header small,
+  .protocol-caps small,
+  .terminal-split-heading > span,
+  .terminal-split-title,
+  .http-environment-tags > button,
+  .http-method,
+  .http-share-tabs small,
+  .http-section-switcher button > small
+) {
+  border-radius: var(--tag-radius);
+}
+
+/* Adjacent choices read as one control and intentionally keep square inner edges. */
+.ui-segmented .ui-button,
+.segmented-control:not(.profile-type-control) button,
+.serial-send-mode button {
+  border-radius: 0;
+}
+
+.serial-send-mode button:first-child {
+  border-radius: var(--control-radius) 0 0 var(--control-radius);
+}
+
+.serial-send-mode button:last-child {
+  border-radius: 0 var(--control-radius) var(--control-radius) 0;
+}
+
+/* Native window controls and continuous table rows intentionally meet their container edge. */
+.app-shell :is(
+  .window-control,
+  .file-browser-row,
+  .simple-sftp-row
+) {
+  border-radius: 0;
+}

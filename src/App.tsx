@@ -1,4 +1,6 @@
 import "./App.css";
+import "./styles/appWallpaper.css";
+import "./styles/componentGeometry.css";
 import { type CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActiveFileTransferPanel } from "./app/ActiveFileTransferPanel";
 import { AppTitlebar } from "./app/AppTitlebar";
@@ -13,6 +15,11 @@ import { SimpleSftpPanel } from "./features/file-transfer/SimpleSftpPanel";
 import type { ConnectionSecretInput } from "./features/connections/ConnectionProfileDialog";
 import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
 import { Button, ConfirmDialog } from "./shared/ui";
+import {
+  defaultAppBackground,
+  resolveAppBackgroundCssVariables,
+  resolveAppBackgroundTerminalColor,
+} from "./shared/appBackgrounds";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
 import { sshCollectHostOverview } from "./shared/ipc/commands";
@@ -221,10 +228,14 @@ function App() {
     setActiveShellTabId(null);
     void workspace.openSerialTerminalTab();
   }, [workspace]);
-  const terminalPalette = useMemo(
-    () => resolveTerminalPalette(workspace.settings.theme),
-    [workspace.settings.theme],
-  );
+  const appBackground = workspace.settings.theme.background ?? defaultAppBackground;
+  const terminalPalette = useMemo(() => {
+    const palette = resolveTerminalPalette(workspace.settings.theme);
+    return {
+      ...palette,
+      background: resolveAppBackgroundTerminalColor(appBackground, palette.background),
+    };
+  }, [appBackground, workspace.settings.theme]);
   const themeStyle = useMemo(
     () =>
       ({
@@ -234,8 +245,10 @@ function App() {
         "--terminal-fg": terminalPalette.foreground,
         "--terminal-cursor": terminalPalette.cursor,
         "--terminal-selection-bg": terminalPalette.selectionBackground,
+        ...resolveAppBackgroundCssVariables(appBackground),
       }) as CSSProperties,
     [
+      appBackground,
       terminalPalette,
       workspace.settings.theme.terminalFontFamily,
       workspace.settings.theme.terminalFontSize,
@@ -1226,7 +1239,12 @@ function App() {
 
   if (detachedSessionId) {
     return (
-      <main className="app-shell detached-shell" data-theme={workspace.settings.theme.mode} style={themeStyle}>
+      <main
+        className="app-shell detached-shell"
+        data-background={appBackground.enabled ? "true" : "false"}
+        data-theme={workspace.settings.theme.mode}
+        style={themeStyle}
+      >
         <TerminalWorkspace
           activeTabId={workspace.activeSessionTabId}
           connection={workspace.activeConnection}
@@ -1270,7 +1288,12 @@ function App() {
   }
 
   return (
-    <main className="app-shell" data-theme={workspace.settings.theme.mode} style={themeStyle}>
+    <main
+      className="app-shell"
+      data-background={appBackground.enabled ? "true" : "false"}
+      data-theme={workspace.settings.theme.mode}
+      style={themeStyle}
+    >
       <AppTitlebar
         httpConsoleActive={httpConsoleActive}
         savedConnectionsOpen={hostDashboardActive}

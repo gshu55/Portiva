@@ -32,15 +32,17 @@ interface TerminalPaneProps {
 }
 
 function isDarkColor(color: string) {
-  const match = /^#([0-9a-fA-F]{6})$/.exec(color);
-  if (!match) {
-    return true;
-  }
-
-  const value = match[1];
-  const red = Number.parseInt(value.slice(0, 2), 16);
-  const green = Number.parseInt(value.slice(2, 4), 16);
-  const blue = Number.parseInt(value.slice(4, 6), 16);
+  const hexMatch = /^#([0-9a-fA-F]{6})$/.exec(color);
+  const rgbMatch = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
+  const [red, green, blue] = hexMatch
+    ? [
+        Number.parseInt(hexMatch[1].slice(0, 2), 16),
+        Number.parseInt(hexMatch[1].slice(2, 4), 16),
+        Number.parseInt(hexMatch[1].slice(4, 6), 16),
+      ]
+    : rgbMatch
+      ? rgbMatch.slice(1, 4).map(Number)
+      : [0, 0, 0];
   return red * 0.299 + green * 0.587 + blue * 0.114 < 150;
 }
 
@@ -54,11 +56,23 @@ function createSearchSelectionTheme(theme: TerminalColorPalette) {
   };
 }
 
+function resolveXtermCanvasBackground(background: string) {
+  const rgba = /^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*[\d.]+\s*\)$/i.exec(background);
+  if (!rgba) {
+    return background;
+  }
+
+  // The pane owns the wallpaper-aware glass fill. Keep the canvas virtually
+  // transparent, but not alpha-zero: WebView2 can normalize alpha-zero xterm
+  // backgrounds to opaque black or white on some GPU paths.
+  return `rgba(${rgba[1]}, ${rgba[2]}, ${rgba[3]}, 0.01)`;
+}
+
 function createXtermTheme(theme: TerminalColorPalette, emphasizeSelection = false) {
   const searchSelection = emphasizeSelection ? createSearchSelectionTheme(theme) : null;
 
   return {
-    background: theme.background,
+    background: resolveXtermCanvasBackground(theme.background),
     black: theme.black,
     blue: theme.blue,
     brightBlack: theme.brightBlack,
@@ -489,6 +503,7 @@ export function TerminalPane({
     container.replaceChildren();
     const instance = new Terminal({
       allowProposedApi: false,
+      allowTransparency: true,
       cursorBlink: true,
       cursorStyle: "bar",
       cursorWidth: 2,

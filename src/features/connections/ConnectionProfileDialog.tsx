@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   ConnectionProfile,
   RawSocketProfile,
@@ -35,6 +35,7 @@ interface ConnectionProfileDialogProps {
   onConnect: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<ConnectionActionResult>;
   onDelete: (profileId: string) => void;
   onRefreshSerialPorts?: () => Promise<SerialPortInfo[]> | Promise<void> | SerialPortInfo[] | void;
+  onReadSavedPassword?: (profileId: string) => Promise<string | null>;
   onSave: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<ConnectionActionResult>;
   onTest: (profile: ConnectionProfile, input?: ConnectionSecretInput) => Promise<TestConnectionResult>;
 }
@@ -55,6 +56,7 @@ export function ConnectionProfileDialog({
   onConnect,
   onDelete,
   onRefreshSerialPorts,
+  onReadSavedPassword,
   onSave,
   onTest,
   profile,
@@ -64,20 +66,72 @@ export function ConnectionProfileDialog({
   const [draft, setDraft] = useState(profile);
   const [rememberSecret, setRememberSecret] = useState(false);
   const [secret, setSecret] = useState("");
+  const [secretLoading, setSecretLoading] = useState(false);
+  const [secretLoadError, setSecretLoadError] = useState<string | null>(null);
+  const secretEditedRef = useRef(false);
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null);
   const [connectResult, setConnectResult] = useState<ConnectionActionResult | null>(null);
   const [saveResult, setSaveResult] = useState<ConnectionActionResult | null>(null);
   const [busyAction, setBusyAction] = useState<"connect" | "save" | "test" | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    secretEditedRef.current = false;
     setDraft(profile);
     setRememberSecret(rememberedSecret);
     setSecret("");
+    setSecretLoading(false);
+    setSecretLoadError(null);
     setTestResult(null);
     setConnectResult(null);
     setSaveResult(null);
     setBusyAction(null);
-  }, [profile, rememberedSecret]);
+
+    const canReadSavedPassword =
+      rememberedSecret &&
+      mode === "edit" &&
+      (profile.type === "ssh" || profile.type === "sftp") &&
+      profile.authType === "password" &&
+      Boolean(onReadSavedPassword);
+
+    if (!canReadSavedPassword || !onReadSavedPassword) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSecretLoading(true);
+    void onReadSavedPassword(profile.id)
+      .then((savedPassword) => {
+        if (cancelled || secretEditedRef.current) {
+          return;
+        }
+
+        if (savedPassword === null) {
+          setRememberSecret(false);
+          setSecretLoadError("系统凭据库中未找到该连接保存的密码，请重新输入。");
+          return;
+        }
+
+        setSecret(savedPassword);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setRememberSecret(false);
+        setSecretLoadError(`读取已保存密码失败：${String(error)}`);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSecretLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, onReadSavedPassword, profile, rememberedSecret]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -226,14 +280,20 @@ export function ConnectionProfileDialog({
                   profile={draft}
                   rememberSecret={rememberSecret}
                   secret={secret}
+                  secretLoading={secretLoading}
                   onChange={(nextProfile) => {
                     if (!hasSameSshPasswordScope(profile, nextProfile)) {
                       setRememberSecret(false);
+                      setSecret("");
                     }
                     setDraft(nextProfile);
                   }}
                   onRememberSecretChange={setRememberSecret}
-                  onSecretChange={setSecret}
+                  onSecretChange={(nextSecret) => {
+                    secretEditedRef.current = true;
+                    setSecretLoadError(null);
+                    setSecret(nextSecret);
+                  }}
                 />
               </>
             ) : null}
@@ -253,6 +313,9 @@ export function ConnectionProfileDialog({
             ) : null}
             {credentialNotice ? (
               <p className="profile-dialog-note attention">{credentialNotice}</p>
+            ) : null}
+            {secretLoadError ? (
+              <p className="profile-dialog-note danger" role="alert">{secretLoadError}</p>
             ) : null}
             {busyAction ? (
               <p className="profile-dialog-note attention" role="status">

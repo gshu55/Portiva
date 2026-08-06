@@ -52,6 +52,7 @@ export const commandNames = {
   secretList: "secret_list",
   secretSet: "secret_set",
   secretDelete: "secret_delete",
+  secretRevealPassword: "secret_reveal_password",
   knownHostsList: "known_hosts_list",
   knownHostDelete: "known_host_delete",
   terminalAttach: "terminal_attach",
@@ -248,6 +249,10 @@ export function secretSet(profileId: string, purpose: SecretMetadata["purpose"],
 
 export function secretDelete(secretId: string) {
   return invoke<void>(commandNames.secretDelete, { secretId });
+}
+
+export function secretRevealPassword(profileId: string) {
+  return invoke<string | null>(commandNames.secretRevealPassword, { profileId });
 }
 
 export function knownHostsList() {

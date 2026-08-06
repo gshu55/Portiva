@@ -5,6 +5,7 @@ use russh::keys::ssh_key;
 use russh::{client, Disconnect};
 
 use crate::domain::profile::ConnectionProfile;
+use crate::protocol::ssh::SSH_CONNECT_TIMEOUT_SECS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshHostKeyProbeResult {
@@ -24,7 +25,7 @@ pub async fn probe_ssh_host_key(
         .ok_or_else(|| "SSH host is required".to_string())?
         .to_string();
     let port = profile.port.unwrap_or(22);
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS);
     let fingerprint = Arc::new(Mutex::new(None));
     let handler = HostKeyProbeHandler {
         fingerprint: Arc::clone(&fingerprint),

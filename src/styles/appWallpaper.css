@@ -1,0 +1,478 @@
+/*
+ * Wallpaper surface system
+ *
+ * The image is the only blurred layer. Components never blur what is behind
+ * them, so neighbouring regions cannot render the same wallpaper with
+ * different sharpness. Pages stay structural, primary content uses one shared
+ * surface, headers and controls follow the same opacity curve, and overlays use
+ * the strongest one.
+ */
+
+.app-shell::before {
+  position: absolute;
+  z-index: 0;
+  inset: -24px;
+  background-image: var(--app-background-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  filter: blur(var(--app-background-blur));
+  opacity: var(--app-background-opacity);
+  pointer-events: none;
+  content: "";
+}
+
+/* The veil fades out with strength so 100% displays the source image unchanged. */
+.app-shell::after {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: color-mix(in srgb, var(--app-bg) var(--wallpaper-veil-opacity), transparent);
+  opacity: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.app-shell > .app-titlebar,
+.app-shell > .workspace,
+.app-shell > .terminal-workspace {
+  position: relative;
+  z-index: 1;
+}
+
+.app-shell[data-background="true"] {
+  --workspace-bg: color-mix(in srgb, var(--app-bg) var(--wallpaper-page-opacity), transparent);
+  --sidebar-bg: color-mix(in srgb, var(--sidebar-base-bg) var(--wallpaper-panel-opacity), transparent);
+  --toolbar-bg: color-mix(in srgb, var(--toolbar-base-bg) var(--wallpaper-header-opacity), transparent);
+  --dock-bg: color-mix(in srgb, var(--dock-base-bg) var(--wallpaper-panel-opacity), transparent);
+  --panel-bg: color-mix(in srgb, var(--panel-base-bg) var(--wallpaper-panel-opacity), transparent);
+  --panel-solid-bg: color-mix(in srgb, var(--panel-base-bg) var(--wallpaper-panel-opacity), transparent);
+  --button-bg: color-mix(in srgb, var(--button-base-bg) var(--wallpaper-control-opacity), transparent);
+  --button-muted-bg: color-mix(in srgb, var(--button-muted-base-bg) var(--wallpaper-control-opacity), transparent);
+  --field-bg: color-mix(in srgb, var(--field-base-bg) var(--wallpaper-control-opacity), transparent);
+
+  /* Shared component contract. */
+  --wallpaper-surface-bg: var(--panel-bg);
+  --wallpaper-surface-border: color-mix(in srgb, var(--border-panel) 82%, transparent);
+  --wallpaper-surface-radius: var(--surface-radius);
+  --wallpaper-control-radius: var(--control-radius);
+  --wallpaper-header-overlay-bg: color-mix(in srgb, var(--toolbar-bg) 16%, transparent);
+  --wallpaper-surface-shadow:
+    0 10px 28px color-mix(in srgb, #000 10%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent);
+  --wallpaper-nested-bg: color-mix(in srgb, var(--button-muted-bg) 72%, transparent);
+}
+
+.app-shell[data-background="true"]::after {
+  opacity: 1;
+}
+
+/* Never create a second blur plane inside the application. */
+.app-shell[data-background="true"] :where(*) {
+  backdrop-filter: none !important;
+}
+
+/* Application chrome follows the same strength-driven opacity as content. */
+.app-shell[data-background="true"] :is(
+  .app-titlebar,
+  .saved-connections-topbar
+) {
+  background: var(--toolbar-bg);
+}
+
+/* Structural page regions do not add an outer frame or another colour layer. */
+.app-shell[data-background="true"] :is(
+  .terminal-workspace.home-empty,
+  .terminal-workspace.fullscreen,
+  .terminal-body,
+  .terminal-body-app-content,
+  .terminal-body-http-content,
+  .terminal-body-serial-content,
+  .terminal-custom-tab,
+  .terminal-home-page,
+  .terminal-blank-page,
+  .terminal-notice-page,
+  .terminal-file-tab,
+  .saved-connections-page,
+  .settings-page,
+  .file-manager,
+  .simple-sftp-panel,
+  .serial-terminal-panel,
+  .http-console
+) {
+  background: transparent;
+}
+
+.app-shell[data-background="true"] :is(
+  .terminal-body-app-content,
+  .terminal-body-http-content,
+  .terminal-body-serial-content,
+  .terminal-custom-tab,
+  .terminal-file-tab,
+  .terminal-custom-tab .settings-page,
+  .terminal-body:has(.settings-page),
+  .terminal-body:has(.terminal-file-tab),
+  .terminal-body:has(.http-console),
+  .terminal-body:has(.serial-terminal-panel)
+) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-background="true"] .saved-connections-page {
+  background: radial-gradient(
+    circle at 52% 14%,
+    color-mix(in srgb, var(--accent) 7%, transparent),
+    transparent 36%
+  );
+}
+
+/* One shared primary surface for every feature area. */
+.app-shell[data-background="true"] :is(
+  .saved-connection-card,
+  .saved-connections-empty,
+  .settings-block,
+  .serial-session-bar,
+  .serial-main-pane,
+  .serial-control-main,
+  .http-request-editor,
+  .http-response-workspace,
+  .http-environment-workbench,
+  .http-share-workbench,
+  .file-browser-list,
+  .simple-sftp-list,
+  .terminal-pane,
+  .protocol-card,
+  .launcher-row,
+  .status-dock
+) {
+  border: 1px solid var(--wallpaper-surface-border);
+  border-radius: var(--wallpaper-surface-radius);
+  background: var(--wallpaper-surface-bg);
+  box-shadow: var(--wallpaper-surface-shadow);
+}
+
+/* Standalone feature headers own the same surface opacity as their body. */
+.app-shell[data-background="true"] :is(
+  .serial-session-bar
+) {
+  background: var(--toolbar-bg);
+}
+
+/* Nested headers receive only a light tint so parent and header opacity do not stack. */
+.app-shell[data-background="true"] :is(
+  .ui-card-header,
+  .panel-heading,
+  .saved-card-header,
+  .serial-traffic-toolbar,
+  .serial-send-history-header,
+  .file-pane-heading,
+  .file-browser-header,
+  .simple-sftp-heading,
+  .settings-section-header,
+  .http-sidebar-header,
+  .http-share-heading,
+  .http-environment-heading,
+  .http-parameter-header,
+  .http-environment-variable-header,
+  .http-response-summary,
+  .http-response-body-toolbar,
+  .dock-heading,
+  .profile-dialog-heading,
+  .host-trust-heading,
+  .terminal-paste-confirm header,
+  .simple-delete-confirm header,
+  .simple-directory-picker header
+) {
+  background-color: var(--wallpaper-header-overlay-bg);
+}
+
+/* Settings: the navigation and content wrappers are layout only. */
+.app-shell[data-background="true"] :is(
+  .settings-menu,
+  .settings-content > .settings-panel,
+  .http-sidebar-card,
+  .http-request-tabs
+) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-background="true"] .settings-menu {
+  gap: 8px;
+  padding: 0;
+}
+
+.app-shell[data-background="true"] .settings-menu button {
+  border: 1px solid var(--wallpaper-surface-border);
+  border-radius: var(--wallpaper-control-radius);
+  background: var(--wallpaper-surface-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
+}
+
+.app-shell[data-background="true"] .settings-content {
+  overflow: hidden;
+}
+
+.app-shell[data-background="true"] .settings-content > .settings-panel {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 0 2px 2px 0;
+}
+
+.app-shell[data-background="true"] .settings-block,
+.app-shell[data-background="true"] .settings-block:last-child {
+  border: 1px solid var(--wallpaper-surface-border);
+}
+
+/* SFTP: panes and queue wrappers are structural; lists own the useful surface. */
+.app-shell[data-background="true"] :is(
+  .file-manager,
+  .file-pane,
+  .file-manager > .transfer-queue,
+  .simple-sftp-transfers
+) {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-background="true"] :is(
+  .file-browser-list,
+  .simple-sftp-list
+) {
+  overflow: auto;
+}
+
+.app-shell[data-background="true"] .file-browser-list {
+  gap: 0;
+}
+
+.app-shell[data-background="true"] .file-browser-header {
+  background: color-mix(in srgb, var(--toolbar-bg) 86%, transparent);
+}
+
+.app-shell[data-background="true"] .file-list .file-browser-row,
+.app-shell[data-background="true"] .simple-sftp-row {
+  border: 0;
+  border-bottom: 1px solid var(--border-faint);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-background="true"] .file-list .file-browser-row:hover:not(:disabled),
+.app-shell[data-background="true"] .simple-sftp-row:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.app-shell[data-background="true"] .file-list .file-browser-row.active,
+.app-shell[data-background="true"] .simple-sftp-row.active {
+  border-color: var(--border-faint);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: none;
+}
+
+/* Serial: left and right workbenches are the surfaces; their children are not. */
+.app-shell[data-background="true"] .serial-terminal-panel {
+  gap: 10px;
+  padding: 10px;
+}
+
+.app-shell[data-background="true"] .serial-control-layout {
+  gap: 10px;
+}
+
+.app-shell[data-background="true"] :is(
+  .serial-traffic-panel,
+  .serial-config-panel,
+  .serial-command-strip,
+  .serial-traffic-log,
+  .serial-send-history
+) {
+  border-color: var(--border-faint);
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-background="true"] .serial-control-main {
+  border: 1px solid var(--wallpaper-surface-border);
+}
+
+.app-shell[data-background="true"] .serial-traffic-panel {
+  border: 0;
+}
+
+/* HTTP: each workbench uses the same surface; editors within it are flat. */
+.app-shell[data-background="true"] .http-console {
+  gap: 10px;
+  padding: 0;
+}
+
+.app-shell[data-background="true"] .http-console-sidebar {
+  gap: 10px;
+  border: 0;
+  background: transparent;
+}
+
+.app-shell[data-background="true"] .http-console-main {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.app-shell[data-background="true"] :is(
+  .http-tree,
+  .http-editor-panel,
+  .http-response-body-panel,
+  .http-response-headers,
+  .http-environment-editor,
+  .http-share-editor
+) {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Nested information is one quiet, non-glass level. */
+.app-shell[data-background="true"] :is(
+  .saved-metric,
+  .simple-sftp-transfer-item,
+  .transfer-item,
+  .security-row,
+  .shortcut-row,
+  .application-policy-list span,
+  .terminal-font-preview,
+  .terminal-palette-preview,
+  .redaction-preview pre,
+  .launcher-grid button
+) {
+  border-radius: var(--wallpaper-control-radius);
+  background: var(--wallpaper-nested-bg);
+  box-shadow: none;
+}
+
+.app-shell[data-background="true"] :is(
+  .saved-card-message,
+  .log-panel,
+  .status-strip
+) {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Controls are the most readable persistent layer. */
+.app-shell[data-background="true"] :is(
+  .ui-button,
+  .ui-field,
+  .ui-select,
+  .ui-select-trigger,
+  .check-row
+) {
+  border-radius: var(--wallpaper-control-radius);
+  background-color: var(--field-bg);
+}
+
+.app-shell[data-background="true"] :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select
+) {
+  border-radius: var(--wallpaper-control-radius);
+  background-color: var(--field-bg);
+}
+
+.app-shell[data-background="true"] :is(
+  .ui-button,
+  .ui-select-trigger
+) {
+  background: var(--button-bg);
+}
+
+.app-shell[data-background="true"] .ui-button.ui-button-primary {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
+  background: var(--accent);
+  color: #fff;
+}
+
+.app-shell[data-background="true"] .segmented-control {
+  border-radius: var(--wallpaper-control-radius);
+}
+
+.app-shell[data-background="true"] .segmented-control:not(.profile-type-control) button {
+  border-radius: 0;
+}
+
+.app-shell[data-background="true"] .profile-type-control button {
+  border-radius: var(--wallpaper-control-radius);
+}
+
+/* Feature-owned buttons keep their semantic surface after generic controls. */
+.app-shell[data-background="true"] .settings-menu button {
+  border: 1px solid var(--wallpaper-surface-border);
+  border-radius: var(--wallpaper-control-radius);
+  background: var(--wallpaper-surface-bg);
+}
+
+.app-shell[data-background="true"] .security-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.app-shell[data-background="true"] .file-list .file-browser-row,
+.app-shell[data-background="true"] .simple-sftp-row {
+  border: 0;
+  border-bottom: 1px solid var(--border-faint);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* The xterm canvas stays transparent; the terminal pane owns the one surface. */
+.app-shell[data-background="true"] .terminal-body-terminal-content {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell[data-background="true"] .terminal-pane {
+  background: var(--terminal-bg) !important;
+}
+
+.app-shell[data-background="true"] :is(
+  .xterm,
+  .xterm-screen,
+  .xterm-viewport
+) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Overlays use one strong surface without introducing local blur. */
+.app-shell[data-background="true"] :is(
+  .modal-card,
+  .profile-dialog,
+  .simple-delete-confirm,
+  .simple-directory-picker,
+  .terminal-context-menu,
+  .file-context-menu,
+  .terminal-paste-confirm,
+  .terminal-search-bar,
+  .saved-card-menu,
+  .global-notice
+) {
+  overflow: hidden;
+  border: 1px solid var(--wallpaper-surface-border);
+  border-radius: var(--wallpaper-surface-radius);
+  background: color-mix(
+    in srgb,
+    var(--panel-solid-base-bg) var(--wallpaper-overlay-opacity),
+    transparent
+  );
+  box-shadow: 0 24px 72px color-mix(in srgb, #000 34%, transparent);
+}

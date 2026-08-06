@@ -278,6 +278,16 @@ export type TerminalRightClickBehavior =
   | "paste"
   | "copy-or-paste";
 
+export type AppBackgroundPresetId = "aurora" | "horizon" | "topography" | "custom";
+
+export interface AppBackgroundSettings {
+  enabled: boolean;
+  preset: AppBackgroundPresetId;
+  customImage: string | null;
+  opacity: number;
+  blur: number;
+}
+
 export interface WorkspaceSessionTab {
   id?: string;
   kind?: "terminal" | "file-transfer" | "settings" | "http-console" | "host-dashboard";
@@ -292,6 +302,7 @@ export interface WorkspaceSessionTab {
 export interface AppSettings {
   theme: {
     mode: "dark" | "light" | "system";
+    background: AppBackgroundSettings;
     terminalFontFamily: string;
     terminalFontSize: number;
     terminalColorPreset: TerminalColorPresetId;

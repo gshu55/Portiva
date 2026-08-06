@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use crate::domain::profile::ConnectionProfile;
 
+use super::SSH_CONNECT_TIMEOUT_SECS;
+
 pub mod host_key;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +42,7 @@ pub async fn probe_ssh_transport(
         .ok_or_else(|| "SSH host is required".to_string())?
         .to_string();
     let port = profile.port.unwrap_or(22);
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS);
 
     let stream = tokio::time::timeout(
         timeout,

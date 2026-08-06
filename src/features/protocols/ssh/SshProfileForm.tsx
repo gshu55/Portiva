@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import type { SftpProfile, SshProfile } from "../../../shared/types";
-import { Select, TextInput, Toggle } from "../../../shared/ui";
+import { IconButton, Select, TextInput, Toggle } from "../../../shared/ui";
 
 type SshCredentialProfile = SshProfile | SftpProfile;
 
@@ -10,6 +11,7 @@ interface SshProfileFormProps {
   onSecretChange?: (secret: string) => void;
   rememberSecret?: boolean;
   secret?: string;
+  secretLoading?: boolean;
   profile: SshCredentialProfile;
 }
 
@@ -21,10 +23,59 @@ export function SshProfileForm({
   profile,
   rememberSecret = false,
   secret = "",
+  secretLoading = false,
 }: SshProfileFormProps) {
+  const [secretVisible, setSecretVisible] = useState(false);
   const update = (patch: Partial<SshCredentialProfile>) =>
     onChange({ ...profile, ...patch } as SshCredentialProfile);
-  const showsRememberedSecretMask = profile.authType === "password" && hasRememberedSecret && !secret;
+
+  useEffect(() => {
+    setSecretVisible(false);
+  }, [profile.authType, profile.id]);
+
+  useEffect(() => {
+    if (!secret) {
+      setSecretVisible(false);
+    }
+  }, [secret]);
+
+  const passwordPlaceholder = secretLoading
+    ? "正在读取已保存密码…"
+    : hasRememberedSecret && !secret
+      ? "未能读取已保存密码"
+      : undefined;
+
+  const secretInput = (label: string, autoComplete: "current-password" | "off") => (
+    <label>
+      {label}
+      <span className="secret-field-control">
+        <TextInput
+          aria-label={label}
+          autoCapitalize="none"
+          autoComplete={autoComplete}
+          disabled={secretLoading}
+          placeholder={passwordPlaceholder}
+          spellCheck={false}
+          type={secretVisible ? "text" : "password"}
+          value={secret}
+          onChange={(event) => onSecretChange?.(event.target.value)}
+          onCopy={(event) => event.preventDefault()}
+          onCut={(event) => event.preventDefault()}
+        />
+        <IconButton
+          active={secretVisible}
+          aria-label={secretVisible ? "隐藏密码" : "显示密码"}
+          aria-pressed={secretVisible}
+          className="secret-field-visibility"
+          disabled={secretLoading || !secret}
+          icon={secretVisible ? "eye-off" : "eye"}
+          title={secretVisible ? "隐藏密码" : "显示密码"}
+          onClick={() => setSecretVisible((visible) => !visible)}
+          onMouseDown={(event) => event.preventDefault()}
+        />
+      </span>
+    </label>
+  );
 
   return (
     <div className="protocol-form">
@@ -63,18 +114,7 @@ export function SshProfileForm({
         />
       </label>
       {profile.authType === "password" ? (
-        <label>
-          SSH 密码
-          <TextInput
-            autoComplete="current-password"
-            placeholder={showsRememberedSecretMask ? "••••••••" : undefined}
-            type="password"
-            value={secret}
-            onChange={(event) => onSecretChange?.(event.target.value)}
-            onCopy={(event) => event.preventDefault()}
-            onCut={(event) => event.preventDefault()}
-          />
-        </label>
+        secretInput("SSH 密码", "current-password")
       ) : null}
       {profile.authType === "private-key" ? (
         <>
@@ -85,15 +125,7 @@ export function SshProfileForm({
               onChange={(event) => update({ privateKeyPath: event.target.value })}
             />
           </label>
-          <label>
-            密钥口令
-            <TextInput
-              autoComplete="current-password"
-              type="password"
-              value={secret}
-              onChange={(event) => onSecretChange?.(event.target.value)}
-            />
-          </label>
+          {secretInput("密钥口令", "off")}
         </>
       ) : null}
       <div className="protocol-option-row">

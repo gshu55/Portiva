@@ -18,6 +18,7 @@ use crate::domain::connection::SshHostOverview;
 use crate::domain::file_transfer::{RemoteEntry, RemoteEntryKind};
 use crate::domain::profile::ConnectionProfile;
 use crate::domain::terminal::{TerminalRenderPolicy, TerminalSessionStatus, TerminalSize};
+use crate::protocol::ssh::SSH_CONNECT_TIMEOUT_SECS;
 use crate::security::fingerprint::display_fingerprint;
 use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
 use crate::services::terminal_service::{
@@ -27,7 +28,6 @@ use crate::utils::remote_path::{join_remote_path, normalize_remote_path};
 
 const TERMINAL_SNAPSHOT_EVENT: &str = "portiva://terminal-snapshot";
 const SFTP_REQUEST_TIMEOUT_SECS: u64 = 60;
-const SSH_CONNECT_TIMEOUT_SECS: u64 = 5;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 15;
 const SSH_KEEPALIVE_MAX_MISSES: usize = 2;
 const SSH_HOST_OVERVIEW_TIMEOUT_SECS: u64 = 8;

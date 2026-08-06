@@ -118,6 +118,7 @@ export function ProfileDialogHost({
         onReconnectTabChange(null);
       }}
       onRefreshSerialPorts={workspace.refreshSerialPorts}
+      onReadSavedPassword={workspace.revealProfilePassword}
       onSave={async (profile, input) => {
         const saved = await workspace.saveProfile(profile, input);
         if (!saved) {

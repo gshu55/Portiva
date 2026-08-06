@@ -12,7 +12,7 @@ import type {
 type ApplicationMenuId = "about";
 type SettingsMenuId = SettingsSectionId | ApplicationMenuId;
 const menuItems: Array<{ id: SettingsMenuId; icon: IconName; label: string; description: string }> = [
-  { id: "theme", icon: "palette", label: "外观", description: "主题和字体" },
+  { id: "theme", icon: "palette", label: "外观", description: "主题、背景和字体" },
   { id: "terminal-palette", icon: "palette", label: "终端配色", description: "ANSI 色板和预设" },
   { id: "terminal", icon: "terminal", label: "终端", description: "鼠标和输入行为" },
   { id: "keymap", icon: "keyboard", label: "快捷键", description: "全局操作键位" },

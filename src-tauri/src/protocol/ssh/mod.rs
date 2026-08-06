@@ -5,6 +5,8 @@ use crate::protocol::ProtocolBackend;
 
 pub mod probe;
 
+pub(crate) const SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
+
 pub struct SshBackend;
 pub struct SftpBackend;
 

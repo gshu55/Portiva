@@ -14,6 +14,8 @@ pub struct AppSettings {
 #[serde(rename_all = "camelCase")]
 pub struct ThemeSettings {
     pub mode: ThemeMode,
+    #[serde(default)]
+    pub background: BackgroundSettings,
     pub terminal_font_family: String,
     pub terminal_font_size: u16,
     #[serde(default)]
@@ -28,6 +30,26 @@ pub enum ThemeMode {
     Dark,
     Light,
     System,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct BackgroundSettings {
+    pub enabled: bool,
+    pub preset: BackgroundPreset,
+    pub custom_image: Option<String>,
+    pub opacity: u8,
+    pub blur: u8,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BackgroundPreset {
+    #[default]
+    Aurora,
+    Horizon,
+    Topography,
+    Custom,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -108,6 +130,7 @@ impl Default for AppSettings {
         Self {
             theme: ThemeSettings {
                 mode: ThemeMode::Dark,
+                background: BackgroundSettings::default(),
                 terminal_font_family: "Cascadia Mono".to_string(),
                 terminal_font_size: 13,
                 terminal_color_preset: TerminalColorPreset::Dark,
@@ -126,6 +149,18 @@ impl Default for AppSettings {
                 allow_insecure_without_warning: false,
             },
             terminal: TerminalSettings::default(),
+        }
+    }
+}
+
+impl Default for BackgroundSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            preset: BackgroundPreset::Aurora,
+            custom_image: None,
+            opacity: 30,
+            blur: 0,
         }
     }
 }

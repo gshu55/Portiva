@@ -93,6 +93,30 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
         return Err("terminal font size must be between 8 and 32".to_string());
     }
 
+    if settings.theme.background.opacity > 100 {
+        return Err("background opacity must be between 0 and 100".to_string());
+    }
+
+    if settings.theme.background.blur > 24 {
+        return Err("background blur must be between 0 and 24".to_string());
+    }
+
+    if let Some(image) = &settings.theme.background.custom_image {
+        const ALLOWED_PREFIXES: [&str; 4] = [
+            "data:image/png;base64,",
+            "data:image/jpeg;base64,",
+            "data:image/webp;base64,",
+            "data:image/avif;base64,",
+        ];
+
+        if !ALLOWED_PREFIXES
+            .iter()
+            .any(|prefix| image.starts_with(prefix))
+        {
+            return Err("custom background image must be PNG, JPEG, WebP, or AVIF".to_string());
+        }
+    }
+
     let terminal_colors = &settings.theme.terminal_colors;
     let color_values = [
         ("background", &terminal_colors.background),
@@ -144,7 +168,7 @@ fn is_hex_color(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::SettingsStore;
+    use super::{validate_settings, SettingsStore};
     use crate::domain::settings::AppSettings;
     use std::path::PathBuf;
 
@@ -185,6 +209,63 @@ mod tests {
         assert_eq!(
             store.update(settings).unwrap_err(),
             "terminal color background must be #RRGGBB"
+        );
+    }
+
+    #[test]
+    fn rejects_non_image_custom_background() {
+        let store = SettingsStore::in_memory();
+        let mut settings = AppSettings::default();
+        settings.theme.background.custom_image =
+            Some("data:text/html;base64,PGgxPm5vPC9oMT4=".to_string());
+
+        assert_eq!(
+            store.update(settings).unwrap_err(),
+            "custom background image must be PNG, JPEG, WebP, or AVIF"
+        );
+    }
+
+    #[test]
+    fn accepts_large_custom_background_image() {
+        let mut settings = AppSettings::default();
+        settings.theme.background.custom_image = Some(format!(
+            "data:image/png;base64,{}",
+            "A".repeat(7 * 1024 * 1024)
+        ));
+
+        assert!(validate_settings(&settings).is_ok());
+    }
+
+    #[test]
+    fn accepts_background_strength_endpoints_and_rejects_values_above_100() {
+        let store = SettingsStore::in_memory();
+        let mut settings = AppSettings::default();
+        settings.theme.background.opacity = 0;
+        assert_eq!(
+            store
+                .update(settings.clone())
+                .unwrap()
+                .theme
+                .background
+                .opacity,
+            0
+        );
+
+        settings.theme.background.opacity = 100;
+        assert_eq!(
+            store
+                .update(settings.clone())
+                .unwrap()
+                .theme
+                .background
+                .opacity,
+            100
+        );
+
+        settings.theme.background.opacity = 101;
+        assert_eq!(
+            store.update(settings).unwrap_err(),
+            "background opacity must be between 0 and 100"
         );
     }
 
@@ -236,6 +317,8 @@ mod tests {
         assert_eq!(settings.keymap.open_local_terminal, "Ctrl+Alt+T");
         assert_eq!(settings.keymap.open_serial_terminal, "Ctrl+Alt+S");
         assert_eq!(settings.theme.terminal_colors.background, "#282C34");
+        assert!(!settings.theme.background.enabled);
+        assert_eq!(settings.theme.background.opacity, 30);
         assert!(matches!(
             settings.terminal.right_click_behavior,
             crate::domain::settings::TerminalRightClickBehavior::ContextMenu
