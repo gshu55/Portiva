@@ -174,3 +174,9 @@ git push origin v1.2.3
 - 非加密协议需要明确安全边界和风险提示。
 - HTTP/API 调试是短请求/响应模型，不复用 `TerminalSession`，也不通过 Raw TCP 手写 HTTP。
 - SSH/SFTP 密码和私钥口令使用系统凭据库；HTTP 请求草稿中的认证字段按产品约定明文持久化。
+
+## 开源许可
+
+Portiva 采用 [Apache License 2.0](LICENSE) 开源。你可以使用、修改和分发本项目，包括商业用途，但需要遵守许可证中的版权、许可证及变更声明要求。
+
+Copyright 2026 gshu

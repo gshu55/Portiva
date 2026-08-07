@@ -3,6 +3,7 @@ name = "portiva"
 version = "1.2.3"
 description = "A Tauri App"
 authors = ["gshu"]
+license = "Apache-2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -2,6 +2,7 @@
   "name": "portiva",
   "private": true,
   "version": "1.2.3",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
