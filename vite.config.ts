@@ -22,6 +22,9 @@ export default defineConfig(async () => ({
           if (id.includes("/node_modules/react/") || id.includes("/node_modules/react-dom/")) {
             return "react";
           }
+          if (id.includes("/node_modules/@tauri-apps/plugin-updater/") || id.includes("/node_modules/@tauri-apps/plugin-process/")) {
+            return undefined;
+          }
           if (id.includes("/node_modules/@tauri-apps/")) {
             return "tauri";
           }

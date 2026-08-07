@@ -1,6 +1,6 @@
 [package]
 name = "portiva"
-version = "1.2.0"
+version = "1.2.1"
 description = "A Tauri App"
 authors = ["gshu"]
 edition = "2021"
@@ -20,6 +20,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["brotli", "deflate", "gzip", "http2", "rustls-tls"] }

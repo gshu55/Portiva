@@ -1,5 +1,31 @@
+import { useRef, useState } from "react";
+import type { Update } from "@tauri-apps/plugin-updater";
+import { Icon } from "../../shared/Icon";
+import { Button, Tag } from "../../shared/ui";
 import { useAppMetadata } from "../../shared/useAppMetadata";
 import { SettingsSectionHeader } from "./SettingsSection";
+
+type UpdatePhase = "available" | "checking" | "current" | "downloading" | "error" | "idle" | "installing";
+
+interface UpdateState {
+  downloadedBytes: number;
+  message: string;
+  phase: UpdatePhase;
+  progress: number | null;
+  releaseNotes: string | null;
+  totalBytes: number | null;
+  version: string | null;
+}
+
+const initialUpdateState: UpdateState = {
+  downloadedBytes: 0,
+  message: "通过 GitHub Release 获取经过签名验证的稳定版本。",
+  phase: "idle",
+  progress: null,
+  releaseNotes: null,
+  totalBytes: null,
+  version: null,
+};
 
 const privacyItems = [
   "连接配置、工作区设置、已知主机记录和凭据元数据默认保存在本机。",
@@ -25,6 +51,121 @@ const securityItems = [
 export function ApplicationSettings() {
   const { error, loading, metadata } = useAppMetadata();
   const pendingLabel = loading ? "正在读取…" : "不可用";
+  const availableUpdateRef = useRef<Update | null>(null);
+  const downloadedBytesRef = useRef(0);
+  const totalBytesRef = useRef<number | null>(null);
+  const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState);
+  const updateBusy = updateState.phase === "checking" || updateState.phase === "downloading" || updateState.phase === "installing";
+
+  const checkForUpdates = async () => {
+    if (updateBusy) {
+      return;
+    }
+
+    setUpdateState({ ...initialUpdateState, message: "正在连接 GitHub Release…", phase: "checking" });
+
+    try {
+      if (availableUpdateRef.current) {
+        await availableUpdateRef.current.close();
+        availableUpdateRef.current = null;
+      }
+
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check({ timeout: 20_000 });
+
+      if (!update) {
+        setUpdateState({
+          ...initialUpdateState,
+          message: `当前 ${metadata?.version ?? "安装版本"} 已是最新稳定版。`,
+          phase: "current",
+        });
+        return;
+      }
+
+      availableUpdateRef.current = update;
+      setUpdateState({
+        ...initialUpdateState,
+        message: `发现 Portiva ${update.version}，可下载并安装。`,
+        phase: "available",
+        releaseNotes: update.body?.trim() || null,
+        version: update.version,
+      });
+    } catch (updateError) {
+      setUpdateState({
+        ...initialUpdateState,
+        message: `检查更新失败：${String(updateError)}`,
+        phase: "error",
+      });
+    }
+  };
+
+  const installAvailableUpdate = async () => {
+    const update = availableUpdateRef.current;
+
+    if (!update || updateBusy) {
+      return;
+    }
+
+    downloadedBytesRef.current = 0;
+    totalBytesRef.current = null;
+    setUpdateState((current) => ({
+      ...current,
+      downloadedBytes: 0,
+      message: `正在下载 Portiva ${update.version}…`,
+      phase: "downloading",
+      progress: null,
+      totalBytes: null,
+    }));
+
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          totalBytesRef.current = event.data.contentLength ?? null;
+          setUpdateState((current) => ({ ...current, totalBytes: totalBytesRef.current }));
+          return;
+        }
+
+        if (event.event === "Progress") {
+          downloadedBytesRef.current += event.data.chunkLength;
+          const totalBytes = totalBytesRef.current;
+          const progress = totalBytes ? Math.min(100, Math.round((downloadedBytesRef.current / totalBytes) * 100)) : null;
+
+          setUpdateState((current) => {
+            if (current.progress === progress && progress !== null) {
+              return current;
+            }
+            if (progress === null && downloadedBytesRef.current - current.downloadedBytes < 256 * 1024) {
+              return current;
+            }
+            return {
+              ...current,
+              downloadedBytes: downloadedBytesRef.current,
+              progress,
+              totalBytes,
+            };
+          });
+          return;
+        }
+
+        setUpdateState((current) => ({
+          ...current,
+          message: "下载完成，正在校验签名并安装…",
+          phase: "installing",
+          progress: 100,
+        }));
+      });
+
+      setUpdateState((current) => ({ ...current, message: "安装完成，正在重启 Portiva…", phase: "installing" }));
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    } catch (updateError) {
+      setUpdateState((current) => ({
+        ...current,
+        message: `安装更新失败：${String(updateError)}`,
+        phase: "error",
+      }));
+    }
+  };
 
   return (
     <section className="settings-panel application-settings">
@@ -37,6 +178,48 @@ export function ApplicationSettings() {
           <strong>{metadata?.version ?? pendingLabel}</strong>
         </div>
         {error ? <p className="profile-dialog-note danger" role="alert">{error}</p> : null}
+      </section>
+      <section className="settings-block application-settings-block">
+        <SettingsSectionHeader description="更新包验证签名后将在后台静默安装，完成时自动重启。" title="软件更新" />
+        <div className={`application-update-card is-${updateState.phase}`}>
+          <div className="application-update-symbol" aria-hidden="true">
+            <Icon name={updateState.phase === "current" ? "check" : "refresh-ccw"} />
+          </div>
+          <div className="application-update-copy" aria-live="polite">
+            <div className="application-update-title">
+              <strong>{updateState.version ? `Portiva ${updateState.version}` : "稳定版本通道"}</strong>
+              <UpdateStatusTag phase={updateState.phase} />
+            </div>
+            <span>{updateState.message}</span>
+            {updateState.releaseNotes ? <p>{updateState.releaseNotes}</p> : null}
+            {updateState.phase === "downloading" || updateState.phase === "installing" ? (
+              <div className="application-update-progress">
+                <div
+                  aria-label="更新下载进度"
+                  aria-valuemax={100}
+                  aria-valuemin={0}
+                  aria-valuenow={updateState.progress ?? undefined}
+                  className={updateState.progress === null ? "indeterminate" : undefined}
+                  role="progressbar"
+                >
+                  <span style={updateState.progress === null ? undefined : { width: `${updateState.progress}%` }} />
+                </div>
+                <small>{formatDownloadProgress(updateState)}</small>
+              </div>
+            ) : null}
+          </div>
+          <div className="application-update-actions">
+            {updateState.phase === "available" ? (
+              <Button icon="download" onClick={() => void installAvailableUpdate()} tone="primary">
+                更新并重启
+              </Button>
+            ) : (
+              <Button disabled={updateBusy} icon="refresh-ccw" onClick={() => void checkForUpdates()} tone="muted">
+                {updateState.phase === "checking" ? "正在检查" : "检查更新"}
+              </Button>
+            )}
+          </div>
+        </div>
       </section>
       <section className="settings-block application-settings-block">
         <SettingsSectionHeader description="Portiva 默认以本机处理和本机保存为边界。" title="隐私声明" />
@@ -52,6 +235,39 @@ export function ApplicationSettings() {
       </section>
     </section>
   );
+}
+
+function UpdateStatusTag({ phase }: { phase: UpdatePhase }) {
+  if (phase === "available") {
+    return <Tag tone="accent">有新版本</Tag>;
+  }
+  if (phase === "current") {
+    return <Tag tone="success">已是最新</Tag>;
+  }
+  if (phase === "error") {
+    return <Tag tone="danger">操作失败</Tag>;
+  }
+  if (phase === "checking" || phase === "downloading" || phase === "installing") {
+    return <Tag tone="warning">处理中</Tag>;
+  }
+  return <Tag>GitHub Release</Tag>;
+}
+
+function formatDownloadProgress(state: UpdateState) {
+  if (state.phase === "installing") {
+    return "正在安装";
+  }
+  if (state.totalBytes) {
+    return `${formatBytes(state.downloadedBytes)} / ${formatBytes(state.totalBytes)} · ${state.progress ?? 0}%`;
+  }
+  return state.downloadedBytes ? `已下载 ${formatBytes(state.downloadedBytes)}` : "正在准备下载";
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function PolicyList({ items }: { items: string[] }) {

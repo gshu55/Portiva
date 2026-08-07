@@ -123,6 +123,14 @@ pnpm build
 pnpm build:win:exe
 ```
 
+启用更新签名后，本地正式构建需要提供签名密钥。当前开发机的密钥保存在用户级 `.tauri` 目录，不应复制到仓库：
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = "C:\Users\GS\.tauri\portiva.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = Get-Content -Raw "C:\Users\GS\.tauri\portiva.key.password"
+pnpm build:win:exe
+```
+
 构建 Windows 便携目录、macOS DMG 或 Linux DEB：
 
 ```bash
@@ -136,6 +144,24 @@ pnpm build:linux:deb
 ```bash
 pnpm clean
 ```
+
+## GitHub Release 自动更新
+
+Portiva 使用 Tauri Updater 从 GitHub Release 检查稳定版本。Windows 更新包会先验证项目内置公钥，再在当前用户范围静默安装并自动重启应用。
+
+首次启用发布工作流时，在 GitHub 仓库的 `Settings > Secrets and variables > Actions` 中添加：
+
+- `TAURI_SIGNING_PRIVATE_KEY`：`C:\Users\GS\.tauri\portiva.key` 的完整内容。
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：`C:\Users\GS\.tauri\portiva.key.password` 的完整内容。
+
+发布新版本时，同步修改 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 中的版本号，然后推送同版本标签：
+
+```powershell
+git tag v1.2.1
+git push origin v1.2.1
+```
+
+`.github/workflows/release.yml` 会校验三个版本号和标签是否一致，构建 NSIS 安装包并发布安装包、更新签名及 `latest.json`。设置页的“关于 > 软件更新”提供手动检查和“更新并重启”入口。
 
 ## 设计原则
 

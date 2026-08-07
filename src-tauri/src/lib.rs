@@ -24,6 +24,8 @@ fn destroy_detached_terminal_windows<R: tauri::Runtime, M: tauri::Manager<R>>(ma
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(services::connection_manager::ConnectionManager::default())
         .manage(services::profile_store::ProfileStore::default())
         .manage(services::secret_store::SecretStore::default())
