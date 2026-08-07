@@ -1,3 +1,4 @@
+import { useAppMetadata } from "../../shared/useAppMetadata";
 import { SettingsSectionHeader } from "./SettingsSection";
 
 const privacyItems = [
@@ -22,20 +23,20 @@ const securityItems = [
 ];
 
 export function ApplicationSettings() {
+  const { error, loading, metadata } = useAppMetadata();
+  const pendingLabel = loading ? "正在读取…" : "不可用";
+
   return (
     <section className="settings-panel application-settings">
       <section className="settings-block application-settings-block">
         <SettingsSectionHeader description="面向本机工作流的多协议终端和连接管理工具。" title="产品信息" />
         <div className="application-info-grid">
           <span>应用</span>
-          <strong>Portiva</strong>
+          <strong>{metadata?.name ?? pendingLabel}</strong>
           <span>版本</span>
-          <strong>1.0.1</strong>
-          <span>运行环境</span>
-          <strong>本机桌面应用</strong>
-          <span>定位</span>
-          <strong>SSH、SFTP、串口、Telnet、Raw TCP 和 HTTP/API 工作台</strong>
+          <strong>{metadata?.version ?? pendingLabel}</strong>
         </div>
+        {error ? <p className="profile-dialog-note danger" role="alert">{error}</p> : null}
       </section>
       <section className="settings-block application-settings-block">
         <SettingsSectionHeader description="Portiva 默认以本机处理和本机保存为边界。" title="隐私声明" />

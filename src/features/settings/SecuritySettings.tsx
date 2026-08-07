@@ -33,7 +33,7 @@ export function SecuritySettings({
   return (
     <div className="security-settings">
       <section className="settings-block security-settings-block">
-        <SettingsSectionHeader description="主机信任、日志脱敏和协议风险提示。" title="连接保护" />
+        <SettingsSectionHeader title="连接保护" />
         <div className="settings-toggle-grid">
           <Toggle
             checked
@@ -54,7 +54,7 @@ export function SecuritySettings({
       </section>
 
       <section className="settings-block security-settings-block">
-        <SettingsSectionHeader description="使用当前规则检查敏感字段替换结果。" title="日志脱敏预览" />
+        <SettingsSectionHeader title="日志脱敏预览" />
         <div className="redaction-preview">
           <label className="settings-field">
             <span>脱敏输入</span>
@@ -68,7 +68,7 @@ export function SecuritySettings({
       </section>
 
       <section className="settings-block security-settings-block">
-        <SettingsSectionHeader description="这里只显示标识，密码保存在当前系统的安全凭据库中。" meta={`${secrets.length} 项`} title="系统凭据" />
+        <SettingsSectionHeader meta={`${secrets.length} 项`} title="系统凭据" />
         <div className="security-list">
           {secrets.length > 0 ? (
             secrets.map((secret) => (
@@ -85,7 +85,7 @@ export function SecuritySettings({
       </section>
 
       <section className="settings-block security-settings-block">
-        <SettingsSectionHeader description="保存过的 SSH 主机指纹。" meta={`${knownHosts.length} 台`} title="已知主机" />
+        <SettingsSectionHeader meta={`${knownHosts.length} 台`} title="已知主机" />
         <div className="security-list">
           {knownHosts.length > 0 ? (
             knownHosts.map((host) => (

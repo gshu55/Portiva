@@ -122,7 +122,7 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
         <SettingsSectionHeader title="主题与字体" />
         <SegmentedControl
           aria-label="主题模式"
-          className="segmented-control"
+          className={`segmented-control theme-mode-control mode-${settings.theme.mode}`}
           options={(["dark", "light", "system"] as const).map((mode) => ({
             ariaLabel: modeLabels[mode],
             icon: modeIcons[mode],
@@ -180,12 +180,10 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
 
       <section className="settings-block background-settings-block">
         <SettingsSectionHeader
-          description="应用到主窗口、SSH、SFTP、主机概览和运维工作台。"
           title="全局背景"
         />
         <Toggle
           checked={background.enabled}
-          description="关闭后保留当前选择，下次开启可直接恢复。"
           label="显示背景图"
           onChange={(event) => updateBackground({ enabled: event.currentTarget.checked })}
         />
@@ -248,7 +246,7 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
           />
           <div className="background-adjustments">
             <label>
-              <span>显示强度</span>
+              <span>透明度</span>
               <input
                 aria-label="背景显示强度"
                 max="100"
@@ -280,9 +278,6 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
               {backgroundStatus}
             </p>
           ) : null}
-          <p className="background-settings-note">
-            显示强度仅控制背景可见度和表面透明度；模糊为独立的 0–24px，设为 0px 时保持原图清晰。源图片不限文件大小，导入时会在本机解码并优化后保存。
-          </p>
         </div>
       </section>
     </>

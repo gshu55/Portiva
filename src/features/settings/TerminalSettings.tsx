@@ -42,7 +42,6 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
     <>
       <section className="settings-block terminal-behavior-settings-block">
         <SettingsSectionHeader
-          description="配置终端输入区的鼠标交互。"
           title="鼠标"
         />
         <div className="terminal-right-click-options" aria-label="终端右键点击功能">
@@ -63,7 +62,6 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
 
       <section className="settings-block terminal-behavior-settings-block">
         <SettingsSectionHeader
-          description="粘贴多行命令前先进入可编辑确认。"
           title="粘贴"
         />
         <div className="settings-toggle-grid">
@@ -77,7 +75,6 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
 
       <section className="settings-block terminal-behavior-settings-block">
         <SettingsSectionHeader
-          description="控制终端复制时是否写入 HTML 富文本格式。"
           title="复制"
         />
         <div className="settings-toggle-grid">

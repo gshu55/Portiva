@@ -57,9 +57,9 @@
   --wallpaper-surface-radius: var(--surface-radius);
   --wallpaper-control-radius: var(--control-radius);
   --wallpaper-header-overlay-bg: color-mix(in srgb, var(--toolbar-bg) 16%, transparent);
-  --wallpaper-surface-shadow:
+  /* --wallpaper-surface-shadow:
     0 10px 28px color-mix(in srgb, #000 10%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent);
+    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent); */
   --wallpaper-nested-bg: color-mix(in srgb, var(--button-muted-bg) 72%, transparent);
 }
 
@@ -150,8 +150,6 @@
 ) {
   border: 1px solid var(--wallpaper-surface-border);
   border-radius: var(--wallpaper-surface-radius);
-  background: var(--wallpaper-surface-bg);
-  box-shadow: var(--wallpaper-surface-shadow);
 }
 
 /* Standalone feature headers own the same surface opacity as their body. */
@@ -193,8 +191,7 @@
 .app-shell[data-background="true"] :is(
   .settings-menu,
   .settings-content > .settings-panel,
-  .http-sidebar-card,
-  .http-request-tabs
+  .http-sidebar-card
 ) {
   border: 0;
   border-radius: 0;
@@ -317,7 +314,6 @@
 
 .app-shell[data-background="true"] .http-console-sidebar {
   gap: 10px;
-  border: 0;
   background: transparent;
 }
 
@@ -374,7 +370,6 @@
   .check-row
 ) {
   border-radius: var(--wallpaper-control-radius);
-  background-color: var(--field-bg);
 }
 
 .app-shell[data-background="true"] :is(
@@ -383,7 +378,6 @@
   select
 ) {
   border-radius: var(--wallpaper-control-radius);
-  background-color: var(--field-bg);
 }
 
 .app-shell[data-background="true"] :is(
@@ -451,6 +445,15 @@
 ) {
   background: transparent !important;
   background-color: transparent !important;
+}
+
+.app-shell[data-background="true"] :is(
+  .xterm .xterm-scrollable-element .scrollbar .slider
+) {
+  transform: translate3d(6px, 0px, 0px) !important;
+  width: 6px !important;
+  border-radius: var(--wallpaper-control-radius) !important;
+  background: linear-gradient(90deg, transparent 0px, color-mix(in srgb, var(--accent) 34%, transparent) 0px 6px, transparent 6px) !important;
 }
 
 /* Overlays use one strong surface without introducing local blur. */

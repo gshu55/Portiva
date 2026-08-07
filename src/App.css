@@ -2909,9 +2909,6 @@ body.terminal-split-resizing {
   border: 1px solid var(--border-panel);
   border-radius: 13px;
   background: color-mix(in srgb, var(--panel-bg) 96%, transparent);
-  box-shadow:
-    0 12px 32px rgba(0, 0, 0, 0.13),
-    inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent);
   color: var(--text-main);
   animation: saved-card-enter 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   animation-delay: calc(var(--card-index) * 34ms);
@@ -2921,17 +2918,11 @@ body.terminal-split-resizing {
 .saved-connection-card:hover {
   z-index: 3;
   border-color: color-mix(in srgb, var(--accent) 34%, var(--border-panel));
-  box-shadow:
-    0 18px 40px rgba(0, 0, 0, 0.2),
-    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
   transform: translateY(-2px);
 }
 
 .saved-connection-card.active {
   border-color: color-mix(in srgb, var(--accent) 56%, var(--border-panel));
-  box-shadow:
-    0 16px 38px rgba(0, 0, 0, 0.18),
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .saved-card-header {
@@ -3521,6 +3512,7 @@ body.terminal-sftp-resizing {
   border: 1px solid color-mix(in srgb, var(--accent) 46%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
+  border-radius: var(--tag-radius);
 }
 
 .serial-link-identity strong {
@@ -8111,7 +8103,8 @@ body.http-workbench-resizing {
 .http-console-sidebar {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
-  border-right: 0;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
   background: transparent;
 }
 
@@ -10209,7 +10202,7 @@ progress {
 
 .app-shell :is(.tab, .http-request-tab) :is(.tab-close, .http-request-tab-close.ui-button):hover:not(:disabled) {
   border-color: rgba(233, 131, 91, 0.45);
-  background-color: var(--danger-bg);
+  /* background-color: var(--danger-bg); */
   color: var(--danger);
 }
 
@@ -10420,7 +10413,6 @@ progress {
 
 .app-shell :is(
   .http-sidebar-card,
-  .http-request-tabs,
   .settings-menu,
   .settings-content > .settings-panel,
   .file-manager > .transfer-queue,
@@ -10428,6 +10420,53 @@ progress {
 ) {
   border: 0;
   border-radius: 0;
+}
+
+/* Theme mode follows the same sliding selection language as Serial TEXT / HEX. */
+.app-shell .settings-page .theme-mode-control {
+  position: relative;
+  isolation: isolate;
+  border-color: color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--button-muted-bg) 76%, var(--workspace-bg));
+}
+
+.app-shell .settings-page .theme-mode-control::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 0;
+  width: calc(100% / 3);
+  border-radius: var(--control-radius) 0 0 var(--control-radius);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
+  content: "";
+  transition: transform 0.16s ease, border-radius 0.16s ease;
+}
+
+.app-shell .settings-page .theme-mode-control.mode-light::before {
+  border-radius: 0;
+  transform: translateX(100%);
+}
+
+.app-shell .settings-page .theme-mode-control.mode-system::before {
+  border-radius: 0 var(--control-radius) var(--control-radius) 0;
+  transform: translateX(200%);
+}
+
+.app-shell .settings-page .theme-mode-control .ui-button,
+.app-shell .settings-page .theme-mode-control .ui-button:hover:not(:disabled) {
+  position: relative;
+  z-index: 1;
+  border-color: color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.app-shell .settings-page .theme-mode-control .ui-button.active,
+.app-shell .settings-page .theme-mode-control .ui-button.active:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-strong);
+  box-shadow: none;
 }
 
 .app-shell button:disabled,

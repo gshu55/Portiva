@@ -20,7 +20,7 @@ export function KeymapSettings({ onSaveSettings, settings }: KeymapSettingsProps
 
   return (
     <section className="settings-block">
-      <SettingsSectionHeader description="常用工作区操作的键位。" title="快捷键" />
+      <SettingsSectionHeader title="快捷键" />
       <div className="shortcut-list">
         {shortcutFields.map(([key, label]) => (
           <label className="shortcut-row" key={key}>
