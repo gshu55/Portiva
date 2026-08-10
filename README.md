@@ -165,8 +165,8 @@ Portiva 使用 Tauri Updater 从 GitHub Release 检查稳定版本。Windows、m
 发布新版本时，同步修改 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 中的版本号，然后推送同版本标签：
 
 ```powershell
-git tag v1.2.3
-git push origin v1.2.3
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 `.github/workflows/release.yml` 会校验三个版本号和标签是否一致，并通过 GitHub Actions 矩阵构建 Windows x64（NSIS）、Linux x64（AppImage、deb）、macOS Apple Silicon（DMG）和 macOS Intel（DMG）。各平台安装包、Updater 签名及合并后的 `latest.json` 会上传到同一个 GitHub Release。设置页的“关于 > 软件更新”提供手动检查和“更新并重启”入口。
