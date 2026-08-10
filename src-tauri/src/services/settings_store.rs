@@ -157,6 +157,19 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
         return Err("shortcut bindings cannot be empty".to_string());
     }
 
+    if matches!(
+        settings.network.proxy.mode,
+        crate::domain::settings::NetworkProxyMode::Http
+            | crate::domain::settings::NetworkProxyMode::Socks5
+    ) {
+        if settings.network.proxy.host.trim().is_empty() {
+            return Err("proxy host is required".to_string());
+        }
+        if settings.network.proxy.port == 0 {
+            return Err("proxy port must be between 1 and 65535".to_string());
+        }
+    }
+
     Ok(())
 }
 
@@ -325,6 +338,10 @@ mod tests {
         ));
         assert!(settings.terminal.confirm_multiline_paste);
         assert!(!settings.terminal.copy_rich_text);
+        assert!(matches!(
+            settings.network.proxy.mode,
+            crate::domain::settings::NetworkProxyMode::None
+        ));
 
         let _ = std::fs::remove_file(path);
     }
@@ -347,6 +364,19 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn validates_custom_proxy_endpoint() {
+        let store = SettingsStore::in_memory();
+        let mut settings = AppSettings::default();
+        settings.network.proxy.mode = crate::domain::settings::NetworkProxyMode::Http;
+        settings.network.proxy.host.clear();
+
+        assert_eq!(
+            store.update(settings).unwrap_err(),
+            "proxy host is required"
+        );
     }
 
     fn test_path(name: &str) -> PathBuf {

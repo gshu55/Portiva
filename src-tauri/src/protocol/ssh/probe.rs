@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use crate::domain::profile::ConnectionProfile;
+use crate::domain::settings::NetworkProxySettings;
+use crate::services::network_proxy_service::connect_tcp;
 
 use super::SSH_CONNECT_TIMEOUT_SECS;
 
@@ -21,9 +23,11 @@ pub struct SshEndpointProbeResult {
 
 pub async fn probe_ssh_endpoint(
     profile: &ConnectionProfile,
+    proxy: &NetworkProxySettings,
+    proxy_password: Option<&str>,
 ) -> Result<SshEndpointProbeResult, String> {
-    let transport = probe_ssh_transport(profile).await?;
-    let host_key = host_key::probe_ssh_host_key(profile).await?;
+    let transport = probe_ssh_transport(profile, proxy, proxy_password).await?;
+    let host_key = host_key::probe_ssh_host_key(profile, proxy, proxy_password).await?;
 
     Ok(SshEndpointProbeResult {
         transport,
@@ -33,6 +37,8 @@ pub async fn probe_ssh_endpoint(
 
 pub async fn probe_ssh_transport(
     profile: &ConnectionProfile,
+    proxy: &NetworkProxySettings,
+    proxy_password: Option<&str>,
 ) -> Result<SshTransportProbeResult, String> {
     let host = profile
         .host
@@ -44,13 +50,7 @@ pub async fn probe_ssh_transport(
     let port = profile.port.unwrap_or(22);
     let timeout = Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS);
 
-    let stream = tokio::time::timeout(
-        timeout,
-        tokio::net::TcpStream::connect((host.as_str(), port)),
-    )
-    .await
-    .map_err(|_| format!("timed out connecting SSH transport {host}:{port}"))?
-    .map_err(|error| format!("failed to connect SSH transport {host}:{port}: {error}"))?;
+    let stream = connect_tcp(proxy, proxy_password, &host, port, timeout).await?;
 
     let mut reader = tokio::io::BufReader::new(stream);
     let mut line = String::new();

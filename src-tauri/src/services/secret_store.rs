@@ -460,6 +460,7 @@ fn purpose_label(purpose: &SecretPurpose) -> &'static str {
         SecretPurpose::Password => "password",
         SecretPurpose::PrivateKeyPassphrase => "private-key-passphrase",
         SecretPurpose::Token => "token",
+        SecretPurpose::ProxyPassword => "proxy-password",
     }
 }
 

@@ -174,6 +174,15 @@ const defaultSettings: AppSettings = {
     copyRichText: false,
     rightClickBehavior: "context-menu",
   },
+  network: {
+    proxy: {
+      mode: "none",
+      host: "127.0.0.1",
+      port: 7890,
+      authenticationEnabled: false,
+      username: "",
+    },
+  },
 };
 const defaultTerminalSize = {
   cols: 100,

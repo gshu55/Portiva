@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -12,7 +12,9 @@ use encoding_rs::{
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::profile::{ConnectionProfile, ConnectionType};
+use crate::domain::settings::NetworkProxySettings;
 use crate::domain::terminal::{TerminalRenderPolicy, TerminalSessionStatus, TerminalSize};
+use crate::services::network_proxy_service::connect_tcp;
 use crate::services::terminal_service::{
     drain_utf8_terminal_output, terminal_disconnect_notice, TerminalService,
 };
@@ -93,9 +95,14 @@ enum TcpTextEncoding {
 }
 
 impl TcpTerminalService {
-    pub fn test_profile(&self, profile: &ConnectionProfile) -> Result<(), String> {
+    pub async fn test_profile(
+        &self,
+        profile: &ConnectionProfile,
+        proxy: &NetworkProxySettings,
+        proxy_password: Option<&str>,
+    ) -> Result<(), String> {
         let (host, port) = tcp_endpoint(profile)?;
-        let stream = connect_tcp_stream(&host, port)?;
+        let stream = connect_tcp_stream(&host, port, proxy, proxy_password).await?;
         let _ = stream.shutdown(Shutdown::Both);
         Ok(())
     }
@@ -116,12 +123,14 @@ impl TcpTerminalService {
         Ok(())
     }
 
-    pub fn open_terminal(
+    pub async fn open_terminal(
         &self,
         connection_id: &str,
         terminal_id: &str,
         size: &TerminalSize,
         app_handle: AppHandle,
+        proxy: &NetworkProxySettings,
+        proxy_password: Option<&str>,
     ) -> Result<(), String> {
         if self.has_terminal(connection_id, terminal_id)? {
             return Ok(());
@@ -136,7 +145,7 @@ impl TcpTerminalService {
             .ok_or_else(|| format!("tcp profile not found for connection: {connection_id}"))?;
         let mode = tcp_terminal_mode(&profile)?;
         let (host, port) = tcp_endpoint(&profile)?;
-        let stream = connect_tcp_stream(&host, port)?;
+        let stream = connect_tcp_stream(&host, port, proxy, proxy_password).await?;
         stream
             .set_read_timeout(Some(TCP_READ_TIMEOUT))
             .map_err(|error| format!("failed to configure TCP read timeout: {error}"))?;
@@ -405,25 +414,20 @@ fn tcp_endpoint(profile: &ConnectionProfile) -> Result<(String, u16), String> {
     Ok((host, port))
 }
 
-fn connect_tcp_stream(host: &str, port: u16) -> Result<TcpStream, String> {
-    let mut last_error = None;
-    let addrs = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| format!("failed to resolve {host}:{port}: {error}"))?;
-
-    for addr in addrs {
-        match TcpStream::connect_timeout(&addr, TCP_CONNECT_TIMEOUT) {
-            Ok(stream) => return Ok(stream),
-            Err(error) => last_error = Some(error),
-        }
-    }
-
-    Err(format!(
-        "failed to connect TCP endpoint {host}:{port}: {}",
-        last_error
-            .map(|error| error.to_string())
-            .unwrap_or_else(|| "no resolved address".to_string())
-    ))
+async fn connect_tcp_stream(
+    host: &str,
+    port: u16,
+    proxy: &NetworkProxySettings,
+    proxy_password: Option<&str>,
+) -> Result<TcpStream, String> {
+    let stream = connect_tcp(proxy, proxy_password, host, port, TCP_CONNECT_TIMEOUT).await?;
+    let stream = stream
+        .into_std()
+        .map_err(|error| format!("无法转换 TCP 连接：{error}"))?;
+    stream
+        .set_nonblocking(false)
+        .map_err(|error| format!("无法配置 TCP 连接：{error}"))?;
+    Ok(stream)
 }
 
 fn tcp_line_ending(input: Option<&str>) -> Result<TcpLineEnding, String> {

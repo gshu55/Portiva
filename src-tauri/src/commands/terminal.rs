@@ -6,7 +6,10 @@ use crate::domain::terminal::{
 };
 use crate::services::connection_manager::ConnectionManager;
 use crate::services::local_shell_service::LocalShellService;
+use crate::services::network_proxy_service::load_proxy_password;
+use crate::services::secret_store::SecretStore;
 use crate::services::serial_service::SerialService;
+use crate::services::settings_store::SettingsStore;
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::tcp_terminal_service::TcpTerminalService;
 use crate::services::terminal_service::TerminalService;
@@ -69,6 +72,8 @@ pub async fn terminal_attach(
     ssh_sessions: State<'_, SshSessionService>,
     serial_service: State<'_, SerialService>,
     tcp_terminals: State<'_, TcpTerminalService>,
+    settings: State<'_, SettingsStore>,
+    secrets: State<'_, SecretStore>,
 ) -> Result<TerminalSession, String> {
     let session = connection_manager
         .get(&connection_id)?
@@ -115,8 +120,18 @@ pub async fn terminal_attach(
             return Err(error);
         }
     } else if is_tcp_transport {
-        if let Err(error) =
-            tcp_terminals.open_terminal(&connection_id, &terminal.id, &size, app_handle)
+        let proxy = settings.get()?.network.proxy;
+        let proxy_password = load_proxy_password(&proxy, secrets.inner().clone()).await?;
+        if let Err(error) = tcp_terminals
+            .open_terminal(
+                &connection_id,
+                &terminal.id,
+                &size,
+                app_handle,
+                &proxy,
+                proxy_password.as_deref(),
+            )
+            .await
         {
             let _ = terminal_service.close(&terminal.id);
             return Err(error);

@@ -13,9 +13,11 @@ use crate::services::file_transfer_service::FileTransferService;
 use crate::services::known_hosts_store::KnownHostsStore;
 use crate::services::local_shell_service::LocalShellService;
 use crate::services::log_service::LogService;
+use crate::services::network_proxy_service::load_proxy_password;
 use crate::services::profile_store::ProfileStore;
 use crate::services::secret_store::SecretStore;
 use crate::services::serial_service::SerialService;
+use crate::services::settings_store::SettingsStore;
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::tcp_terminal_service::TcpTerminalService;
 use crate::services::terminal_service::TerminalService;
@@ -32,12 +34,26 @@ pub async fn connection_open(
     ssh_sessions: State<'_, SshSessionService>,
     serial_service: State<'_, SerialService>,
     tcp_terminals: State<'_, TcpTerminalService>,
+    settings: State<'_, SettingsStore>,
+    secrets: State<'_, SecretStore>,
     logs: State<'_, LogService>,
 ) -> Result<ConnectionSession, String> {
+    let proxy = settings.get()?.network.proxy;
+    let proxy_password = if matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp) {
+        load_proxy_password(&proxy, secrets.inner().clone()).await?
+    } else {
+        None
+    };
     let session = if matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp) {
         let session = manager.open_pending_ssh_transport(profile.clone())?;
         let transport = match ssh_sessions
-            .connect_trusted(&session.id, &profile, &known_hosts)
+            .connect_trusted(
+                &session.id,
+                &profile,
+                &known_hosts,
+                &proxy,
+                proxy_password.as_deref(),
+            )
             .await
         {
             Ok(transport) => transport,
@@ -365,6 +381,7 @@ pub async fn ssh_collect_host_overview(
     let known_hosts = app_handle.state::<KnownHostsStore>().inner().clone();
     let ssh_sessions = app_handle.state::<SshSessionService>().inner().clone();
     let secret_store = app_handle.state::<SecretStore>().inner().clone();
+    let proxy = app_handle.state::<SettingsStore>().get()?.network.proxy;
     let reusable_connection_id = match connection_id {
         Some(active_connection_id) => {
             let manager = app_handle.state::<ConnectionManager>();
@@ -389,6 +406,7 @@ pub async fn ssh_collect_host_overview(
             known_hosts,
             secret_store,
             ssh_sessions,
+            proxy,
         )
         .await
     })
@@ -403,6 +421,7 @@ async fn collect_profile_host_overview(
     known_hosts: KnownHostsStore,
     secret_store: SecretStore,
     ssh_sessions: SshSessionService,
+    proxy: crate::domain::settings::NetworkProxySettings,
 ) -> Result<SshHostOverview, String> {
     if let Some(connection_id) = reusable_connection_id {
         return ssh_sessions.collect_host_overview(connection_id).await;
@@ -412,9 +431,16 @@ async fn collect_profile_host_overview(
     let overview_connection_id = format!("host-overview-{profile_id}-{sequence}");
     let auth_type = profile.auth_type.clone().unwrap_or_default();
     let private_key_path = profile.private_key_path.clone().unwrap_or_default();
+    let proxy_password = load_proxy_password(&proxy, secret_store.clone()).await?;
     ssh_sessions
         .clone()
-        .connect_trusted_owned(overview_connection_id.clone(), profile, known_hosts)
+        .connect_trusted_owned(
+            overview_connection_id.clone(),
+            profile,
+            known_hosts,
+            proxy,
+            proxy_password,
+        )
         .await?;
 
     let authentication_result = if auth_type == "password" {

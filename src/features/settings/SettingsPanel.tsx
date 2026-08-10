@@ -1,11 +1,12 @@
 import { KeymapSettings } from "./KeymapSettings";
+import { NetworkSettings } from "./NetworkSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { TerminalPaletteSettings } from "./TerminalPaletteSettings";
 import { TerminalSettings } from "./TerminalSettings";
 import { ThemeSettings } from "./ThemeSettings";
 import type { AppSettings, KnownHostEntry, SecretMetadata } from "../../shared/types";
 
-export type SettingsSectionId = "theme" | "terminal-palette" | "terminal" | "keymap" | "security";
+export type SettingsSectionId = "theme" | "terminal-palette" | "terminal" | "network" | "keymap" | "security";
 
 interface SettingsPanelProps {
   section: SettingsSectionId;
@@ -39,6 +40,7 @@ export function SettingsPanel({
       {section === "theme" ? <ThemeSettings settings={settings} onSaveSettings={onSaveSettings} /> : null}
       {section === "terminal-palette" ? <TerminalPaletteSettings settings={settings} onSaveSettings={onSaveSettings} /> : null}
       {section === "terminal" ? <TerminalSettings settings={settings} onSaveSettings={onSaveSettings} /> : null}
+      {section === "network" ? <NetworkSettings settings={settings} onSaveSettings={onSaveSettings} /> : null}
       {section === "keymap" ? <KeymapSettings settings={settings} onSaveSettings={onSaveSettings} /> : null}
       {section === "security" ? (
         <SecuritySettings

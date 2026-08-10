@@ -108,7 +108,18 @@ export const commandNames = {
   networkScanInterfaces: "network_scan_interfaces",
   networkScanStart: "network_scan_start",
   networkScanCancel: "network_scan_cancel",
+  networkProxyPasswordStatus: "network_proxy_password_status",
+  networkProxyPasswordSet: "network_proxy_password_set",
+  networkProxyPasswordDelete: "network_proxy_password_delete",
+  appUpdateCheck: "app_update_check",
+  appUpdateDownloadAndInstall: "app_update_download_and_install",
 } as const;
+
+export interface AppUpdateMetadata {
+  currentVersion: string;
+  version: string;
+  body?: string;
+}
 
 export interface ProfileSaveResult {
   profileId: string;
@@ -469,6 +480,26 @@ export function settingsGet() {
 
 export function settingsUpdate(settings: AppSettings) {
   return invoke<AppSettings>(commandNames.settingsUpdate, { settings });
+}
+
+export function networkProxyPasswordStatus() {
+  return invoke<boolean>(commandNames.networkProxyPasswordStatus);
+}
+
+export function networkProxyPasswordSet(password: string) {
+  return invoke<void>(commandNames.networkProxyPasswordSet, { password });
+}
+
+export function networkProxyPasswordDelete() {
+  return invoke<void>(commandNames.networkProxyPasswordDelete);
+}
+
+export function appUpdateCheck() {
+  return invoke<AppUpdateMetadata | null>(commandNames.appUpdateCheck);
+}
+
+export function appUpdateDownloadAndInstall() {
+  return invoke<void>(commandNames.appUpdateDownloadAndInstall);
 }
 
 export function logList() {

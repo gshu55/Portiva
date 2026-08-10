@@ -17,6 +17,7 @@ pub enum SecretPurpose {
     Password,
     PrivateKeyPassphrase,
     Token,
+    ProxyPassword,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,6 +7,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::services::http_request_service::HttpRequestService;
+use crate::services::network_proxy_service::{configure_http_client, load_proxy_password};
+use crate::services::secret_store::SecretStore;
+use crate::services::settings_store::SettingsStore;
 
 const MAX_HTTP_MULTIPART_FILE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_HTTP_MULTIPART_BODY_BYTES: usize = 160 * 1024 * 1024;
@@ -83,22 +86,34 @@ pub enum HttpResponseBodyKind {
 }
 
 #[tauri::command]
-pub async fn http_send(request: HttpSendRequest) -> Result<HttpSendResponse, String> {
-    send_http_request(None, None, request).await
+pub async fn http_send(
+    request: HttpSendRequest,
+    settings: State<'_, SettingsStore>,
+    secrets: State<'_, SecretStore>,
+) -> Result<HttpSendResponse, String> {
+    let proxy = settings.get()?.network.proxy;
+    let password = load_proxy_password(&proxy, secrets.inner().clone()).await?;
+    send_http_request(None, None, request, proxy, password).await
 }
 
 #[tauri::command]
 pub async fn http_send_stream(
     app_handle: AppHandle,
     request_service: State<'_, HttpRequestService>,
+    settings: State<'_, SettingsStore>,
+    secrets: State<'_, SecretStore>,
     request_id: String,
     request: HttpSendRequest,
 ) -> Result<HttpSendResponse, String> {
+    let proxy = settings.get()?.network.proxy;
+    let password = load_proxy_password(&proxy, secrets.inner().clone()).await?;
     let cancel_token = request_service.begin(&request_id)?;
     let result = send_http_request(
         Some((&app_handle, &request_id)),
         Some(cancel_token),
         request,
+        proxy,
+        password,
     )
     .await;
     request_service.finish(&request_id);
@@ -117,6 +132,8 @@ async fn send_http_request(
     stream_target: Option<(&AppHandle, &str)>,
     cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
     request: HttpSendRequest,
+    proxy: crate::domain::settings::NetworkProxySettings,
+    proxy_password: Option<String>,
 ) -> Result<HttpSendResponse, String> {
     let method = request.method.trim().to_uppercase();
     let method = reqwest::Method::from_bytes(method.as_bytes())
@@ -131,11 +148,17 @@ async fn send_http_request(
     }
 
     let timeout_ms = request.timeout_ms.unwrap_or(30_000).clamp(1_000, 300_000);
-    let client = reqwest::Client::builder()
+    let client_builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
-        .timeout(Duration::from_millis(timeout_ms))
-        .build()
-        .map_err(|error| format!("HTTP 客户端初始化失败：{error}"))?;
+        .timeout(Duration::from_millis(timeout_ms));
+    let client = configure_http_client(
+        client_builder,
+        &proxy,
+        url.scheme(),
+        proxy_password.as_deref(),
+    )?
+    .build()
+    .map_err(|error| format!("HTTP 客户端初始化失败：{error}"))?;
 
     let multipart_parts = request.multipart.unwrap_or_default();
     let has_multipart_body = !multipart_parts.is_empty();

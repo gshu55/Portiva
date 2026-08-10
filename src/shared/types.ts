@@ -372,6 +372,15 @@ export interface AppSettings {
     copyRichText: boolean;
     rightClickBehavior: TerminalRightClickBehavior;
   };
+  network: {
+    proxy: {
+      mode: "none" | "http" | "socks5" | "browser";
+      host: string;
+      port: number;
+      authenticationEnabled: boolean;
+      username: string;
+    };
+  };
 }
 
 export type WorkspaceCommandId = "connect" | "disconnect" | "newProfile";
@@ -387,7 +396,7 @@ export interface LogEntry {
 export interface SecretMetadata {
   id: string;
   profileId: string;
-  purpose: "password" | "private-key-passphrase" | "token";
+  purpose: "password" | "private-key-passphrase" | "token" | "proxy-password";
   createdAt: string;
   hasValue: boolean;
 }

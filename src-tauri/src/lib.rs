@@ -41,6 +41,7 @@ pub fn run() {
         .manage(services::settings_store::SettingsStore::default())
         .manage(services::log_service::LogService::default())
         .manage(services::network_scan_service::NetworkScanService::default())
+        .manage(services::update_service::UpdateService::default())
         .manage(services::protocol_registry::ProtocolRegistry)
         .manage(services::tunnel_service::TunnelService::default())
         .manage(services::serial_service::SerialService::default())
@@ -128,6 +129,11 @@ pub fn run() {
             commands::network_scan::network_scan_interfaces,
             commands::network_scan::network_scan_start,
             commands::network_scan::network_scan_cancel,
+            commands::network_proxy::network_proxy_password_status,
+            commands::network_proxy::network_proxy_password_set,
+            commands::network_proxy::network_proxy_password_delete,
+            commands::updater::app_update_check,
+            commands::updater::app_update_download_and_install,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main"

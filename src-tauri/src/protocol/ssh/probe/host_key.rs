@@ -5,7 +5,9 @@ use russh::keys::ssh_key;
 use russh::{client, Disconnect};
 
 use crate::domain::profile::ConnectionProfile;
+use crate::domain::settings::NetworkProxySettings;
 use crate::protocol::ssh::SSH_CONNECT_TIMEOUT_SECS;
+use crate::services::network_proxy_service::connect_tcp;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshHostKeyProbeResult {
@@ -16,6 +18,8 @@ pub struct SshHostKeyProbeResult {
 
 pub async fn probe_ssh_host_key(
     profile: &ConnectionProfile,
+    proxy: &NetworkProxySettings,
+    proxy_password: Option<&str>,
 ) -> Result<SshHostKeyProbeResult, String> {
     let host = profile
         .host
@@ -36,13 +40,11 @@ pub async fn probe_ssh_host_key(
         ..Default::default()
     });
 
-    let session = tokio::time::timeout(
-        timeout,
-        client::connect(config, (host.as_str(), port), handler),
-    )
-    .await
-    .map_err(|_| format!("timed out probing SSH host key {host}:{port}"))?
-    .map_err(|error| format!("failed to probe SSH host key {host}:{port}: {error}"))?;
+    let stream = connect_tcp(proxy, proxy_password, &host, port, timeout).await?;
+    let session = tokio::time::timeout(timeout, client::connect_stream(config, stream, handler))
+        .await
+        .map_err(|_| format!("timed out probing SSH host key {host}:{port}"))?
+        .map_err(|error| format!("failed to probe SSH host key {host}:{port}: {error}"))?;
     let _ = session
         .disconnect(Disconnect::ByApplication, "host key probe complete", "en")
         .await;

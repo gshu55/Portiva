@@ -17,10 +17,12 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::domain::connection::SshHostOverview;
 use crate::domain::file_transfer::{RemoteEntry, RemoteEntryKind};
 use crate::domain::profile::ConnectionProfile;
+use crate::domain::settings::NetworkProxySettings;
 use crate::domain::terminal::{TerminalRenderPolicy, TerminalSessionStatus, TerminalSize};
 use crate::protocol::ssh::SSH_CONNECT_TIMEOUT_SECS;
 use crate::security::fingerprint::display_fingerprint;
 use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
+use crate::services::network_proxy_service::connect_tcp;
 use crate::services::terminal_service::{
     drain_utf8_terminal_output, terminal_disconnect_notice, TerminalService,
 };
@@ -211,8 +213,10 @@ impl SshSessionService {
         connection_id: &str,
         profile: &ConnectionProfile,
         known_hosts: &KnownHostsStore,
+        proxy: &NetworkProxySettings,
+        proxy_password: Option<&str>,
     ) -> Result<SshConnectedTransport, String> {
-        let opened = open_ssh_handle(profile.clone()).await?;
+        let opened = open_ssh_handle(profile.clone(), proxy, proxy_password).await?;
 
         match known_hosts.verify_host_key(&opened.host, opened.port, &opened.fingerprint)? {
             KnownHostDecision::Trusted => {}
@@ -271,8 +275,10 @@ impl SshSessionService {
         connection_id: String,
         profile: ConnectionProfile,
         known_hosts: KnownHostsStore,
+        proxy: NetworkProxySettings,
+        proxy_password: Option<String>,
     ) -> Result<SshConnectedTransport, String> {
-        let opened = open_ssh_handle(profile).await?;
+        let opened = open_ssh_handle(profile, &proxy, proxy_password.as_deref()).await?;
 
         match known_hosts.verify_host_key(&opened.host, opened.port, &opened.fingerprint)? {
             KnownHostDecision::Trusted => {}
@@ -1020,7 +1026,11 @@ struct OpenedSshHandle {
     username: String,
 }
 
-async fn open_ssh_handle(profile: ConnectionProfile) -> Result<OpenedSshHandle, String> {
+async fn open_ssh_handle(
+    profile: ConnectionProfile,
+    proxy: &NetworkProxySettings,
+    proxy_password: Option<&str>,
+) -> Result<OpenedSshHandle, String> {
     let host = profile
         .host
         .as_deref()
@@ -1043,13 +1053,11 @@ async fn open_ssh_handle(profile: ConnectionProfile) -> Result<OpenedSshHandle, 
     };
     let config = Arc::new(ssh_client_config());
 
-    let handle = tokio::time::timeout(
-        timeout,
-        client::connect(config, (host.clone(), port), handler),
-    )
-    .await
-    .map_err(|_| format!("timed out opening SSH session {host}:{port}"))?
-    .map_err(|error| format!("failed to open SSH session {host}:{port}: {error}"))?;
+    let stream = connect_tcp(proxy, proxy_password, &host, port, timeout).await?;
+    let handle = tokio::time::timeout(timeout, client::connect_stream(config, stream, handler))
+        .await
+        .map_err(|_| format!("timed out opening SSH session {host}:{port}"))?
+        .map_err(|error| format!("failed to open SSH session {host}:{port}: {error}"))?;
     let fingerprint = fingerprint
         .lock()
         .map_err(|_| "SSH session state lock poisoned".to_string())?

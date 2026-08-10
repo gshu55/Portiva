@@ -15,6 +15,7 @@ const menuItems: Array<{ id: SettingsMenuId; icon: IconName; label: string; desc
   { id: "theme", icon: "palette", label: "外观", description: "主题、背景和字体" },
   { id: "terminal-palette", icon: "palette", label: "终端配色", description: "ANSI 色板和预设" },
   { id: "terminal", icon: "terminal", label: "终端", description: "鼠标和输入行为" },
+  { id: "network", icon: "network", label: "网络", description: "全局代理和连接策略" },
   { id: "keymap", icon: "keyboard", label: "快捷键", description: "全局操作键位" },
   { id: "security", icon: "shield", label: "安全", description: "主机密钥、脱敏和凭据元数据" },
   { id: "about", icon: "file-text", label: "关于", description: "产品信息和法律声明" },

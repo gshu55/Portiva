@@ -27,6 +27,7 @@ export function SecuritySettings({
   secrets,
   settings,
 }: SecuritySettingsProps) {
+  const profileSecrets = secrets.filter((secret) => secret.purpose !== "proxy-password");
   const updateSecurity = (security: Partial<AppSettings["security"]>) =>
     onSaveSettings({ ...settings, security: { ...settings.security, ...security } });
 
@@ -68,10 +69,10 @@ export function SecuritySettings({
       </section>
 
       <section className="settings-block security-settings-block">
-        <SettingsSectionHeader meta={`${secrets.length} 项`} title="系统凭据" />
+        <SettingsSectionHeader meta={`${profileSecrets.length} 项`} title="系统凭据" />
         <div className="security-list">
-          {secrets.length > 0 ? (
-            secrets.map((secret) => (
+          {profileSecrets.length > 0 ? (
+            profileSecrets.map((secret) => (
               <div className="security-row" key={secret.id}>
                 <span>{secret.purpose}</span>
                 <small>{secret.id}</small>

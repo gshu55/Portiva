@@ -9,13 +9,16 @@ use tauri::State;
 use crate::domain::logging::LogLevel;
 use crate::domain::profile::{ConnectionProfile, ConnectionType, ProfileGroup, RecentConnection};
 use crate::domain::secret::SecretPurpose;
+use crate::domain::settings::NetworkProxySettings;
 use crate::protocol::ssh::{probe::probe_ssh_endpoint, SSH_CONNECT_TIMEOUT_SECS};
 use crate::security::fingerprint::{display_fingerprint, fingerprint_matches};
 use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
 use crate::services::log_service::LogService;
+use crate::services::network_proxy_service::{connect_tcp, load_proxy_password};
 use crate::services::profile_store::ProfileStore;
 use crate::services::secret_store::SecretStore;
 use crate::services::serial_service::SerialService;
+use crate::services::settings_store::SettingsStore;
 use crate::services::tcp_terminal_service::TcpTerminalService;
 
 #[derive(Debug, Serialize)]
@@ -134,11 +137,25 @@ pub async fn profile_test_connection(
     known_hosts: State<'_, KnownHostsStore>,
     serial_service: State<'_, SerialService>,
     tcp_terminals: State<'_, TcpTerminalService>,
+    settings: State<'_, SettingsStore>,
+    secrets: State<'_, SecretStore>,
 ) -> Result<TestConnectionResult, String> {
     let _declared_capabilities = profile.capabilities();
+    let proxy = settings.get()?.network.proxy;
+    let proxy_password = if matches!(
+        profile.r#type,
+        ConnectionType::Ssh
+            | ConnectionType::Sftp
+            | ConnectionType::Telnet
+            | ConnectionType::RawTcp
+    ) {
+        load_proxy_password(&proxy, secrets.inner().clone()).await?
+    } else {
+        None
+    };
 
     if matches!(profile.r#type, ConnectionType::Ssh | ConnectionType::Sftp) {
-        let probe = probe_ssh_endpoint(&profile).await?;
+        let probe = probe_ssh_endpoint(&profile, &proxy, proxy_password.as_deref()).await?;
         let host = probe.transport.host.as_str();
         let fingerprint = probe.host_key_fingerprint.as_str();
         let port = probe.transport.port;
@@ -147,7 +164,15 @@ pub async fn profile_test_connection(
         return Ok(match decision {
             KnownHostDecision::Trusted => {
                 if profile.auth_type.as_deref() == Some("password") && secret.is_some() {
-                    match test_ssh_password_auth(&profile, fingerprint, secret).await {
+                    match test_ssh_password_auth(
+                        &profile,
+                        fingerprint,
+                        secret,
+                        &proxy,
+                        proxy_password.as_deref(),
+                    )
+                    .await
+                    {
                         Ok(()) => TestConnectionResult {
                             ok: true,
                             message: format!(
@@ -239,7 +264,10 @@ pub async fn profile_test_connection(
         profile.r#type,
         ConnectionType::Telnet | ConnectionType::RawTcp
     ) {
-        return match tcp_terminals.test_profile(&profile) {
+        return match tcp_terminals
+            .test_profile(&profile, &proxy, proxy_password.as_deref())
+            .await
+        {
             Ok(()) => Ok(TestConnectionResult {
                 ok: true,
                 message: format!(
@@ -321,6 +349,8 @@ async fn test_ssh_password_auth(
     profile: &ConnectionProfile,
     expected_fingerprint: &str,
     secret: Option<String>,
+    proxy: &NetworkProxySettings,
+    proxy_password: Option<&str>,
 ) -> Result<(), String> {
     let password = secret
         .filter(|value| !value.is_empty())
@@ -352,13 +382,11 @@ async fn test_ssh_password_auth(
         ..Default::default()
     });
 
-    let mut handle = tokio::time::timeout(
-        timeout,
-        client::connect(config, (host.as_str(), port), handler),
-    )
-    .await
-    .map_err(|_| format!("timed out opening SSH session {host}:{port}"))?
-    .map_err(|error| format!("failed to open SSH session {host}:{port}: {error}"))?;
+    let stream = connect_tcp(proxy, proxy_password, &host, port, timeout).await?;
+    let mut handle = tokio::time::timeout(timeout, client::connect_stream(config, stream, handler))
+        .await
+        .map_err(|_| format!("timed out opening SSH session {host}:{port}"))?
+        .map_err(|error| format!("failed to open SSH session {host}:{port}: {error}"))?;
     let actual_fingerprint = fingerprint
         .lock()
         .map_err(|_| "SSH auth test state lock poisoned".to_string())?

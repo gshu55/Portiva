@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
-import type { Update } from "@tauri-apps/plugin-updater";
+import { listen } from "@tauri-apps/api/event";
 import { Icon } from "../../shared/Icon";
+import { appUpdateCheck, appUpdateDownloadAndInstall } from "../../shared/ipc/commands";
 import { Button, Tag } from "../../shared/ui";
 import { useAppMetadata } from "../../shared/useAppMetadata";
 import { SettingsSectionHeader } from "./SettingsSection";
@@ -15,6 +16,12 @@ interface UpdateState {
   releaseNotes: string | null;
   totalBytes: number | null;
   version: string | null;
+}
+
+interface UpdateProgressEvent {
+  kind: "started" | "progress" | "finished";
+  chunkLength: number;
+  contentLength: number | null;
 }
 
 const initialUpdateState: UpdateState = {
@@ -51,7 +58,7 @@ const securityItems = [
 export function ApplicationSettings() {
   const { error, loading, metadata } = useAppMetadata();
   const pendingLabel = loading ? "正在读取…" : "不可用";
-  const availableUpdateRef = useRef<Update | null>(null);
+  const availableUpdateRef = useRef<string | null>(null);
   const downloadedBytesRef = useRef(0);
   const totalBytesRef = useRef<number | null>(null);
   const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState);
@@ -65,13 +72,8 @@ export function ApplicationSettings() {
     setUpdateState({ ...initialUpdateState, message: "正在检查稳定版本…", phase: "checking" });
 
     try {
-      if (availableUpdateRef.current) {
-        await availableUpdateRef.current.close();
-        availableUpdateRef.current = null;
-      }
-
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check({ timeout: 20_000 });
+      availableUpdateRef.current = null;
+      const update = await appUpdateCheck();
 
       if (!update) {
         setUpdateState({
@@ -82,7 +84,7 @@ export function ApplicationSettings() {
         return;
       }
 
-      availableUpdateRef.current = update;
+      availableUpdateRef.current = update.version;
       setUpdateState({
         ...initialUpdateState,
         message: `发现 Portiva ${update.version}，可下载并安装。`,
@@ -100,9 +102,9 @@ export function ApplicationSettings() {
   };
 
   const installAvailableUpdate = async () => {
-    const update = availableUpdateRef.current;
+    const updateVersion = availableUpdateRef.current;
 
-    if (!update || updateBusy) {
+    if (!updateVersion || updateBusy) {
       return;
     }
 
@@ -111,22 +113,25 @@ export function ApplicationSettings() {
     setUpdateState((current) => ({
       ...current,
       downloadedBytes: 0,
-      message: `正在下载 Portiva ${update.version}…`,
+      message: `正在下载 Portiva ${updateVersion}…`,
       phase: "downloading",
       progress: null,
       totalBytes: null,
     }));
 
     try {
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started") {
-          totalBytesRef.current = event.data.contentLength ?? null;
+      const unlisten = await listen<UpdateProgressEvent>("portiva://update-progress", (event) => {
+        if (event.payload.kind === "started") {
+          totalBytesRef.current = event.payload.contentLength ?? null;
           setUpdateState((current) => ({ ...current, totalBytes: totalBytesRef.current }));
           return;
         }
 
-        if (event.event === "Progress") {
-          downloadedBytesRef.current += event.data.chunkLength;
+        if (event.payload.kind === "progress") {
+          if (event.payload.contentLength) {
+            totalBytesRef.current = event.payload.contentLength;
+          }
+          downloadedBytesRef.current += event.payload.chunkLength;
           const totalBytes = totalBytesRef.current;
           const progress = totalBytes ? Math.min(100, Math.round((downloadedBytesRef.current / totalBytes) * 100)) : null;
 
@@ -154,10 +159,14 @@ export function ApplicationSettings() {
           progress: 100,
         }));
       });
-
-      setUpdateState((current) => ({ ...current, message: "安装完成，正在重启 Portiva…", phase: "installing" }));
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
+      try {
+        await appUpdateDownloadAndInstall();
+        setUpdateState((current) => ({ ...current, message: "安装完成，正在重启 Portiva…", phase: "installing" }));
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } finally {
+        unlisten();
+      }
     } catch {
       setUpdateState((current) => ({
         ...current,

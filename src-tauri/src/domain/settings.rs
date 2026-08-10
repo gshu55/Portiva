@@ -8,6 +8,8 @@ pub struct AppSettings {
     pub security: SecuritySettings,
     #[serde(default)]
     pub terminal: TerminalSettings,
+    #[serde(default)]
+    pub network: NetworkSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +127,32 @@ pub enum TerminalRightClickBehavior {
     CopyOrPaste,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NetworkSettings {
+    pub proxy: NetworkProxySettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NetworkProxySettings {
+    pub mode: NetworkProxyMode,
+    pub host: String,
+    pub port: u16,
+    pub authentication_enabled: bool,
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkProxyMode {
+    #[default]
+    None,
+    Http,
+    Socks5,
+    Browser,
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -149,6 +177,7 @@ impl Default for AppSettings {
                 allow_insecure_without_warning: false,
             },
             terminal: TerminalSettings::default(),
+            network: NetworkSettings::default(),
         }
     }
 }
@@ -210,6 +239,26 @@ impl Default for TerminalSettings {
             confirm_multiline_paste: true,
             copy_rich_text: false,
             right_click_behavior: TerminalRightClickBehavior::ContextMenu,
+        }
+    }
+}
+
+impl Default for NetworkSettings {
+    fn default() -> Self {
+        Self {
+            proxy: NetworkProxySettings::default(),
+        }
+    }
+}
+
+impl Default for NetworkProxySettings {
+    fn default() -> Self {
+        Self {
+            mode: NetworkProxyMode::None,
+            host: "127.0.0.1".to_string(),
+            port: 7890,
+            authentication_enabled: false,
+            username: String::new(),
         }
     }
 }
