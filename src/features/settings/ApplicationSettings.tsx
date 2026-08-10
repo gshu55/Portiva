@@ -19,7 +19,7 @@ interface UpdateState {
 
 const initialUpdateState: UpdateState = {
   downloadedBytes: 0,
-  message: "通过 GitHub Release 获取经过签名验证的稳定版本。",
+  message: "获取经过签名验证的稳定版本。",
   phase: "idle",
   progress: null,
   releaseNotes: null,
@@ -62,7 +62,7 @@ export function ApplicationSettings() {
       return;
     }
 
-    setUpdateState({ ...initialUpdateState, message: "正在连接 GitHub Release…", phase: "checking" });
+    setUpdateState({ ...initialUpdateState, message: "正在检查稳定版本…", phase: "checking" });
 
     try {
       if (availableUpdateRef.current) {
@@ -90,10 +90,10 @@ export function ApplicationSettings() {
         releaseNotes: update.body?.trim() || null,
         version: update.version,
       });
-    } catch (updateError) {
+    } catch {
       setUpdateState({
         ...initialUpdateState,
-        message: `检查更新失败：${String(updateError)}`,
+        message: "检查更新失败，请检查网络连接后重试。",
         phase: "error",
       });
     }
@@ -158,10 +158,10 @@ export function ApplicationSettings() {
       setUpdateState((current) => ({ ...current, message: "安装完成，正在重启 Portiva…", phase: "installing" }));
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
-    } catch (updateError) {
+    } catch {
       setUpdateState((current) => ({
         ...current,
-        message: `安装更新失败：${String(updateError)}`,
+        message: "安装更新失败，请检查网络连接后重试。",
         phase: "error",
       }));
     }
@@ -250,7 +250,7 @@ function UpdateStatusTag({ phase }: { phase: UpdatePhase }) {
   if (phase === "checking" || phase === "downloading" || phase === "installing") {
     return <Tag tone="warning">处理中</Tag>;
   }
-  return <Tag>GitHub Release</Tag>;
+  return <Tag>稳定通道</Tag>;
 }
 
 function formatDownloadProgress(state: UpdateState) {

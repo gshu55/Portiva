@@ -207,6 +207,7 @@ function App() {
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
   const [connectingProfileId, setConnectingProfileId] = useState<string | null>(null);
+  const [titlebarTabSlot, setTitlebarTabSlot] = useState<HTMLDivElement | null>(null);
   const connectingProfileIdRef = useRef<string | null>(null);
   const detachedTarget = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1365,6 +1366,7 @@ function App() {
         onOpenSerialTerminal={openSerialTerminalTab}
         onOpenSavedConnections={openHostDashboardTab}
         onOpenSettings={openSettingsTab}
+        tabSlotRef={setTitlebarTabSlot}
       />
       <section className="workspace">
         <div className="content-grid without-file-manager">
@@ -1426,6 +1428,7 @@ function App() {
             terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
             suppressInsecureWarning={workspace.settings.security.allowInsecureWithoutWarning}
             terminalTheme={terminalPalette}
+            tabBarPortalTarget={titlebarTabSlot}
             onCloseSessionTab={closeAppSessionTab}
             onCloseSerialTerminal={workspace.closeSerialTerminal}
             onDetachSessionTab={openAppSessionWindow}

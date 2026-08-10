@@ -3,11 +3,13 @@ import {
   type DragEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type {
   ConnectionCapabilities,
   ConnectionSummary,
@@ -22,6 +24,8 @@ import type {
 } from "../../shared/types";
 import { Icon } from "../../shared/Icon";
 import { SerialTerminalPanel } from "./SerialTerminalPanel";
+import { SshTerminalWorkspace } from "./SshTerminalWorkspace";
+import { useSavedSshCommands } from "./useSavedSshCommands";
 import { TabContextMenu } from "./TabContextMenu";
 import { TerminalPane } from "./TerminalPane";
 
@@ -42,6 +46,7 @@ interface TerminalWorkspaceProps {
   terminalRightClickBehavior?: TerminalRightClickBehavior;
   suppressInsecureWarning?: boolean;
   terminalTheme: TerminalColorPalette;
+  tabBarPortalTarget?: HTMLDivElement | null;
   onSendTerminalBytes: (bytes: number[], terminalId?: string) => Promise<void> | void;
   onSendTerminalData: (data: string, terminalId?: string) => Promise<void> | void;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
@@ -113,6 +118,7 @@ const shortcutParts = (shortcut: string) =>
     .split("+")
     .map((part) => part.trim())
     .filter(Boolean);
+const maximumCommandHistoryEntries = 200;
 
 export function TerminalWorkspace({
   activeTabId,
@@ -131,6 +137,7 @@ export function TerminalWorkspace({
   terminalRightClickBehavior = "context-menu",
   suppressInsecureWarning = false,
   terminalTheme,
+  tabBarPortalTarget,
   onCloseSessionTab,
   onDetachSessionTab,
   onOpenFileTransferTab,
@@ -158,7 +165,12 @@ export function TerminalWorkspace({
   const [splitDragOverPane, setSplitDragOverPane] = useState<"left" | "right" | null>(null);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [sftpPanelRatio, setSftpPanelRatio] = useState(0.22);
-  const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("left");
+  const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("right");
+  const [sshCommandPanelVisible, setSshCommandPanelVisible] = useState(true);
+  const [sshSftpPanelVisible, setSshSftpPanelVisible] = useState(true);
+  const [sshStatusPanelVisible, setSshStatusPanelVisible] = useState(true);
+  const [commandHistoryByTab, setCommandHistoryByTab] = useState<Record<string, string[]>>({});
+  const savedSshCommands = useSavedSshCommands();
   const tabBarRef = useRef<HTMLDivElement>(null);
   const splitLayoutRef = useRef<HTMLDivElement>(null);
   const sftpLayoutRef = useRef<HTMLDivElement>(null);
@@ -173,6 +185,24 @@ export function TerminalWorkspace({
   const resolvedActiveTabId = activeTabId ?? connection?.id ?? sessionTabs[0]?.connection.id ?? null;
   const activeTab = sessionTabs.find((tab) => getSessionTabId(tab) === resolvedActiveTabId);
   const activeCustomTabContent = activeTab ? customTabPanels?.[getSessionTabId(activeTab)] : null;
+  const recordCommand = useCallback((tabId: string, value: string) => {
+    const command = value.trim();
+    if (!command) {
+      return;
+    }
+
+    setCommandHistoryByTab((current) => {
+      const history = current[tabId] ?? [];
+      if (history[0] === command) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [tabId]: [command, ...history].slice(0, maximumCommandHistoryEntries),
+      };
+    });
+  }, []);
   const profilesById = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile])),
     [profiles],
@@ -230,6 +260,7 @@ export function TerminalWorkspace({
   const workspaceClassName = [
     "terminal-workspace",
     !hasSessionTabs ? "home-empty" : "",
+    hasSessionTabs && tabBarPortalTarget && !isFullscreen ? "tabs-in-titlebar" : "",
     isTerminalSplitActive ? "split-active" : "",
     isFullscreen ? "fullscreen" : "",
     reattachHintActive ? "reattach-hint-active" : "",
@@ -496,6 +527,11 @@ export function TerminalWorkspace({
         terminalTheme={terminalTheme}
         terminalSnapshot={tab.terminalSnapshot}
         onCloseDisconnected={() => onCloseSessionTab(getSessionTabId(tab))}
+        onCommandSubmitted={
+          tab.connection.transport?.kind === "ssh"
+            ? (command) => recordCommand(getSessionTabId(tab), command)
+            : undefined
+        }
         onReconnectDisconnected={() => onReconnectSessionTab(getSessionTabId(tab))}
         onResizeTerminal={onResizeTerminal}
         onSendData={onSendTerminalData}
@@ -509,7 +545,40 @@ export function TerminalWorkspace({
   ) => {
     // Vim/tmux 等全屏程序依赖连续解析控制序列；隐藏标签页也必须保持 xterm 状态同步。
     const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible);
-    const showSftpPanel = Boolean(sftpSidePanel && isActivePane && !isTerminalSplitActive);
+    const tabId = getSessionTabId(tab);
+    const isSshTerminal = tab.connection.transport?.kind === "ssh";
+    const sftpPanelAvailable = Boolean(sftpSidePanel && isActivePane && !isTerminalSplitActive);
+    const showSftpPanel = sftpPanelAvailable && sshSftpPanelVisible;
+    const primaryContent = isSshTerminal ? (
+      <SshTerminalWorkspace
+        commandHistory={commandHistoryByTab[tabId] ?? []}
+        commandPanelVisible={sshCommandPanelVisible}
+        compact={isTerminalSplitActive}
+        connectionId={tab.connection.id}
+        isActive={isActivePane}
+        profileId={tab.connection.profileId}
+        savedCommands={savedSshCommands.commands}
+        sftpPanelAvailable={sftpPanelAvailable}
+        sftpPanelVisible={sshSftpPanelVisible}
+        statusPanelVisible={sshStatusPanelVisible}
+        terminalReady={Boolean(tab.connection.transport?.authenticated && tab.terminal?.status === "attached")}
+        onAddSavedCommand={savedSshCommands.addCommand}
+        onRemoveSavedCommand={savedSshCommands.removeCommand}
+        onRunCommand={(command) => {
+          if (!tab.terminal || tab.terminal.status === "closed") {
+            return;
+          }
+          recordCommand(tabId, command);
+          void onSendTerminalData(`${command}\r`, tab.terminal.id);
+        }}
+        onToggleCommandPanel={() => setSshCommandPanelVisible((current) => !current)}
+        onToggleSftpPanel={() => setSshSftpPanelVisible((current) => !current)}
+        onToggleStatusPanel={() => setSshStatusPanelVisible((current) => !current)}
+        onUpdateSavedCommand={savedSshCommands.updateCommand}
+      >
+        {terminalPane}
+      </SshTerminalWorkspace>
+    ) : terminalPane;
 
     const panelWidth = Math.round(sftpPanelRatio * 100);
     const terminalWidth = Math.round((1 - sftpPanelRatio) * 100);
@@ -557,7 +626,7 @@ export function TerminalWorkspace({
             gridRow: "1",
           }}
         >
-          {terminalPane}
+          {primaryContent}
         </div>
         {resizer}
         {resolvedSftpPanel}
@@ -684,6 +753,10 @@ export function TerminalWorkspace({
 
   useEffect(() => {
     const currentTabIds = new Set(sessionTabs.map(getSessionTabId));
+    setCommandHistoryByTab((current) => {
+      const entries = Object.entries(current).filter(([tabId]) => currentTabIds.has(tabId));
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries);
+    });
     for (const tabId of autoClosedLocalShellTabIdsRef.current) {
       if (!currentTabIds.has(tabId)) {
         autoClosedLocalShellTabIdsRef.current.delete(tabId);
@@ -841,9 +914,7 @@ export function TerminalWorkspace({
       </div>
     );
   };
-  return (
-    <section className={workspaceClassName}>
-      {hasSessionTabs ? (
+  const tabBar = hasSessionTabs ? (
         <div
           className={["tab-bar", isTerminalSplitActive ? "split-tab-bar" : ""]
             .filter(Boolean)
@@ -900,29 +971,35 @@ export function TerminalWorkspace({
               {sessionTabs.map(renderSessionTab)}
             </nav>
           )}
-          {tabContextMenu ? (
-            (() => {
-              const menuTab = sessionTabs.find(
-                (tab) => getSessionTabId(tab) === tabContextMenu.tabId,
-              );
-
-              return menuTab ? (
-                <TabContextMenu
-                  position={{ x: tabContextMenu.x, y: tabContextMenu.y }}
-                  tab={menuTab}
-                  tabId={tabContextMenu.tabId}
-                  canSplitRight={!isCustomTab(menuTab) && sessionTabs.length > 1}
-                  onClose={() => setTabContextMenu(null)}
-                  onCloseTab={onCloseSessionTab}
-                  onOpenFileTransfer={onOpenFileTransferTab}
-                  onOpenWindow={onOpenSessionWindow}
-                  onReconnect={onReconnectSessionTab}
-                  onSplitRight={splitTabToRight}
-                />
-              ) : null;
-            })()
-          ) : null}
         </div>
+      ) : null;
+
+  return (
+    <section className={workspaceClassName}>
+      {tabBarPortalTarget && !isFullscreen && tabBar
+        ? createPortal(tabBar, tabBarPortalTarget)
+        : tabBar}
+      {tabContextMenu ? (
+        (() => {
+          const menuTab = sessionTabs.find(
+            (tab) => getSessionTabId(tab) === tabContextMenu.tabId,
+          );
+
+          return menuTab ? (
+            <TabContextMenu
+              position={{ x: tabContextMenu.x, y: tabContextMenu.y }}
+              tab={menuTab}
+              tabId={tabContextMenu.tabId}
+              canSplitRight={!isCustomTab(menuTab) && sessionTabs.length > 1}
+              onClose={() => setTabContextMenu(null)}
+              onCloseTab={onCloseSessionTab}
+              onOpenFileTransfer={onOpenFileTransferTab}
+              onOpenWindow={onOpenSessionWindow}
+              onReconnect={onReconnectSessionTab}
+              onSplitRight={splitTabToRight}
+            />
+          ) : null;
+        })()
       ) : null}
 
       {hasSessionTabs ? (

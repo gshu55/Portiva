@@ -26,6 +26,7 @@ interface TerminalPaneProps {
   terminalTheme: TerminalColorPalette;
   terminalSnapshot: TerminalSnapshot | null;
   onCloseDisconnected?: () => void;
+  onCommandSubmitted?: (command: string) => void;
   onReconnectDisconnected?: () => void;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
   onSendData: (data: string, terminalId: string) => Promise<void> | void;
@@ -162,12 +163,57 @@ function countSearchMatches(
   return count;
 }
 
+function isSensitiveTerminalPrompt(instance: Terminal) {
+  const buffer = instance.buffer.active;
+  const line = buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true).trim() ?? "";
+  return /(?:password|passphrase|authentication\s+token|one[- ]time\s+(?:code|password)|otp|密码|口令|验证码)\s*(?:for\s+\S+)?\s*[:：]?\s*$/i.test(line);
+}
+
+function captureSubmittedCommands(data: string, currentDraft: string) {
+  const commands: string[] = [];
+  let draft = currentDraft;
+  let previous = "";
+  const normalized = data
+    .replace(/\x1b\[200~/g, "")
+    .replace(/\x1b\[201~/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1bO./g, "");
+
+  for (const character of normalized) {
+    if (character === "\n" && previous === "\r") {
+      previous = character;
+      continue;
+    }
+
+    if (character === "\r" || character === "\n") {
+      const command = draft.trim();
+      if (command) {
+        commands.push(command);
+      }
+      draft = "";
+    } else if (character === "\x7f" || character === "\b") {
+      draft = Array.from(draft).slice(0, -1).join("");
+    } else if (character === "\x03" || character === "\x15") {
+      draft = "";
+    } else if (character === "\x17") {
+      draft = draft.replace(/\S+\s*$/, "");
+    } else if (character >= " ") {
+      draft += character;
+    }
+
+    previous = character;
+  }
+
+  return { commands, draft };
+}
+
 export function TerminalPane({
   autoScroll = true,
   clearRevision = 0,
   isActive = true,
   onResizeTerminal,
   onCloseDisconnected,
+  onCommandSubmitted,
   onReconnectDisconnected,
   onSendData,
   reportSizeWhenVisible = false,
@@ -179,6 +225,8 @@ export function TerminalPane({
   terminalSnapshot,
 }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const commandDraftRef = useRef("");
+  const commandSubmittedRef = useRef(onCommandSubmitted);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
@@ -243,6 +291,10 @@ export function TerminalPane({
   useEffect(() => {
     sendDataRef.current = onSendData;
   }, [onSendData]);
+
+  useEffect(() => {
+    commandSubmittedRef.current = onCommandSubmitted;
+  }, [onCommandSubmitted]);
 
   useEffect(() => {
     terminalStatusRef.current = terminalStatus;
@@ -489,6 +541,8 @@ export function TerminalPane({
   useEffect(() => {
     const container = containerRef.current;
 
+    commandDraftRef.current = "";
+
     if (!terminal || !container) {
       xtermRef.current?.dispose();
       xtermRef.current = null;
@@ -553,6 +607,13 @@ export function TerminalPane({
         return;
       }
 
+      if (isSensitiveTerminalPrompt(instance)) {
+        commandDraftRef.current = "";
+      } else {
+        const capture = captureSubmittedCommands(data, commandDraftRef.current);
+        commandDraftRef.current = capture.draft;
+        capture.commands.forEach((command) => commandSubmittedRef.current?.(command));
+      }
       void enqueueInput(data, terminal.id);
     });
     xtermRef.current = instance;

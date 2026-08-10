@@ -36,6 +36,10 @@ pub struct SshHostOverview {
     pub cpu_count: Option<u32>,
     pub memory_used_bytes: Option<u64>,
     pub memory_total_bytes: Option<u64>,
+    pub disk_used_bytes: Option<u64>,
+    pub disk_total_bytes: Option<u64>,
+    pub network_received_bytes: Option<u64>,
+    pub network_transmitted_bytes: Option<u64>,
     pub uptime_seconds: Option<u64>,
     pub latency_ms: u64,
 }

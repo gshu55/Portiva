@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type Ref } from "react";
 import { Icon, type IconName } from "../shared/Icon";
-import { PortivaLogo } from "../shared/PortivaLogo";
 
 type WindowAction = "close" | "drag" | "minimize" | "toggle-maximize";
 type WindowControlPlatform = "linux" | "macos" | "windows";
@@ -17,6 +16,7 @@ interface AppTitlebarProps {
   onOpenSerialTerminal: () => void;
   onOpenSavedConnections: () => void;
   onOpenSettings: () => void;
+  tabSlotRef: Ref<HTMLDivElement>;
 }
 
 async function runWindowAction(action: WindowAction) {
@@ -63,7 +63,14 @@ function detectWindowControlPlatform(): WindowControlPlatform {
 }
 
 function isTitlebarInteractiveTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement && Boolean(target.closest("button, a, input, select, textarea"));
+  return (
+    target instanceof HTMLElement &&
+    Boolean(
+      target.closest(
+        ".tab, button, a, input, select, textarea, [contenteditable='true'], [draggable='true']",
+      ),
+    )
+  );
 }
 
 export function AppTitlebar({
@@ -78,6 +85,7 @@ export function AppTitlebar({
   onOpenSerialTerminal,
   onOpenSavedConnections,
   onOpenSettings,
+  tabSlotRef,
 }: AppTitlebarProps) {
   const [isMaximized, setIsMaximized] = useState(false);
   const suppressNextDoubleClickRef = useRef(false);
@@ -138,15 +146,8 @@ export function AppTitlebar({
       onDoubleClick={toggleTitlebarMaximize}
       onMouseDown={startTitlebarDrag}
     >
-      {isMacWindow ? (
-        <div className="native-window-spacer" aria-hidden="true" />
-      ) : (
-        <div className="app-titlebar-brand">
-          <PortivaLogo className="app-titlebar-logo" />
-          <strong>Portiva</strong>
-        </div>
-      )}
-      <div className="app-titlebar-drag-region" />
+      {isMacWindow ? <div className="native-window-spacer" aria-hidden="true" /> : null}
+      <div className="app-titlebar-tab-slot" ref={tabSlotRef} />
       <nav className="app-titlebar-actions" aria-label="主页工具栏">
         <button
           type="button"

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { profileTarget } from "../../shared/profile";
 import { protocolLabel } from "../../shared/labels";
 import { Icon, type IconName } from "../../shared/Icon";
+import { formatBytes, formatUptime } from "../../shared/format";
 import type {
   ConnectionProfile,
   SshHostOverview,
@@ -382,7 +383,7 @@ export function ConnectionList({
             <div className="saved-connections-empty">
               <Icon name="server" />
               <strong>还没有保存的连接</strong>
-              <span>创建 SSH 连接后，这里会自动采集 CPU、内存和运行时长。</span>
+              <span>创建 SSH 连接后，这里会自动采集 CPU、内存、磁盘、网络和运行时长。</span>
               <button onClick={onCreateProfile} type="button"><Icon name="plus" />新建连接</button>
             </div>
           )}
@@ -478,31 +479,6 @@ function Metric({
       <small>{detail}</small>
     </div>
   );
-}
-
-function formatBytes(value: number) {
-  const gibibyte = 1024 ** 3;
-  if (value >= gibibyte) {
-    return `${(value / gibibyte).toFixed(value >= 10 * gibibyte ? 0 : 1)} GB`;
-  }
-  return `${Math.round(value / 1024 ** 2)} MB`;
-}
-
-function formatUptime(value: number | null) {
-  if (value === null) {
-    return "—";
-  }
-  const days = Math.floor(value / 86_400);
-  const hours = Math.floor((value % 86_400) / 3_600);
-  const minutes = Math.floor((value % 3_600) / 60);
-
-  if (days > 0) {
-    return `${days}天 ${hours}时`;
-  }
-  if (hours > 0) {
-    return `${hours}时 ${minutes}分`;
-  }
-  return `${minutes}分钟`;
 }
 
 function refreshedAtLabel(value: number | null) {

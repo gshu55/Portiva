@@ -104,6 +104,10 @@ memory_available_kb=""
 memory_free_kb=""
 memory_buffers_kb=""
 memory_cached_kb=""
+disk_total_kb=""
+disk_used_kb=""
+network_received_bytes=""
+network_transmitted_bytes=""
 uptime_seconds=""
 
 if [ -r /proc/loadavg ]; then
@@ -137,6 +141,20 @@ if [ -r /proc/uptime ]; then
   uptime_seconds=${uptime_seconds%%.*}
 fi
 
+if command -v df >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then
+  disk_values=$(df -Pk / 2>/dev/null | awk 'END {print $2 " " $3}')
+  set -- $disk_values
+  disk_total_kb=${1:-}
+  disk_used_kb=${2:-}
+fi
+
+if [ -r /proc/net/dev ] && command -v awk >/dev/null 2>&1; then
+  network_values=$(awk -F '[: ]+' '$2 != "lo" && NF >= 11 {received += $3; transmitted += $11} END {printf "%.0f %.0f", received, transmitted}' /proc/net/dev)
+  set -- $network_values
+  network_received_bytes=${1:-}
+  network_transmitted_bytes=${2:-}
+fi
+
 if [ -r /etc/os-release ]; then
   . /etc/os-release
   operating_system=${PRETTY_NAME:-${NAME:-Linux}}
@@ -154,6 +172,10 @@ printf 'cpuLoad1\t%s\n' "$load_1"
 printf 'cpuCount\t%s\n' "$cpu_count"
 printf 'memoryTotalKb\t%s\n' "$memory_total_kb"
 printf 'memoryAvailableKb\t%s\n' "$memory_available_kb"
+printf 'diskTotalKb\t%s\n' "$disk_total_kb"
+printf 'diskUsedKb\t%s\n' "$disk_used_kb"
+printf 'networkReceivedBytes\t%s\n' "$network_received_bytes"
+printf 'networkTransmittedBytes\t%s\n' "$network_transmitted_bytes"
 printf 'uptimeSeconds\t%s\n' "$uptime_seconds"
 "#;
 
@@ -1118,6 +1140,10 @@ fn parse_host_overview(output: &str, elapsed: Duration) -> Result<SshHostOvervie
     let cpu_load_1 = parse_optional_number::<f64>(&values, "cpuLoad1")
         .filter(|value| value.is_finite() && *value >= 0.0);
     let cpu_count = parse_optional_number::<u32>(&values, "cpuCount").filter(|value| *value > 0);
+    let disk_total_bytes = parse_optional_number::<u64>(&values, "diskTotalKb")
+        .map(|value| value.saturating_mul(1024));
+    let disk_used_bytes =
+        parse_optional_number::<u64>(&values, "diskUsedKb").map(|value| value.saturating_mul(1024));
 
     Ok(SshHostOverview {
         hostname: value_or_fallback(&values, "hostname", "未知主机"),
@@ -1127,6 +1153,10 @@ fn parse_host_overview(output: &str, elapsed: Duration) -> Result<SshHostOvervie
         cpu_count,
         memory_used_bytes,
         memory_total_bytes,
+        disk_used_bytes,
+        disk_total_bytes,
+        network_received_bytes: parse_optional_number::<u64>(&values, "networkReceivedBytes"),
+        network_transmitted_bytes: parse_optional_number::<u64>(&values, "networkTransmittedBytes"),
         uptime_seconds: parse_optional_number::<u64>(&values, "uptimeSeconds"),
         latency_ms: elapsed.as_millis().clamp(1, u64::MAX as u128) as u64,
     })
@@ -2013,7 +2043,7 @@ mod tests {
     #[test]
     fn parses_linux_host_overview_output() {
         let overview = parse_host_overview(
-            "portivaOverviewVersion\t1\nhostname\tworker-01\noperatingSystem\tUbuntu 24.04.4 LTS\nkernelVersion\t6.8.0-63-generic\ncpuLoad1\t1.30\ncpuCount\t4\nmemoryTotalKb\t16384000\nmemoryAvailableKb\t8355840\nuptimeSeconds\t421200\n",
+            "portivaOverviewVersion\t1\nhostname\tworker-01\noperatingSystem\tUbuntu 24.04.4 LTS\nkernelVersion\t6.8.0-63-generic\ncpuLoad1\t1.30\ncpuCount\t4\nmemoryTotalKb\t16384000\nmemoryAvailableKb\t8355840\ndiskTotalKb\t52428800\ndiskUsedKb\t20971520\nnetworkReceivedBytes\t123456789\nnetworkTransmittedBytes\t4567890\nuptimeSeconds\t421200\n",
             Duration::from_millis(62),
         )
         .unwrap();
@@ -2023,6 +2053,10 @@ mod tests {
         assert_eq!(overview.cpu_count, Some(4));
         assert_eq!(overview.memory_total_bytes, Some(16_777_216_000));
         assert_eq!(overview.memory_used_bytes, Some(8_220_835_840));
+        assert_eq!(overview.disk_total_bytes, Some(53_687_091_200));
+        assert_eq!(overview.disk_used_bytes, Some(21_474_836_480));
+        assert_eq!(overview.network_received_bytes, Some(123_456_789));
+        assert_eq!(overview.network_transmitted_bytes, Some(4_567_890));
         assert_eq!(overview.uptime_seconds, Some(421_200));
         assert_eq!(overview.latency_ms, 62);
     }

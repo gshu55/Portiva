@@ -149,6 +149,10 @@ export interface SshHostOverview {
   cpuCount: number | null;
   memoryUsedBytes: number | null;
   memoryTotalBytes: number | null;
+  diskUsedBytes: number | null;
+  diskTotalBytes: number | null;
+  networkReceivedBytes: number | null;
+  networkTransmittedBytes: number | null;
   uptimeSeconds: number | null;
   latencyMs: number;
 }

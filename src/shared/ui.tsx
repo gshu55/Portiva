@@ -384,7 +384,7 @@ export function ConfirmDialog({
 }
 
 export interface CardProps extends HTMLAttributes<HTMLElement> {
-  as?: "article" | "aside" | "div" | "section";
+  as?: "article" | "aside" | "div" | "footer" | "section";
   footer?: ReactNode;
   header?: ReactNode;
   tone?: "default" | "solid";
