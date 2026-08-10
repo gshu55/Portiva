@@ -73,6 +73,7 @@ const isFileTransferTab = (tab: WorkspaceSessionTab | null | undefined) =>
 const isCustomTab = (tab: WorkspaceSessionTab | null | undefined) =>
   (tab?.kind ?? "terminal") === "settings" ||
   (tab?.kind ?? "terminal") === "http-console" ||
+  (tab?.kind ?? "terminal") === "network-scan" ||
   (tab?.kind ?? "terminal") === "host-dashboard";
 const homeShortcutHints: Array<{
   fallback: string;
@@ -248,6 +249,7 @@ export function TerminalWorkspace({
         : "terminal-body-app-content",
     hasVisibleSshTerminal ? "terminal-body-ssh-content" : "",
     activeTab?.kind === "http-console" ? "terminal-body-http-content" : "",
+    activeTab?.kind === "network-scan" ? "terminal-body-network-scan-content" : "",
   ]
     .filter(Boolean)
     .join(" ");

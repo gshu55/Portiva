@@ -4,6 +4,7 @@ pub mod error;
 pub mod file_transfer;
 pub mod http_workspace;
 pub mod logging;
+pub mod network_scan;
 pub mod profile;
 pub mod secret;
 pub mod serial;

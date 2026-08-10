@@ -15,7 +15,7 @@
         "title": "Portiva",
         "width": 1280,
         "height": 800,
-        "minWidth": 560,
+        "minWidth": 900,
         "minHeight": 640,
         "decorations": false,
         "shadow": true

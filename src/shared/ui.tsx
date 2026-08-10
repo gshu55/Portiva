@@ -500,7 +500,10 @@ export function VirtualList<T>({
   const [viewportHeight, setViewportHeight] = useState(0);
   const totalHeight = items.length * estimateHeight;
   const overscan = estimateHeight * 6;
-  const startIndex = Math.max(0, Math.floor(Math.max(0, scrollTop - overscan) / estimateHeight));
+  const requestedStartIndex = Math.max(0, Math.floor(Math.max(0, scrollTop - overscan) / estimateHeight));
+  const visibleCapacity = Math.max(1, Math.ceil((viewportHeight + overscan) / estimateHeight));
+  const maximumStartIndex = Math.max(0, items.length - visibleCapacity);
+  const startIndex = Math.min(requestedStartIndex, maximumStartIndex);
   const endIndex = Math.min(items.length, Math.ceil((scrollTop + viewportHeight + overscan) / estimateHeight));
   const visibleItems = useMemo(() => items.slice(startIndex, endIndex), [endIndex, items, startIndex]);
 
@@ -519,8 +522,29 @@ export function VirtualList<T>({
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    const maximumScrollTop = Math.max(0, totalHeight - viewport.clientHeight);
+    if (viewport.scrollTop > maximumScrollTop) {
+      viewport.scrollTop = maximumScrollTop;
+      setScrollTop(maximumScrollTop);
+    }
+  }, [totalHeight]);
+
   if (!items.length) {
-    return <div className={cx("ui-virtual-list", "ui-virtual-list-empty", className)}>{empty}</div>;
+    return (
+      <div
+        className={cx("ui-virtual-list", "ui-virtual-list-empty", className)}
+        ref={viewportRef}
+        {...props}
+      >
+        {empty}
+      </div>
+    );
   }
 
   return (

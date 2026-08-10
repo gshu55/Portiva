@@ -35,3 +35,14 @@ serial2 = "0.2.37"
 arboard = "3.6.1"
 encoding_rs = "0.8"
 keyring = "4.1.5"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+] }

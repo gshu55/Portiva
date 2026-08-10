@@ -31,7 +31,7 @@ export function TabContextMenu({
   tabId,
 }: TabContextMenuProps) {
   const isFileTransferTab = (tab.kind ?? "terminal") === "file-transfer";
-  const isCustomPageTab = ["settings", "http-console", "host-dashboard"].includes(tab.kind ?? "terminal");
+  const isCustomPageTab = ["settings", "http-console", "host-dashboard", "network-scan"].includes(tab.kind ?? "terminal");
   const status = isCustomPageTab
     ? "页面"
     : isFileTransferTab

@@ -19,6 +19,9 @@ import type {
   TunnelRule,
   SerialPortInfo,
   SshHostOverview,
+  NetworkInterfaceInfo,
+  NetworkScanRequest,
+  NetworkScanSession,
 } from "../types";
 
 export const commandNames = {
@@ -102,6 +105,9 @@ export const commandNames = {
   httpCancel: "http_cancel",
   httpWorkspacesGet: "http_workspaces_get",
   httpWorkspacesSave: "http_workspaces_save",
+  networkScanInterfaces: "network_scan_interfaces",
+  networkScanStart: "network_scan_start",
+  networkScanCancel: "network_scan_cancel",
 } as const;
 
 export interface ProfileSaveResult {
@@ -511,4 +517,16 @@ export function httpWorkspacesGet<T>() {
 
 export function httpWorkspacesSave<T>(workspaces: T[]) {
   return invoke<T[]>(commandNames.httpWorkspacesSave, { workspaces });
+}
+
+export function networkScanInterfaces() {
+  return invoke<NetworkInterfaceInfo[]>(commandNames.networkScanInterfaces);
+}
+
+export function networkScanStart(request: NetworkScanRequest) {
+  return invoke<NetworkScanSession>(commandNames.networkScanStart, { request });
+}
+
+export function networkScanCancel(scanId: string) {
+  return invoke<boolean>(commandNames.networkScanCancel, { scanId });
 }

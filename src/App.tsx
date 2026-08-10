@@ -30,15 +30,19 @@ const detachedReattachDragStartEvent = "portiva://detached-reattach-drag-start";
 const detachedReattachDragEndEvent = "portiva://detached-reattach-drag-end";
 const detachedWindowLabelPrefix = "portiva-tab-";
 const legacyDetachedTerminalWindowLabelPrefix = "portiva-terminal-";
-const mainWindowMinWidth = 560;
+const mainWindowMinWidth = 900;
 const mainWindowMinHeight = 640;
-const detachedWindowMinWidth = 480;
-const detachedWindowMinHeight = 480;
+const detachedWindowMinWidth = 900;
+const detachedWindowMinHeight = 640;
 const settingsTabId = "portiva-settings";
 const httpConsoleTabId = "portiva-http-console";
+const networkScannerTabId = "portiva-network-scanner";
 const hostDashboardTabId = "portiva-host-dashboard";
 const HttpConsolePanel = lazy(() =>
   import("./features/http/HttpConsolePanel").then((module) => ({ default: module.HttpConsolePanel })),
+);
+const NetworkScannerPanel = lazy(() =>
+  import("./features/network-scan/NetworkScannerPanel").then((module) => ({ default: module.NetworkScannerPanel })),
 );
 const inactiveCapabilities: ConnectionCapabilities = {
   fileTransfer: false,
@@ -75,6 +79,19 @@ const httpConsoleSessionTab: WorkspaceSessionTab = {
     profileId: httpConsoleTabId,
     status: "ready",
     title: "HTTP Console",
+  },
+  terminal: null,
+  terminalSnapshot: null,
+};
+const networkScannerSessionTab: WorkspaceSessionTab = {
+  id: networkScannerTabId,
+  kind: "network-scan",
+  connection: {
+    capabilities: inactiveCapabilities,
+    id: networkScannerTabId,
+    profileId: networkScannerTabId,
+    status: "ready",
+    title: "局域网扫描",
   },
   terminal: null,
   terminalSnapshot: null,
@@ -185,6 +202,7 @@ function App() {
   const [reconnectTabId, setReconnectTabId] = useState<string | null>(null);
   const [settingsTabOpen, setSettingsTabOpen] = useState(false);
   const [httpConsoleOpen, setHttpConsoleOpen] = useState(false);
+  const [networkScannerOpen, setNetworkScannerOpen] = useState(false);
   const [appTabOrder, setAppTabOrder] = useState<string[]>([]);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
@@ -219,6 +237,18 @@ function App() {
   const [detachedReattachHint, setDetachedReattachHint] = useState(false);
   const openCreateProfileDialog = useCallback(() => {
     setProfileDialog({ mode: "create", profile: workspace.createProfileDraft("ssh") });
+  }, [workspace]);
+  const openDiscoveredProfileDialog = useCallback((host: string, port: number) => {
+    const profileType = port === 23 ? "telnet" : port === 22 ? "ssh" : "raw-tcp";
+    const draft = workspace.createProfileDraft(profileType);
+    if (draft.type === "serial") {
+      return;
+    }
+    const name = port === 22 || port === 23 ? host : `${host}:${port}`;
+    setProfileDialog({
+      mode: "create",
+      profile: { ...draft, host, name, port } as ConnectionProfile,
+    });
   }, [workspace]);
   const openLocalTerminalTab = useCallback(() => {
     setActiveShellTabId(null);
@@ -985,6 +1015,10 @@ function App() {
     setHttpConsoleOpen(false);
     setActiveShellTabId((current) => (current === httpConsoleTabId ? null : current));
   };
+  const closeNetworkScannerTab = () => {
+    setNetworkScannerOpen(false);
+    setActiveShellTabId((current) => (current === networkScannerTabId ? null : current));
+  };
   const openSettingsTab = () => {
     setSettingsTabOpen(true);
     setActiveShellTabId(settingsTabId);
@@ -993,14 +1027,19 @@ function App() {
     setHttpConsoleOpen(true);
     setActiveShellTabId(httpConsoleTabId);
   };
+  const openNetworkScannerTab = () => {
+    setNetworkScannerOpen(true);
+    setActiveShellTabId(networkScannerTabId);
+  };
   const appTabSourceIds = useMemo(
     () => [
       ...workspace.sessionTabs.map(getAppSessionTabId),
       ...(savedConnectionsOpen ? [hostDashboardTabId] : []),
       ...(httpConsoleOpen ? [httpConsoleTabId] : []),
+      ...(networkScannerOpen ? [networkScannerTabId] : []),
       ...(settingsTabOpen ? [settingsTabId] : []),
     ],
-    [httpConsoleOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs],
+    [httpConsoleOpen, networkScannerOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs],
   );
 
   useEffect(() => {
@@ -1025,6 +1064,10 @@ function App() {
       tabById.set(httpConsoleTabId, httpConsoleSessionTab);
     }
 
+    if (networkScannerOpen) {
+      tabById.set(networkScannerTabId, networkScannerSessionTab);
+    }
+
     if (settingsTabOpen) {
       tabById.set(settingsTabId, settingsSessionTab);
     }
@@ -1032,7 +1075,7 @@ function App() {
     return appendMissingTabIds(appTabOrder, appTabSourceIds)
       .map((tabId) => tabById.get(tabId))
       .filter((tab): tab is WorkspaceSessionTab => Boolean(tab));
-  }, [appTabOrder, appTabSourceIds, httpConsoleOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs]);
+  }, [appTabOrder, appTabSourceIds, httpConsoleOpen, networkScannerOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs]);
   const activeToolTabId =
     activeShellTabId === hostDashboardTabId && savedConnectionsOpen
       ? hostDashboardTabId
@@ -1040,20 +1083,25 @@ function App() {
         ? settingsTabId
         : activeShellTabId === httpConsoleTabId && httpConsoleOpen
           ? httpConsoleTabId
-          : null;
+          : activeShellTabId === networkScannerTabId && networkScannerOpen
+            ? networkScannerTabId
+            : null;
   const fallbackAppTabId = !workspace.activeSessionTabId
     ? savedConnectionsOpen
       ? hostDashboardTabId
       : httpConsoleOpen
         ? httpConsoleTabId
-        : settingsTabOpen
-          ? settingsTabId
-          : undefined
+        : networkScannerOpen
+          ? networkScannerTabId
+          : settingsTabOpen
+            ? settingsTabId
+            : undefined
     : workspace.activeSessionTabId;
   const activeAppTabId = activeToolTabId ?? fallbackAppTabId;
   const hostDashboardActive = activeAppTabId === hostDashboardTabId;
   const settingsTabActive = activeAppTabId === settingsTabId;
   const httpConsoleActive = activeAppTabId === httpConsoleTabId;
+  const networkScannerActive = activeAppTabId === networkScannerTabId;
   const selectAppSessionTab = (tabId: string) => {
     if (tabId === hostDashboardTabId) {
       setSavedConnectionsOpen(true);
@@ -1068,6 +1116,11 @@ function App() {
     if (tabId === httpConsoleTabId) {
       setHttpConsoleOpen(true);
       setActiveShellTabId(httpConsoleTabId);
+      return;
+    }
+    if (tabId === networkScannerTabId) {
+      setNetworkScannerOpen(true);
+      setActiveShellTabId(networkScannerTabId);
       return;
     }
 
@@ -1087,18 +1140,22 @@ function App() {
       closeHttpConsoleTab();
       return;
     }
+    if (tabId === networkScannerTabId) {
+      closeNetworkScannerTab();
+      return;
+    }
 
     void workspace.closeConnection(tabId);
   };
   const openAppSessionWindow = (tabId: string) => {
-    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId) {
+    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId || tabId === networkScannerTabId) {
       return;
     }
 
     openSessionWindow(tabId);
   };
   const reconnectAppSessionTab = (tabId: string) => {
-    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId) {
+    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId || tabId === networkScannerTabId) {
       return;
     }
 
@@ -1110,6 +1167,8 @@ function App() {
       targetTabId === settingsTabId ||
       sourceTabId === httpConsoleTabId ||
       targetTabId === httpConsoleTabId ||
+      sourceTabId === networkScannerTabId ||
+      targetTabId === networkScannerTabId ||
       sourceTabId === hostDashboardTabId ||
       targetTabId === hostDashboardTabId
     ) {
@@ -1296,10 +1355,12 @@ function App() {
     >
       <AppTitlebar
         httpConsoleActive={httpConsoleActive}
+        networkScannerActive={networkScannerActive}
         savedConnectionsOpen={hostDashboardActive}
         settingsTabActive={settingsTabActive}
         onCreateProfile={openCreateProfileDialog}
         onOpenHttpConsole={openHttpConsoleTab}
+        onOpenNetworkScanner={openNetworkScannerTab}
         onOpenLocalShell={openLocalTerminalTab}
         onOpenSerialTerminal={openSerialTerminalTab}
         onOpenSavedConnections={openHostDashboardTab}
@@ -1309,8 +1370,8 @@ function App() {
         <div className="content-grid without-file-manager">
           <TerminalWorkspace
             activeTabId={activeAppTabId}
-            capabilities={hostDashboardActive || settingsTabActive || httpConsoleActive ? inactiveCapabilities : workspace.capabilities}
-            connection={hostDashboardActive || settingsTabActive || httpConsoleActive ? null : workspace.activeConnection}
+            capabilities={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive ? inactiveCapabilities : workspace.capabilities}
+            connection={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive ? null : workspace.activeConnection}
             customTabPanels={{
               [hostDashboardTabId]: (
                 <ConnectionList
@@ -1344,11 +1405,16 @@ function App() {
                   <HttpConsolePanel />
                 </Suspense>
               ),
+              [networkScannerTabId]: (
+                <Suspense fallback={null}>
+                  <NetworkScannerPanel onCreateProfile={openDiscoveredProfileDialog} />
+                </Suspense>
+              ),
               [settingsTabId]: <SettingsTabPanel workspace={workspace} />,
             }}
             emptyStateNotice={workspace.sessionNotice}
             fileTransferPanel={fileTransferPanel}
-            sftpSidePanel={hostDashboardActive || settingsTabActive || httpConsoleActive ? undefined : renderInlineSftpPanel}
+            sftpSidePanel={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive ? undefined : renderInlineSftpPanel}
             isFullscreen={terminalFullscreen}
             keymap={workspace.settings.keymap}
             reattachHintActive={detachedReattachHint}

@@ -40,6 +40,7 @@ pub fn run() {
         .manage(services::http_workspace_store::HttpWorkspaceStore::default())
         .manage(services::settings_store::SettingsStore::default())
         .manage(services::log_service::LogService::default())
+        .manage(services::network_scan_service::NetworkScanService::default())
         .manage(services::protocol_registry::ProtocolRegistry)
         .manage(services::tunnel_service::TunnelService::default())
         .manage(services::serial_service::SerialService::default())
@@ -124,6 +125,9 @@ pub fn run() {
             commands::logs::log_clear,
             commands::logs::log_list,
             commands::logs::log_record_placeholder,
+            commands::network_scan::network_scan_interfaces,
+            commands::network_scan::network_scan_start,
+            commands::network_scan::network_scan_cancel,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main"

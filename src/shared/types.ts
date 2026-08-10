@@ -290,13 +290,56 @@ export interface AppBackgroundSettings {
 
 export interface WorkspaceSessionTab {
   id?: string;
-  kind?: "terminal" | "file-transfer" | "settings" | "http-console" | "host-dashboard";
+  kind?: "terminal" | "file-transfer" | "settings" | "http-console" | "host-dashboard" | "network-scan";
   connection: ConnectionSummary;
   fileTransferSession?: FileTransferSession | null;
   parentConnectionId?: string;
   restored?: boolean;
   terminal: TerminalSession | null;
   terminalSnapshot: TerminalSnapshot | null;
+}
+
+export interface NetworkInterfaceInfo {
+  name: string;
+  address: string;
+  prefixLength: number;
+  cidr: string;
+  isLoopback: boolean;
+  isPrivate: boolean;
+}
+
+export interface NetworkScanRequest {
+  cidr: string;
+  pingEnabled: boolean;
+  tcpEnabled: boolean;
+  ports: number[];
+  timeoutMs: number;
+  concurrency: number;
+}
+
+export interface NetworkScanSession {
+  scanId: string;
+  total: number;
+  status: "running";
+}
+
+export interface NetworkScanResult {
+  ip: string;
+  reachable: boolean;
+  pingSucceeded: boolean;
+  latencyMs?: number;
+  openPorts: number[];
+  discoveryMethods: Array<"ping" | "tcp">;
+  error?: string;
+}
+
+export interface NetworkScanEvent {
+  scanId: string;
+  kind: "progress" | "completed" | "cancelled";
+  scanned: number;
+  total: number;
+  results: NetworkScanResult[];
+  message?: string;
 }
 
 export interface AppSettings {

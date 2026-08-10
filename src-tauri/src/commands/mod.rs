@@ -4,6 +4,7 @@ pub mod file_transfer;
 pub mod http;
 pub mod http_workspace;
 pub mod logs;
+pub mod network_scan;
 pub mod profiles;
 pub mod protocols;
 pub mod security;

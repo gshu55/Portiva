@@ -7,10 +7,12 @@ type WindowControlPlatform = "linux" | "macos" | "windows";
 
 interface AppTitlebarProps {
   httpConsoleActive: boolean;
+  networkScannerActive: boolean;
   savedConnectionsOpen: boolean;
   settingsTabActive: boolean;
   onCreateProfile: () => void;
   onOpenHttpConsole: () => void;
+  onOpenNetworkScanner: () => void;
   onOpenLocalShell: () => void;
   onOpenSerialTerminal: () => void;
   onOpenSavedConnections: () => void;
@@ -66,10 +68,12 @@ function isTitlebarInteractiveTarget(target: EventTarget | null) {
 
 export function AppTitlebar({
   httpConsoleActive,
+  networkScannerActive,
   savedConnectionsOpen,
   settingsTabActive,
   onCreateProfile,
   onOpenHttpConsole,
+  onOpenNetworkScanner,
   onOpenLocalShell,
   onOpenSerialTerminal,
   onOpenSavedConnections,
@@ -161,6 +165,15 @@ export function AppTitlebar({
         </button>
         <button type="button" title="串口终端" aria-label="串口终端" onClick={onOpenSerialTerminal}>
           <Icon name="plug" />
+        </button>
+        <button
+          type="button"
+          className={networkScannerActive ? "active" : ""}
+          title="局域网扫描"
+          aria-label="局域网扫描"
+          onClick={onOpenNetworkScanner}
+        >
+          <Icon name="activity" />
         </button>
         <button
           type="button"
