@@ -7,6 +7,8 @@ import {
   useState,
 } from "react";
 import { Icon } from "../../shared/Icon";
+import { TextInput } from "../../shared/ui";
+import { latestOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory";
 import {
   transferDirectionLabel,
   transferProgressPercent,
@@ -20,8 +22,10 @@ import { localDownloadDirectory, localFileList, localRevealItemInDirectory } fro
 import type { LocalFileListResult } from "../../shared/ipc/commands";
 import type { usePortivaWorkspace } from "../../app/usePortivaWorkspace";
 import { fileIconKind, remoteEntryIconName } from "./fileEntryIcons";
+import { isAdditiveDesktopSelection } from "./desktopSelection";
 import { localRootsPath } from "./FileTransferPanel";
 import { SftpDropOverlay } from "./SftpDropOverlay";
+import { SftpDeleteConfirmDialog } from "./SftpDeleteConfirmDialog";
 import { useSftpDropUpload } from "./useSftpDropUpload";
 
 interface SimpleSftpPanelProps {
@@ -36,7 +40,7 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
     x: number;
     y: number;
   } | null>(null);
-  const [deleteConfirmEntry, setDeleteConfirmEntry] = useState<RemoteEntry | null>(null);
+  const [deleteConfirmEntries, setDeleteConfirmEntries] = useState<RemoteEntry[]>([]);
   const [downloadEntries, setDownloadEntries] = useState<RemoteEntry[]>([]);
   const [editingRemotePath, setEditingRemotePath] = useState<string | null>(null);
   const [editingRemoteName, setEditingRemoteName] = useState("");
@@ -44,6 +48,7 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
     name: string;
     parentPath: string;
   } | null>(null);
+  const [remotePathInput, setRemotePathInput] = useState(workspace.remotePath);
   const [selectedRemotePaths, setSelectedRemotePaths] = useState<Set<string>>(new Set());
   const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
   const [transferPanelRatio, setTransferPanelRatio] = useState(0.34);
@@ -51,6 +56,7 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
   const panelRef = useRef<HTMLElement | null>(null);
   const remotePathRef = useRef(workspace.remotePath);
   const connectionId = workspace.activeConnection?.id ?? "";
+  const trackedTerminalPath = workspace.terminalWorkingDirectory?.trim() ?? "";
   const canUseRemote = Boolean(
     workspace.activeSessionTabKind === "terminal" &&
       workspace.activeConnection?.capabilities.fileTransfer &&
@@ -68,6 +74,14 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
         .slice()
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.updatedAt.localeCompare(a.updatedAt)),
     [connectionId, workspace.transfers],
+  );
+  const selectedRemoteEntries = useMemo(
+    () => workspace.remoteEntries.filter((entry) => selectedRemotePaths.has(entry.path)),
+    [selectedRemotePaths, workspace.remoteEntries],
+  );
+  const selectedTransferableEntries = useMemo(
+    () => selectedRemoteEntries.filter(isTransferableEntry),
+    [selectedRemoteEntries],
   );
 
   useEffect(() => {
@@ -119,6 +133,10 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
   }, [workspace.remoteEntries, workspace.remotePath]);
 
   useEffect(() => {
+    setRemotePathInput(workspace.remotePath);
+  }, [workspace.remotePath]);
+
+  useEffect(() => {
     if (!pendingCreatedDirectory) {
       return;
     }
@@ -150,13 +168,17 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
     return null;
   }
 
-  const openDownloadPicker = (entry: RemoteEntry) => {
-    const selectedEntries = workspace.remoteEntries.filter(
-      (item) => selectedRemotePaths.has(item.path) && isTransferableEntry(item),
-    );
-
+  const clearSelection = () => {
+    setSelectedRemotePaths(new Set());
+    setSelectionAnchorPath(null);
+    workspace.setSelectedRemoteEntry(null);
+  };
+  const openDownloadPicker = (entry?: RemoteEntry) => {
+    const entries = entry && !selectedRemotePaths.has(entry.path)
+      ? [entry]
+      : selectedTransferableEntries;
     setContextMenu(null);
-    setDownloadEntries(selectedRemotePaths.has(entry.path) && selectedEntries.length > 0 ? selectedEntries : [entry]);
+    setDownloadEntries(entries.filter(isTransferableEntry));
   };
   const copyRemoteText = async (text: string, label: string) => {
     setContextMenu(null);
@@ -168,18 +190,22 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
       workspace.reportWorkspaceMessage(`复制${label}失败：${String(error)}`);
     }
   };
-  const deleteRemoteEntry = (entry: RemoteEntry) => {
+  const deleteRemoteEntries = (entry?: RemoteEntry) => {
+    const entries = entry && !selectedRemotePaths.has(entry.path)
+      ? [entry]
+      : selectedRemoteEntries;
     setContextMenu(null);
-    setDeleteConfirmEntry(entry);
+    setDeleteConfirmEntries(entries);
   };
   const confirmDeleteRemoteEntry = async () => {
-    if (!deleteConfirmEntry) {
+    if (deleteConfirmEntries.length === 0) {
       return;
     }
 
-    const entry = deleteConfirmEntry;
-    setDeleteConfirmEntry(null);
-    await workspace.removeRemoteEntry(entry);
+    const entries = deleteConfirmEntries;
+    setDeleteConfirmEntries([]);
+    await workspace.removeRemoteEntries(entries);
+    clearSelection();
   };
   function startInlineRename(entry: RemoteEntry) {
     setContextMenu(null);
@@ -233,17 +259,40 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
     await workspace.renameRemoteEntry(entry, nextName);
   };
   const syncRemotePathFromTerminal = async () => {
-    const snapshot = await workspace.refreshTerminalSnapshot();
-    const terminalText = snapshot?.bufferPreview ?? workspace.terminalSnapshot?.bufferPreview ?? "";
-    const username = "username" in workspace.activeProfile ? workspace.activeProfile.username ?? "" : "";
-    const remotePath = inferRemotePathFromTerminalText(terminalText, username);
+    const trackedPath = trackedTerminalPath;
 
-    if (!remotePath) {
-      workspace.reportWorkspaceMessage("未能从终端输出中识别当前 SSH 目录。可以先在终端执行 pwd，再点击同步。");
+    if (trackedPath) {
+      setRemotePathInput(trackedPath);
+      const loaded = await workspace.refreshRemoteFiles(trackedPath);
+
+      if (loaded) {
+        workspace.reportWorkspaceMessage(`已通过终端目录跟踪同步到 ${trackedPath}。`);
+      }
       return;
     }
 
+    const snapshot = await workspace.refreshTerminalSnapshot();
+    const terminalText = snapshot?.bufferPreview ?? workspace.terminalSnapshot?.bufferPreview ?? "";
+    const username = "username" in workspace.activeProfile ? workspace.activeProfile.username ?? "" : "";
+    const remotePath = latestOsc7WorkingDirectory(terminalText) || inferRemotePathFromTerminalText(terminalText, username);
+
+    if (!remotePath) {
+      workspace.reportWorkspaceMessage("终端尚未报告当前目录。可以手动输入路径，或先在终端执行 pwd 再同步。");
+      return;
+    }
+
+    setRemotePathInput(remotePath);
     await workspace.refreshRemoteFiles(remotePath);
+  };
+  const openRemotePathInput = async () => {
+    const targetPath = remotePathInput.trim() || "/";
+    const loaded = await workspace.refreshRemoteFiles(targetPath);
+
+    if (!loaded) {
+      return;
+    }
+
+    setRemotePathInput(targetPath);
   };
   const openTransferLocalFolder = async (localPath: string) => {
     try {
@@ -257,23 +306,27 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
     entry: RemoteEntry,
     entryIndex: number,
   ) => {
+    const additiveSelection = isAdditiveDesktopSelection(event);
+
     if (event.shiftKey && selectionAnchorPath) {
       const anchorIndex = workspace.remoteEntries.findIndex((item) => item.path === selectionAnchorPath);
 
       if (anchorIndex >= 0) {
         const startIndex = Math.min(anchorIndex, entryIndex);
         const endIndex = Math.max(anchorIndex, entryIndex);
-        const nextPaths = new Set(
-          workspace.remoteEntries.slice(startIndex, endIndex + 1).map((item) => item.path),
-        );
-
-        setSelectedRemotePaths(nextPaths);
+        setSelectedRemotePaths((current) => {
+          const next = additiveSelection ? new Set(current) : new Set<string>();
+          workspace.remoteEntries
+            .slice(startIndex, endIndex + 1)
+            .forEach((item) => next.add(item.path));
+          return next;
+        });
         workspace.setSelectedRemoteEntry(entry);
         return;
       }
     }
 
-    if (event.ctrlKey || event.metaKey) {
+    if (additiveSelection) {
       setSelectedRemotePaths((current) => {
         const next = new Set(current);
 
@@ -370,9 +423,9 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
             </button>
           ) : null}
           <button
-            aria-label="同步 SSH 当前目录"
+            aria-label={trackedTerminalPath ? `同步 SSH 当前目录 ${trackedTerminalPath}` : "同步 SSH 当前目录"}
             onClick={() => void syncRemotePathFromTerminal()}
-            title="同步 SSH 当前目录"
+            title={trackedTerminalPath ? `同步已跟踪的 SSH 目录：${trackedTerminalPath}` : "同步 SSH 当前目录"}
             type="button"
           >
             <Icon name="terminal" />
@@ -388,7 +441,7 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
         </div>
       </div>
 
-      <div className="simple-sftp-path" title={workspace.remotePath}>
+      <div className="simple-sftp-path">
         <button
           aria-label="上级目录"
           disabled={!canGoRemoteParent(workspace.remotePath)}
@@ -398,10 +451,51 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
         >
           <Icon name="folder-open" />
         </button>
-        <span>{workspace.remotePath}</span>
+        <TextInput
+          aria-label="远程 SFTP 路径"
+          autoComplete="off"
+          fieldSize="sm"
+          mono
+          spellCheck={false}
+          title="输入远程路径后按 Enter 打开"
+          value={remotePathInput}
+          onBlur={() => setRemotePathInput(workspace.remotePath)}
+          onChange={(event) => setRemotePathInput(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void openRemotePathInput();
+            }
+
+            if (event.key === "Escape") {
+              setRemotePathInput(workspace.remotePath);
+              event.currentTarget.blur();
+            }
+          }}
+        />
+        <button
+          aria-label="打开输入的远程路径"
+          disabled={!remotePathInput.trim()}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void openRemotePathInput()}
+          title="打开输入的远程路径"
+          type="button"
+        >
+          <Icon name="chevron-right" />
+        </button>
       </div>
 
-      <div className="simple-sftp-list" role="table" aria-label="远程目录">
+      <div
+        aria-label="远程目录"
+        aria-multiselectable="true"
+        className="simple-sftp-list"
+        onClick={(event) => {
+          if (event.currentTarget === event.target) {
+            clearSelection();
+          }
+        }}
+        role="table"
+      >
         <div
           className="simple-sftp-row is-directory parent-directory-row"
           aria-disabled={!canGoRemoteParent(workspace.remotePath)}
@@ -434,6 +528,7 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
                 .filter(Boolean)
                 .join(" ")}
               key={entry.path}
+              aria-selected={selectedRemotePaths.has(entry.path)}
               onClick={(event) => {
                 if (editingRemotePath === entry.path) {
                   return;
@@ -569,16 +664,21 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           <button
-            disabled={!isTransferableEntry(contextMenu.entry)}
+            disabled={selectedTransferableEntries.length === 0}
             onClick={() => openDownloadPicker(contextMenu.entry)}
             role="menuitem"
-            title="下载到本地目录"
+            title={`下载 ${Math.max(1, selectedTransferableEntries.length)} 项到本地目录`}
             type="button"
           >
             <Icon name="download" />
-            <span>下载</span>
+            <span>
+              {selectedTransferableEntries.length > 1
+                ? `下载 ${selectedTransferableEntries.length} 项`
+                : "下载"}
+            </span>
           </button>
           <button
+            disabled={selectedRemoteEntries.length > 1}
             onClick={() => startInlineRename(contextMenu.entry)}
             role="menuitem"
             title="重命名远程条目"
@@ -588,18 +688,20 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
             <span>重命名</span>
           </button>
           <button
+            disabled={selectedRemoteEntries.length > 1}
             onClick={() => void copyRemoteText(contextMenu.entry.path, "路径")}
             role="menuitem"
-            title="复制远程路径"
+            title={selectedRemoteEntries.length > 1 ? "多选时不能复制单个路径" : "复制远程路径"}
             type="button"
           >
             <Icon name="copy" />
             <span>复制路径</span>
           </button>
           <button
+            disabled={selectedRemoteEntries.length > 1}
             onClick={() => void copyRemoteText(contextMenu.entry.name, "名称")}
             role="menuitem"
-            title="复制名称"
+            title={selectedRemoteEntries.length > 1 ? "多选时不能复制单个名称" : "复制名称"}
             type="button"
           >
             <Icon name="copy" />
@@ -607,13 +709,13 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
           </button>
           <button
             className="danger-action"
-            onClick={() => deleteRemoteEntry(contextMenu.entry)}
+            onClick={() => deleteRemoteEntries(contextMenu.entry)}
             role="menuitem"
-            title="删除远程条目"
+            title={`删除 ${Math.max(1, selectedRemoteEntries.length)} 个远程条目`}
             type="button"
           >
             <Icon name="trash" />
-            <span>删除</span>
+            <span>{selectedRemoteEntries.length > 1 ? `删除 ${selectedRemoteEntries.length} 项` : "删除"}</span>
           </button>
         </div>
       ) : null}
@@ -634,40 +736,11 @@ export function SimpleSftpPanel({ layoutSide = "left", onToggleLayoutSide, works
         />
       ) : null}
 
-      {deleteConfirmEntry ? (
-        <div
-          className="modal-backdrop simple-delete-confirm-backdrop"
-          role="presentation"
-          onMouseDown={() => setDeleteConfirmEntry(null)}
-        >
-          <section
-            aria-label="确认删除远程条目"
-            aria-modal="true"
-            className="modal-card simple-delete-confirm"
-            role="dialog"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <strong>确认删除</strong>
-              <button aria-label="关闭删除确认" onClick={() => setDeleteConfirmEntry(null)} title="关闭" type="button">
-                <Icon name="x" />
-              </button>
-            </header>
-            <div className="simple-delete-confirm-content">
-              <p>确定要删除这个远程条目吗？该操作会直接在服务器上执行。</p>
-              <code title={deleteConfirmEntry.path}>{deleteConfirmEntry.path}</code>
-            </div>
-            <footer>
-              <button onClick={() => setDeleteConfirmEntry(null)} type="button">
-                取消
-              </button>
-              <button className="danger-action" onClick={() => void confirmDeleteRemoteEntry()} type="button">
-                删除
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
+      <SftpDeleteConfirmDialog
+        entries={deleteConfirmEntries}
+        onCancel={() => setDeleteConfirmEntries([])}
+        onConfirm={confirmDeleteRemoteEntry}
+      />
 
       <SftpDropOverlay active={dropActive} className="simple-sftp-drop-overlay" />
     </aside>
@@ -1035,6 +1108,12 @@ function inferRemotePathFromTerminalText(text: string, username: string) {
 }
 
 function inferRemotePathFromTerminalLine(line: string, username: string) {
+  const explicitPath = line.trim();
+
+  if (explicitPath.startsWith("/")) {
+    return normalizeRemoteDisplayPath(explicitPath);
+  }
+
   const normalizedLine = line.replace(/\s+/g, " ").trim();
   const promptPath =
     matchLastPath(normalizedLine, /(?:^|\s|:)(~|\/[^\s$#>%\]]+)(?=[$#>%\]]?\s*$)/) ??

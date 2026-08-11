@@ -1336,6 +1336,7 @@ function App() {
           onReorderSessionTabs={workspace.reorderSessionTabs}
           onSendTerminalBytes={workspace.sendTerminalBytes}
           onSendTerminalData={workspace.sendTerminalData}
+          onTerminalWorkingDirectoryChange={workspace.reportTerminalWorkingDirectory}
           onResizeTerminal={workspace.resizeActiveTerminal}
           onSelectSessionTab={workspace.switchSessionTab}
           onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
@@ -1441,6 +1442,7 @@ function App() {
             onReorderSessionTabs={reorderAppSessionTabs}
             onSendTerminalBytes={workspace.sendTerminalBytes}
             onSendTerminalData={workspace.sendTerminalData}
+            onTerminalWorkingDirectoryChange={workspace.reportTerminalWorkingDirectory}
             onResizeTerminal={workspace.resizeActiveTerminal}
             onSelectSessionTab={selectAppSessionTab}
             onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}

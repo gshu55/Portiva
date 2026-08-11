@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   ConnectionProfile,
   RawSocketProfile,
@@ -154,6 +154,28 @@ export function ConnectionProfileDialog({
     needsConnectionSecret && rememberSecret && rememberedSecretApplies;
   const canConnect = canSave && (!needsConnectionSecret || Boolean(secret) || canUseRememberedSecret);
   const canTest = canSave && (!needsConnectionSecret || Boolean(secret));
+  const profileTypeControl = mode === "create" ? (
+    <div className="profile-type-field">
+      <span>连接类型</span>
+      <SegmentedControl
+        aria-label="连接类型"
+        className="segmented-control profile-type-control"
+        itemLayout="iconText"
+        options={(["ssh", "sftp", "telnet", "raw-tcp"] as const).map((type) => ({
+          ariaLabel: protocolLabel(type),
+          icon: profileTypeIcons[type],
+          label: protocolLabel(type),
+          title: protocolLabel(type),
+          value: type,
+        }))}
+        value={draft.type === "serial" ? "ssh" : draft.type}
+        onChange={(type) => {
+          setSecret("");
+          setDraft(onCreateDraft(type));
+        }}
+      />
+    </div>
+  ) : null;
 
   const connectDraft = async () => {
     if (busyAction) {
@@ -241,29 +263,6 @@ export function ConnectionProfileDialog({
         </div>
 
         <div className="profile-dialog-body">
-          {mode === "create" ? (
-            <aside className="profile-dialog-left" aria-label="连接类型">
-              <SegmentedControl
-                aria-label="连接类型"
-                className="segmented-control profile-type-control"
-                itemLayout="iconText"
-                options={(["ssh", "sftp", "telnet", "raw-tcp"] as const).map((type) => ({
-                  ariaLabel: protocolLabel(type),
-                  icon: profileTypeIcons[type],
-                  label: protocolLabel(type),
-                  title: protocolLabel(type),
-                  value: type,
-                }))}
-                orientation="vertical"
-                value={draft.type === "serial" ? "ssh" : draft.type}
-                onChange={(type) => {
-                  setSecret("");
-                  setDraft(onCreateDraft(type));
-                }}
-              />
-            </aside>
-          ) : null}
-
           <div className="profile-dialog-right" aria-label="连接参数">
             <label>
               配置名称
@@ -276,6 +275,7 @@ export function ConnectionProfileDialog({
             {draft.type === "ssh" || draft.type === "sftp" ? (
               <>
                 <SshProfileForm
+                  afterHost={profileTypeControl}
                   hasRememberedSecret={rememberSecret && rememberedSecretApplies}
                   profile={draft}
                   rememberSecret={rememberSecret}
@@ -298,7 +298,11 @@ export function ConnectionProfileDialog({
               </>
             ) : null}
             {draft.type === "telnet" ? (
-              <TelnetFields profile={draft} onChange={(profile) => setDraft(profile)} />
+              <TelnetFields
+                afterHost={profileTypeControl}
+                profile={draft}
+                onChange={(profile) => setDraft(profile)}
+              />
             ) : null}
             {draft.type === "serial" ? (
               <SerialFields
@@ -309,7 +313,11 @@ export function ConnectionProfileDialog({
               />
             ) : null}
             {draft.type === "raw-tcp" ? (
-              <RawTcpFields profile={draft} onChange={(profile) => setDraft(profile)} />
+              <RawTcpFields
+                afterHost={profileTypeControl}
+                profile={draft}
+                onChange={(profile) => setDraft(profile)}
+              />
             ) : null}
             {credentialNotice ? (
               <p className="profile-dialog-note attention">{credentialNotice}</p>
@@ -395,9 +403,11 @@ export function ConnectionProfileDialog({
 }
 
 function TelnetFields({
+  afterHost,
   onChange,
   profile,
 }: {
+  afterHost?: ReactNode;
   onChange: (profile: TelnetProfile) => void;
   profile: TelnetProfile;
 }) {
@@ -409,6 +419,7 @@ function TelnetFields({
         主机
         <TextInput value={profile.host} onChange={(event) => update({ host: event.currentTarget.value })} />
       </label>
+      {afterHost}
       <label>
         端口
         <TextInput
@@ -445,9 +456,11 @@ function TelnetFields({
 }
 
 function RawTcpFields({
+  afterHost,
   onChange,
   profile,
 }: {
+  afterHost?: ReactNode;
   onChange: (profile: RawSocketProfile) => void;
   profile: RawSocketProfile;
 }) {
@@ -459,6 +472,7 @@ function RawTcpFields({
         主机
         <TextInput value={profile.host} onChange={(event) => update({ host: event.currentTarget.value })} />
       </label>
+      {afterHost}
       <label>
         端口
         <TextInput

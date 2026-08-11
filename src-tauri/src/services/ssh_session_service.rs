@@ -1474,6 +1474,11 @@ fn is_sftp_session_closed_error(error: &str) -> bool {
     normalized.contains("session closed")
         || normalized.contains("channel closed")
         || normalized.contains("connection closed")
+        || normalized.contains("unexpected eof")
+        || normalized.contains("end of file")
+        || normalized.contains("broken pipe")
+        || normalized.contains("connection reset")
+        || normalized.contains("transport closed")
 }
 
 async fn open_pty_with_session(
@@ -2029,6 +2034,12 @@ mod tests {
         )));
         assert!(is_sftp_session_closed_result(&Result::<(), String>::Err(
             "connection closed".to_string()
+        )));
+        assert!(is_sftp_session_closed_result(&Result::<(), String>::Err(
+            "unexpected EOF while reading SFTP packet".to_string()
+        )));
+        assert!(is_sftp_session_closed_result(&Result::<(), String>::Err(
+            "connection reset by peer".to_string()
         )));
         assert!(!is_sftp_session_closed_result(&Result::<(), String>::Err(
             "permission denied".to_string()

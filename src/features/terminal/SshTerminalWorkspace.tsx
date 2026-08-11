@@ -276,7 +276,6 @@ export function SshTerminalWorkspace({
         {isActive ? (
           <div aria-label="SSH 面板控制" className="ssh-terminal-panel-controls" role="toolbar">
             <IconButton
-              active={commandPanelVisible}
               aria-label={commandPanelVisible ? "隐藏命令栏" : "显示命令栏"}
               aria-pressed={commandPanelVisible}
               icon="command"
@@ -286,7 +285,6 @@ export function SshTerminalWorkspace({
               tone="muted"
             />
             <IconButton
-              active={sftpPanelAvailable && sftpPanelVisible}
               aria-label={sftpPanelVisible ? "隐藏 SFTP 栏" : "显示 SFTP 栏"}
               aria-pressed={sftpPanelAvailable && sftpPanelVisible}
               disabled={!sftpPanelAvailable}
@@ -297,7 +295,6 @@ export function SshTerminalWorkspace({
               tone="muted"
             />
             <IconButton
-              active={statusPanelVisible}
               aria-label={statusPanelVisible ? "隐藏底部状态" : "显示底部状态"}
               aria-pressed={statusPanelVisible}
               icon="activity"

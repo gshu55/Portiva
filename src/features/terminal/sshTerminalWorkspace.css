@@ -33,6 +33,9 @@
 }
 
 .ssh-terminal-panel-controls {
+  --button-bg: transparent;
+  --button-muted-bg: transparent;
+  --button-muted-bg-hover: transparent;
   position: absolute;
   z-index: 6;
   top: 6px;
@@ -40,12 +43,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 3px;
-  border: 1px solid color-mix(in srgb, var(--border-panel) 82%, transparent);
-  border-radius: var(--control-radius);
-  background: color-mix(in srgb, var(--panel-solid-bg) 88%, transparent);
-  box-shadow: 0 8px 24px color-mix(in srgb, #000 24%, transparent);
-  backdrop-filter: blur(12px);
+  padding: 0;
 }
 
 .ssh-terminal-panel-controls .ui-icon-button {
@@ -61,15 +59,9 @@
 }
 
 .ssh-terminal-panel-controls .ui-icon-button:hover:not(:disabled) {
-  border-color: var(--border-subtle);
-  background: var(--button-muted-bg-hover);
+  border-color: transparent;
+  background: transparent;
   color: var(--text-strong);
-}
-
-.ssh-terminal-panel-controls .ui-icon-button.active {
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
-  background: color-mix(in srgb, var(--accent-bg) 82%, transparent);
-  color: var(--accent);
 }
 
 .ssh-terminal-panel-controls .ui-icon-button:disabled {

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { SftpProfile, SshProfile } from "../../../shared/types";
 import { IconButton, Select, TextInput, Toggle } from "../../../shared/ui";
 
 type SshCredentialProfile = SshProfile | SftpProfile;
 
 interface SshProfileFormProps {
+  afterHost?: ReactNode;
   hasRememberedSecret?: boolean;
   onChange: (profile: SshCredentialProfile) => void;
   onRememberSecretChange?: (remember: boolean) => void;
@@ -16,6 +17,7 @@ interface SshProfileFormProps {
 }
 
 export function SshProfileForm({
+  afterHost,
   hasRememberedSecret = false,
   onChange,
   onRememberSecretChange,
@@ -83,6 +85,7 @@ export function SshProfileForm({
         主机
         <TextInput value={profile.host} onChange={(event) => update({ host: event.target.value })} />
       </label>
+      {afterHost}
       <label>
         端口
         <TextInput

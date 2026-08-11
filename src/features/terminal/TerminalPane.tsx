@@ -13,6 +13,7 @@ import type {
 } from "../../shared/types";
 import { readClipboardText, writeClipboardHtml, writeClipboardText } from "../../shared/clipboard";
 import { Icon } from "../../shared/Icon";
+import { parseOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory";
 
 interface TerminalPaneProps {
   autoScroll?: boolean;
@@ -30,6 +31,7 @@ interface TerminalPaneProps {
   onReconnectDisconnected?: () => void;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
   onSendData: (data: string, terminalId: string) => Promise<void> | void;
+  onWorkingDirectoryChange?: (terminalId: string, path: string) => void;
 }
 
 function isDarkColor(color: string) {
@@ -216,6 +218,7 @@ export function TerminalPane({
   onCommandSubmitted,
   onReconnectDisconnected,
   onSendData,
+  onWorkingDirectoryChange,
   reportSizeWhenVisible = false,
   terminal,
   terminalConfirmMultilinePaste = true,
@@ -249,6 +252,7 @@ export function TerminalPane({
   const terminalStatusRef = useRef(terminal?.status ?? null);
   const closeDisconnectedRef = useRef(onCloseDisconnected);
   const reconnectDisconnectedRef = useRef(onReconnectDisconnected);
+  const workingDirectoryChangeRef = useRef(onWorkingDirectoryChange);
   const openSearchRef = useRef<() => void>(() => undefined);
   const reportSizeWhenVisibleRef = useRef(reportSizeWhenVisible);
   const reportSizeRef = useRef<(() => void) | null>(null);
@@ -307,6 +311,10 @@ export function TerminalPane({
   useEffect(() => {
     reconnectDisconnectedRef.current = onReconnectDisconnected;
   }, [onReconnectDisconnected]);
+
+  useEffect(() => {
+    workingDirectoryChangeRef.current = onWorkingDirectoryChange;
+  }, [onWorkingDirectoryChange]);
 
   useEffect(() => {
     autoScrollRef.current = autoScroll;
@@ -577,6 +585,15 @@ export function TerminalPane({
     instance.loadAddon(searchAddon);
     instance.loadAddon(serializeAddon);
     instance.open(container);
+    const workingDirectoryHandler = instance.parser.registerOscHandler(7, (data) => {
+      const path = parseOsc7WorkingDirectory(data);
+
+      if (path) {
+        workingDirectoryChangeRef.current?.(terminal.id, path);
+      }
+
+      return true;
+    });
     instance.attachCustomKeyEventHandler((event) => {
       if (event.type === "keydown" && isTerminalSearchShortcut(event)) {
         event.preventDefault();
@@ -588,14 +605,22 @@ export function TerminalPane({
         return true;
       }
 
+      if (event.repeat) {
+        event.preventDefault();
+        event.stopPropagation();
+        return false;
+      }
+
       if (event.key === "Enter") {
         event.preventDefault();
+        event.stopPropagation();
         closeDisconnectedRef.current?.();
         return false;
       }
 
       if (event.key.toLowerCase() === "r" && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
+        event.stopPropagation();
         reconnectDisconnectedRef.current?.();
         return false;
       }
@@ -680,6 +705,7 @@ export function TerminalPane({
 
     return () => {
       resizeObserver.disconnect();
+      workingDirectoryHandler.dispose();
       if (resizeTimerRef.current) {
         window.clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;

@@ -1,4 +1,5 @@
 import {
+  type MouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
@@ -8,8 +9,10 @@ import {
 import { Icon } from "../../shared/Icon";
 import { Button, IconButton, TextInput } from "../../shared/ui";
 import type { ConnectionCapabilities, RemoteEntry, TransferTask } from "../../shared/types";
+import { isAdditiveDesktopSelection } from "./desktopSelection";
 import { FileEntryContextMenu } from "./FileEntryContextMenu";
 import { fileIconKind, remoteEntryIconName } from "./fileEntryIcons";
+import { SftpDeleteConfirmDialog } from "./SftpDeleteConfirmDialog";
 import { SftpDropOverlay } from "./SftpDropOverlay";
 import { TransferQueue } from "./TransferQueue";
 import { useSftpDropUpload } from "./useSftpDropUpload";
@@ -32,18 +35,18 @@ interface FileTransferPanelProps {
   onCreateLocalDirectory: (name: string) => boolean | void | Promise<boolean | void>;
   onCreateRemoteDirectory: (name: string) => boolean | void | Promise<boolean | void>;
   onDownloadEntry: (entry: RemoteEntry) => void | Promise<void>;
-  onDownloadSelected: () => void | Promise<void>;
   onRefreshLocal: (path?: string) => boolean | void | Promise<boolean | void>;
   onRefreshRemote: (path?: string) => boolean | void | Promise<boolean | void>;
   onRemoveLocal: (entry?: RemoteEntry | null) => void | Promise<void>;
   onRemoveRemote: (entry?: RemoteEntry | null) => void | Promise<void>;
+  onRemoveRemoteEntries: (entries: RemoteEntry[]) => unknown | Promise<unknown>;
   onPauseTransfer: (transferId: string) => void;
   onRenameLocal: (entry: RemoteEntry, name: string) => boolean | void | Promise<boolean | void>;
   onRenameRemote: (entry: RemoteEntry, name: string) => boolean | void | Promise<boolean | void>;
   onResumeTransfer: (transferId: string) => void;
   onRetryTransfer: (transferId: string) => void;
   onSelectLocalEntry: (entry: RemoteEntry) => void;
-  onSelectRemoteEntry: (entry: RemoteEntry) => void;
+  onSelectRemoteEntry: (entry: RemoteEntry | null) => void;
   onUploadEntry: (entry: RemoteEntry) => void | Promise<void>;
   onUploadLocalPaths: (localPaths: string[]) => void | Promise<void>;
   onUploadSelected: () => void | Promise<void>;
@@ -60,11 +63,11 @@ export function FileTransferPanel({
   onCreateLocalDirectory,
   onCreateRemoteDirectory,
   onDownloadEntry,
-  onDownloadSelected,
   onRefreshLocal,
   onRefreshRemote,
   onRemoveLocal,
   onRemoveRemote,
+  onRemoveRemoteEntries,
   onPauseTransfer,
   onRenameLocal,
   onRenameRemote,
@@ -82,15 +85,28 @@ export function FileTransferPanel({
   transfers,
 }: FileTransferPanelProps) {
   const [transferPanelRatio, setTransferPanelRatio] = useState(0.34);
+  const [selectedRemotePaths, setSelectedRemotePaths] = useState<Set<string>>(
+    () => new Set(selectedRemoteEntry ? [selectedRemoteEntry.path] : []),
+  );
+  const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
+  const [deleteConfirmEntries, setDeleteConfirmEntries] = useState<RemoteEntry[]>([]);
   const panelRef = useRef<HTMLElement | null>(null);
+  const remotePathRef = useRef(remotePath);
   const selectedLocalLabel = useMemo(
     () => selectedLocalEntry?.name ?? "未选择",
     [selectedLocalEntry],
   );
-  const selectedRemoteLabel = useMemo(
-    () => selectedRemoteEntry?.name ?? "未选择",
-    [selectedRemoteEntry],
+  const selectedRemoteEntries = useMemo(
+    () => remoteEntries.filter((entry) => selectedRemotePaths.has(entry.path)),
+    [remoteEntries, selectedRemotePaths],
   );
+  const selectedTransferableEntries = useMemo(
+    () => selectedRemoteEntries.filter(isTransferableEntry),
+    [selectedRemoteEntries],
+  );
+  const selectedRemoteLabel = selectedRemoteEntries.length > 1
+    ? `已选择 ${selectedRemoteEntries.length} 项`
+    : selectedRemoteEntries[0]?.name ?? "未选择";
   const canUseRemote = capabilities.fileTransfer;
   const transferPanelPercent = Math.round(transferPanelRatio * 100);
 
@@ -100,6 +116,86 @@ export function FileTransferPanel({
     },
     [],
   );
+
+  useEffect(() => {
+    if (remotePathRef.current !== remotePath) {
+      remotePathRef.current = remotePath;
+      setSelectedRemotePaths(new Set());
+      setSelectionAnchorPath(null);
+      onSelectRemoteEntry(null);
+      return;
+    }
+
+    const availablePaths = new Set(remoteEntries.map((entry) => entry.path));
+    setSelectedRemotePaths((current) => {
+      const next = new Set([...current].filter((path) => availablePaths.has(path)));
+      return next.size === current.size ? current : next;
+    });
+  }, [onSelectRemoteEntry, remoteEntries, remotePath]);
+
+  const clearRemoteSelection = () => {
+    setSelectedRemotePaths(new Set());
+    setSelectionAnchorPath(null);
+    onSelectRemoteEntry(null);
+  };
+
+  const selectRemoteEntry = (
+    event: Pick<MouseEvent<HTMLElement>, "ctrlKey" | "metaKey" | "shiftKey">,
+    entry: RemoteEntry,
+    entryIndex: number,
+  ) => {
+    const additiveSelection = isAdditiveDesktopSelection(event);
+
+    if (event.shiftKey && selectionAnchorPath) {
+      const anchorIndex = remoteEntries.findIndex((item) => item.path === selectionAnchorPath);
+
+      if (anchorIndex >= 0) {
+        const startIndex = Math.min(anchorIndex, entryIndex);
+        const endIndex = Math.max(anchorIndex, entryIndex);
+        setSelectedRemotePaths((current) => {
+          const next = additiveSelection ? new Set(current) : new Set<string>();
+          remoteEntries.slice(startIndex, endIndex + 1).forEach((item) => next.add(item.path));
+          return next;
+        });
+        onSelectRemoteEntry(entry);
+        return;
+      }
+    }
+
+    if (additiveSelection) {
+      setSelectedRemotePaths((current) => {
+        const next = new Set(current);
+        next.has(entry.path) ? next.delete(entry.path) : next.add(entry.path);
+        return next;
+      });
+      setSelectionAnchorPath(entry.path);
+      onSelectRemoteEntry(entry);
+      return;
+    }
+
+    setSelectedRemotePaths(new Set([entry.path]));
+    setSelectionAnchorPath(entry.path);
+    onSelectRemoteEntry(entry);
+  };
+
+  const selectOnlyRemoteEntry = (entry: RemoteEntry) => {
+    setSelectedRemotePaths(new Set([entry.path]));
+    setSelectionAnchorPath(entry.path);
+    onSelectRemoteEntry(entry);
+  };
+
+  const downloadRemoteEntries = async () => {
+    for (const entry of selectedTransferableEntries) {
+      await onDownloadEntry(entry);
+    }
+  };
+
+  const confirmDeleteRemoteEntries = async () => {
+    const entries = deleteConfirmEntries;
+    setDeleteConfirmEntries([]);
+    await onRemoveRemoteEntries(entries);
+    clearRemoteSelection();
+  };
 
   const startTransferPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -152,7 +248,7 @@ export function FileTransferPanel({
             onRefreshLocal(localRootsPath);
           }}
           onRefresh={() => onRefreshLocal()}
-          copyLabel="传输"
+          copyLabel="上传"
           onCopyToPeer={(entry) => onUploadEntry(entry)}
           onRemove={onRemoveLocal}
           onRename={(entry, name) => onRenameLocal(entry, name)}
@@ -168,9 +264,9 @@ export function FileTransferPanel({
             title="上传选中的本地文件或文件夹"
           />
           <IconButton
-            disabled={!canUseRemote || !isTransferableEntry(selectedRemoteEntry)}
+            disabled={!canUseRemote || selectedTransferableEntries.length === 0}
             icon="download"
-            onClick={onDownloadSelected}
+            onClick={() => void downloadRemoteEntries()}
             aria-label="下载选中的远程文件或文件夹"
             title="下载选中的远程文件或文件夹"
           />
@@ -195,11 +291,21 @@ export function FileTransferPanel({
           }}
           onOpenSsh={onOpenSsh}
           onRefresh={() => onRefreshRemote()}
-          copyLabel="传输"
+          copyLabel="下载"
           onCopyToPeer={(entry) => onDownloadEntry(entry)}
           onRemove={onRemoveRemote}
           onRename={(entry, name) => onRenameRemote(entry, name)}
           onSelectEntry={onSelectRemoteEntry}
+          multiSelection={{
+            selectedPaths: selectedRemotePaths,
+            count: selectedRemoteEntries.length,
+            canDownload: selectedTransferableEntries.length > 0,
+            onClear: clearRemoteSelection,
+            onDelete: () => setDeleteConfirmEntries(selectedRemoteEntries),
+            onDownload: downloadRemoteEntries,
+            onSelect: selectRemoteEntry,
+            onSelectOnly: selectOnlyRemoteEntry,
+          }}
         />
       </div>
       <div
@@ -217,6 +323,11 @@ export function FileTransferPanel({
         onPause={onPauseTransfer}
         onResume={onResumeTransfer}
         onRetry={onRetryTransfer}
+      />
+      <SftpDeleteConfirmDialog
+        entries={deleteConfirmEntries}
+        onCancel={() => setDeleteConfirmEntries([])}
+        onConfirm={confirmDeleteRemoteEntries}
       />
     </section>
   );
@@ -243,6 +354,22 @@ interface FilePaneProps {
   onSelectEntry: (entry: RemoteEntry) => void;
   dropUploadEnabled?: boolean;
   onDropUploadLocalPaths?: (localPaths: string[]) => void;
+  multiSelection?: FilePaneMultiSelection;
+}
+
+interface FilePaneMultiSelection {
+  selectedPaths: ReadonlySet<string>;
+  count: number;
+  canDownload: boolean;
+  onClear: () => void;
+  onDelete: () => void;
+  onDownload: () => void | Promise<void>;
+  onSelect: (
+    event: Pick<MouseEvent<HTMLElement>, "ctrlKey" | "metaKey" | "shiftKey">,
+    entry: RemoteEntry,
+    entryIndex: number,
+  ) => void;
+  onSelectOnly: (entry: RemoteEntry) => void;
 }
 
 function FilePane({
@@ -261,6 +388,7 @@ function FilePane({
   onRename,
   onDropUploadLocalPaths,
   onSelectEntry,
+  multiSelection,
   path,
   pathKind,
   selectedEntry,
@@ -363,6 +491,23 @@ function FilePane({
     });
   };
 
+  const openPathInput = () => {
+    const nextPath = pathInput.trim();
+
+    if (nextPath && nextPath !== path) {
+      void Promise.resolve(onOpenDirectory(nextPath))
+        .then((changed) => {
+          if (changed === false) {
+            setPathInput(path);
+          }
+        })
+        .catch(() => setPathInput(path));
+      return;
+    }
+
+    onRefresh();
+  };
+
   const commitInlineRename = (entry: RemoteEntry) => {
     const requestedName = sanitizeEntryName(editingName).trim();
     const invalidReason = entryNameInvalidReason(requestedName);
@@ -427,7 +572,7 @@ function FilePane({
           />
         </div>
       </div>
-      <div className="file-path-bar">
+      <div className={["file-path-bar", pathKind === "remote" ? "has-path-submit" : ""].filter(Boolean).join(" ")}>
         <IconButton
           aria-label="上级目录"
           disabled={disabled || !canGoParent(path)}
@@ -438,6 +583,7 @@ function FilePane({
         <label>
           <span>路径</span>
           <TextInput
+            aria-label={pathKind === "remote" ? "远程 SFTP 路径" : "本地路径"}
             disabled={disabled}
             title={path}
             value={pathInput}
@@ -445,20 +591,7 @@ function FilePane({
             onChange={(event) => setPathInput(event.currentTarget.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
-                const nextPath = event.currentTarget.value.trim();
-
-                if (nextPath && nextPath !== path) {
-                  void Promise.resolve(onOpenDirectory(nextPath))
-                    .then((changed) => {
-                      if (changed === false) {
-                        setPathInput(path);
-                      }
-                    })
-                    .catch(() => setPathInput(path));
-                  return;
-                }
-
-                onRefresh();
+                openPathInput();
               }
 
               if (event.key === "Escape") {
@@ -468,6 +601,16 @@ function FilePane({
             }}
           />
         </label>
+        {pathKind === "remote" ? (
+          <IconButton
+            aria-label="打开输入的远程路径"
+            disabled={disabled || !pathInput.trim()}
+            icon="chevron-right"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={openPathInput}
+            title="打开输入的远程路径"
+          />
+        ) : null}
       </div>
       <div
         className="file-list file-browser-list"
@@ -480,7 +623,13 @@ function FilePane({
             y: event.clientY,
           });
         }}
+        onClick={(event) => {
+          if (multiSelection && event.target === event.currentTarget) {
+            multiSelection.onClear();
+          }
+        }}
         role="table"
+        aria-multiselectable={multiSelection ? true : undefined}
         aria-label={`${title} 目录`}
       >
         <div className="file-browser-header" role="row">
@@ -508,7 +657,7 @@ function FilePane({
           <small role="cell">-</small>
         </Button>
         {entries.length > 0 ? (
-          entries.map((entry) =>
+          entries.map((entry, entryIndex) =>
             editingEntryPath === entry.path ? (
               <div
                 className={[
@@ -566,18 +715,31 @@ function FilePane({
               <Button
                 className={[
                   "file-browser-row",
-                  entry.path === selectedEntry?.path ? "active" : "",
+                  (multiSelection?.selectedPaths.has(entry.path) ?? entry.path === selectedEntry?.path) ? "active" : "",
                   `is-${entry.kind}`,
                 ]
                   .filter(Boolean)
                   .join(" ")}
                 disabled={disabled}
                 key={entry.path}
-                onClick={() => onSelectEntry(entry)}
+                onClick={(event) => {
+                  if (multiSelection) {
+                    multiSelection.onSelect(event, entry, entryIndex);
+                    return;
+                  }
+
+                  onSelectEntry(entry);
+                }}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  onSelectEntry(entry);
+                  if (multiSelection) {
+                    if (!multiSelection.selectedPaths.has(entry.path)) {
+                      multiSelection.onSelectOnly(entry);
+                    }
+                  } else {
+                    onSelectEntry(entry);
+                  }
                   setContextMenu({ entry, x: event.clientX, y: event.clientY });
                 }}
                 onDoubleClick={() => {
@@ -586,6 +748,7 @@ function FilePane({
                   }
                 }}
                 role="row"
+                aria-selected={multiSelection?.selectedPaths.has(entry.path)}
                 title={entry.kind === "directory" ? `打开 ${entry.name}` : `选择 ${entry.name}`}
                 tone="muted"
               >
@@ -615,17 +778,23 @@ function FilePane({
       {contextMenu ? (
         <FileEntryContextMenu
           canAct={!disabled}
+          canCopySelection={multiSelection?.canDownload}
           copyLabel={copyLabel}
           entry={contextMenu.entry}
+          selectionCount={multiSelection?.count}
           position={{ x: contextMenu.x, y: contextMenu.y }}
           onClose={() => setContextMenu(null)}
           onCopyToPeer={() => {
+            if (multiSelection) {
+              return multiSelection.onDownload();
+            }
+
             if (contextMenu.entry) {
               return onCopyToPeer(contextMenu.entry);
             }
           }}
           onCreateDirectory={createDirectoryInline}
-          onRemove={() => onRemove(contextMenu.entry)}
+          onRemove={() => multiSelection ? multiSelection.onDelete() : onRemove(contextMenu.entry)}
           onRename={() => {
             if (contextMenu.entry) {
               startInlineRename(contextMenu.entry);

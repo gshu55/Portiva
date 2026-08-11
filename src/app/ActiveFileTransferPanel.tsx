@@ -33,11 +33,11 @@ export function ActiveFileTransferPanel({
       onCreateLocalDirectory={workspace.createLocalDirectory}
       onCreateRemoteDirectory={workspace.createRemoteDirectory}
       onDownloadEntry={workspace.downloadRemoteEntry}
-      onDownloadSelected={workspace.downloadSelectedRemoteEntry}
       onRefreshLocal={workspace.refreshLocalFiles}
       onRefreshRemote={workspace.refreshRemoteFiles}
       onRemoveLocal={workspace.removeLocalEntry}
       onRemoveRemote={workspace.removeRemoteEntry}
+      onRemoveRemoteEntries={workspace.removeRemoteEntries}
       onPauseTransfer={(transferId) => workspace.updateTransferTask(transferId, "pause")}
       onRenameLocal={workspace.renameLocalEntry}
       onRenameRemote={workspace.renameRemoteEntry}

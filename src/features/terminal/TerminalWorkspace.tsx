@@ -3,6 +3,7 @@ import {
   type DragEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -49,6 +50,7 @@ interface TerminalWorkspaceProps {
   tabBarPortalTarget?: HTMLDivElement | null;
   onSendTerminalBytes: (bytes: number[], terminalId?: string) => Promise<void> | void;
   onSendTerminalData: (data: string, terminalId?: string) => Promise<void> | void;
+  onTerminalWorkingDirectoryChange?: (terminalId: string, path: string) => void;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
   onCloseSessionTab: (connectionId: string) => void;
   onDetachSessionTab?: (connectionId: string) => void;
@@ -113,6 +115,22 @@ const isTerminalShortcutEditableTarget = (target: EventTarget | null) => {
       !target.closest(".terminal-pane"),
   );
 };
+
+const scrollTabsHorizontally = (event: ReactWheelEvent<HTMLElement>) => {
+  const tabs = event.currentTarget;
+
+  if (tabs.scrollWidth <= tabs.clientWidth) {
+    return;
+  }
+
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  if (!delta) {
+    return;
+  }
+
+  event.preventDefault();
+  tabs.scrollLeft += delta;
+};
 const shortcutParts = (shortcut: string) =>
   shortcut
     .split("+")
@@ -153,6 +171,7 @@ export function TerminalWorkspace({
   onSelectSessionTab,
   onSendTerminalBytes,
   onSendTerminalData,
+  onTerminalWorkingDirectoryChange,
   onToggleFullscreen,
   reattachHintActive = false,
   isFullscreen,
@@ -165,10 +184,10 @@ export function TerminalWorkspace({
   const [splitDragOverPane, setSplitDragOverPane] = useState<"left" | "right" | null>(null);
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [sftpPanelRatio, setSftpPanelRatio] = useState(0.22);
-  const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("right");
-  const [sshCommandPanelVisible, setSshCommandPanelVisible] = useState(true);
+  const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("left");
+  const [sshCommandPanelVisible, setSshCommandPanelVisible] = useState(false);
   const [sshSftpPanelVisible, setSshSftpPanelVisible] = useState(true);
-  const [sshStatusPanelVisible, setSshStatusPanelVisible] = useState(true);
+  const [sshStatusPanelVisible, setSshStatusPanelVisible] = useState(false);
   const [commandHistoryByTab, setCommandHistoryByTab] = useState<Record<string, string[]>>({});
   const savedSshCommands = useSavedSshCommands();
   const tabBarRef = useRef<HTMLDivElement>(null);
@@ -535,6 +554,11 @@ export function TerminalWorkspace({
         onReconnectDisconnected={() => onReconnectSessionTab(getSessionTabId(tab))}
         onResizeTerminal={onResizeTerminal}
         onSendData={onSendTerminalData}
+        onWorkingDirectoryChange={
+          tab.connection.transport?.kind === "ssh"
+            ? onTerminalWorkingDirectoryChange
+            : undefined
+        }
       />
     );
   };
@@ -712,7 +736,7 @@ export function TerminalWorkspace({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.repeat || isTerminalShortcutEditableTarget(event.target)) {
+      if (event.defaultPrevented || event.repeat || isTerminalShortcutEditableTarget(event.target)) {
         return;
       }
 
@@ -806,6 +830,18 @@ export function TerminalWorkspace({
     });
   }, [resolvedActiveTabId, rightSplitTabId, sessionTabs]);
 
+  useEffect(() => {
+    if (!resolvedActiveTabId) {
+      return;
+    }
+
+    const activeTabElement = Array.from(
+      tabBarRef.current?.querySelectorAll<HTMLElement>("[data-session-tab-id]") ?? [],
+    ).find((element) => element.dataset.sessionTabId === resolvedActiveTabId);
+
+    activeTabElement?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [resolvedActiveTabId, sessionTabs.length]);
+
   const renderSessionTab = (tab: WorkspaceSessionTab) => {
     const tabId = getSessionTabId(tab);
     const isFileTransferSessionTab = isFileTransferTab(tab);
@@ -823,6 +859,7 @@ export function TerminalWorkspace({
         ]
           .filter(Boolean)
           .join(" ")}
+        data-session-tab-id={tabId}
         draggable={!isCustomSessionTab}
         key={tabId}
         onDrag={updateLastDragPosition}
@@ -936,6 +973,7 @@ export function TerminalWorkspace({
                 onDragLeave={() => setSplitDragOverPane(null)}
                 onDragOver={(event) => dragTabOverSplitPane(event, "left")}
                 onDrop={(event) => dropTabOnSplitPane(event, "left")}
+                onWheel={scrollTabsHorizontally}
               >
                 {leftSplitTabs.map(renderSessionTab)}
               </nav>
@@ -952,7 +990,7 @@ export function TerminalWorkspace({
                 onDragOver={(event) => dragTabOverSplitPane(event, "right")}
                 onDrop={(event) => dropTabOnSplitPane(event, "right")}
               >
-                <nav className="tabs" aria-label="右侧标签页">
+                <nav className="tabs" aria-label="右侧标签页" onWheel={scrollTabsHorizontally}>
                   {renderSessionTab(splitRightTab)}
                 </nav>
                 <button
@@ -967,7 +1005,7 @@ export function TerminalWorkspace({
               </div>
             </>
           ) : (
-            <nav className="tabs" aria-label="已打开会话">
+            <nav className="tabs" aria-label="已打开会话" onWheel={scrollTabsHorizontally}>
               {sessionTabs.map(renderSessionTab)}
             </nav>
           )}

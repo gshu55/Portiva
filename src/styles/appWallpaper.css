@@ -61,6 +61,7 @@
     0 10px 28px color-mix(in srgb, #000 10%, transparent),
     inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent); */
   --wallpaper-nested-bg: color-mix(in srgb, var(--button-muted-bg) 72%, transparent);
+  --file-pane-bg: transparent;
 }
 
 .app-shell[data-background="true"]::after {
@@ -128,31 +129,6 @@
     color-mix(in srgb, var(--accent) 7%, transparent),
     transparent 36%
   );
-}
-
-/* One shared primary surface for every feature area. */
-.app-shell[data-background="true"] :is(
-  .saved-connection-card,
-  .saved-connections-empty,
-  .settings-block,
-  .serial-session-bar,
-  .serial-main-pane,
-  .serial-control-main,
-  .network-scan-summary,
-  .network-scan-results,
-  .http-request-editor,
-  .http-response-workspace,
-  .http-environment-workbench,
-  .http-share-workbench,
-  .file-browser-list,
-  .simple-sftp-list,
-  .terminal-pane,
-  .protocol-card,
-  .launcher-row,
-  .status-dock
-) {
-  border: 1px solid var(--wallpaper-surface-border);
-  border-radius: var(--wallpaper-surface-radius);
 }
 
 /* Standalone feature headers own the same surface opacity as their body. */
@@ -232,10 +208,8 @@
   border: 1px solid var(--wallpaper-surface-border);
 }
 
-/* SFTP: panes and queue wrappers are structural; lists own the useful surface. */
+/* SFTP: the page and file panes own frames; queue wrappers stay structural. */
 .app-shell[data-background="true"] :is(
-  .file-manager,
-  .file-pane,
   .file-manager > .transfer-queue,
   .simple-sftp-transfers
 ) {
@@ -263,10 +237,13 @@
 .app-shell[data-background="true"] .file-list .file-browser-row,
 .app-shell[data-background="true"] .simple-sftp-row {
   border: 0;
-  border-bottom: 1px solid var(--border-faint);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.app-shell[data-background="true"] .simple-sftp-row {
+  border-bottom: 1px solid var(--border-faint);
 }
 
 .app-shell[data-background="true"] .file-list .file-browser-row:hover:not(:disabled),
@@ -425,10 +402,13 @@
 .app-shell[data-background="true"] .file-list .file-browser-row,
 .app-shell[data-background="true"] .simple-sftp-row {
   border: 0;
-  border-bottom: 1px solid var(--border-faint);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.app-shell[data-background="true"] .simple-sftp-row {
+  border-bottom: 1px solid var(--border-faint);
 }
 
 /* The xterm canvas stays transparent; the terminal pane owns the one surface. */

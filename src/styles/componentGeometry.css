@@ -65,3 +65,19 @@
 ) {
   border-radius: 0;
 }
+
+/* Modifier-assisted mouse selection can make Chromium switch to keyboard focus
+ * modality. Replace its native black outline with the same single inset focus
+ * treatment used by the SFTP selection state. */
+.app-shell :is(.file-browser-row, .simple-sftp-row):focus {
+  outline: none;
+}
+
+.app-shell :is(.file-browser-row, .simple-sftp-row):focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.app-shell .simple-sftp-row:last-of-type {
+  border-bottom: 0;
+}

@@ -301,6 +301,7 @@ export interface WorkspaceSessionTab {
   restored?: boolean;
   terminal: TerminalSession | null;
   terminalSnapshot: TerminalSnapshot | null;
+  terminalWorkingDirectory?: string | null;
 }
 
 export interface NetworkInterfaceInfo {

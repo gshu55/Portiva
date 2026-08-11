@@ -3,8 +3,10 @@ import type { RemoteEntry } from "../../shared/types";
 
 interface FileEntryContextMenuProps {
   canAct: boolean;
+  canCopySelection?: boolean;
   copyLabel: string;
   entry: RemoteEntry | null;
+  selectionCount?: number;
   position: {
     x: number;
     y: number;
@@ -18,8 +20,10 @@ interface FileEntryContextMenuProps {
 
 export function FileEntryContextMenu({
   canAct,
+  canCopySelection,
   copyLabel,
   entry,
+  selectionCount,
   onClose,
   onCopyToPeer,
   onCreateDirectory,
@@ -27,6 +31,8 @@ export function FileEntryContextMenu({
   onRename,
   position,
 }: FileEntryContextMenuProps) {
+  const selectedCount = selectionCount ?? (entry ? 1 : 0);
+  const canCopy = canCopySelection ?? isTransferableEntry(entry);
   const runAction = async (action: () => void | Promise<void>) => {
     await action();
     onClose();
@@ -43,28 +49,28 @@ export function FileEntryContextMenu({
         <span>新建目录</span>
       </Button>
       <Button
-        disabled={!canAct || !isTransferableEntry(entry)}
+        disabled={!canAct || !canCopy}
         icon="copy"
         onClick={() => void runAction(onCopyToPeer)}
         role="menuitem"
-        title={isTransferableEntry(entry) ? copyLabel : "当前仅支持传输普通文件或文件夹"}
+        title={canCopy ? copyLabel : "当前仅支持传输普通文件或文件夹"}
         tone="muted"
       >
-        <span>{copyLabel}</span>
+        <span>{selectedCount > 1 ? `${copyLabel} ${selectedCount} 项` : copyLabel}</span>
       </Button>
-      <Button disabled={!canAct || !entry} icon="edit" onClick={() => void runAction(onRename)} role="menuitem" title="重命名" tone="muted">
+      <Button disabled={!canAct || !entry || selectedCount > 1} icon="edit" onClick={() => void runAction(onRename)} role="menuitem" title={selectedCount > 1 ? "多选时不能重命名" : "重命名"} tone="muted">
         <span>重命名</span>
       </Button>
       <Button
         className="danger-action"
-        disabled={!canAct || !entry}
+        disabled={!canAct || selectedCount === 0}
         icon="trash"
         onClick={() => void runAction(onRemove)}
         role="menuitem"
-        title="删除"
+        title={selectedCount > 1 ? `删除 ${selectedCount} 项` : "删除"}
         tone="danger"
       >
-        <span>删除</span>
+        <span>{selectedCount > 1 ? `删除 ${selectedCount} 项` : "删除"}</span>
       </Button>
     </div>
   );

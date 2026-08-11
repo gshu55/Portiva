@@ -398,6 +398,9 @@ export function usePortivaWorkspace() {
       ? terminalSnapshotState
       : null
     : null;
+  const activeTerminalWorkingDirectory = activeSessionTab?.terminal?.id === activeTerminal?.id
+    ? activeSessionTab?.terminalWorkingDirectory ?? null
+    : null;
 
   const capabilities = capabilitiesByType[activeProfile.type];
   const activeConnectionCapabilities = activeConnection?.capabilities ?? capabilities;
@@ -427,6 +430,7 @@ export function usePortivaWorkspace() {
               fileTransferSession: null,
               terminal: null,
               terminalSnapshot: null,
+              terminalWorkingDirectory: null,
             }
           : tab,
       ),
@@ -1496,7 +1500,7 @@ export function usePortivaWorkspace() {
 
         const opened = await localShellOpen(defaultTerminalSize);
         const nextTab: WorkspaceSessionTab = {
-          id: opened.connection.id,
+          id: tabId,
           kind: "terminal",
           connection: opened.connection,
           terminal: opened.terminal,
@@ -1512,7 +1516,7 @@ export function usePortivaWorkspace() {
         });
         clearFileTransferView();
         setActiveConnection(opened.connection);
-        setActiveSessionTabId(opened.connection.id);
+        setActiveSessionTabId(tabId);
         setActiveTerminal(opened.terminal);
         setTerminalSnapshotState(opened.terminalSnapshot);
 
@@ -1624,7 +1628,7 @@ export function usePortivaWorkspace() {
       }
 
       const nextTab: WorkspaceSessionTab = {
-        id: session.id,
+        id: tabId,
         kind: "terminal",
         connection: session,
         terminal,
@@ -1644,7 +1648,7 @@ export function usePortivaWorkspace() {
       });
       clearFileTransferView();
       setActiveConnection(session);
-      setActiveSessionTabId(session.id);
+      setActiveSessionTabId(tabId);
       setActiveTerminal(terminal);
       setTerminalSnapshotState(initialTerminalSnapshot);
       setActiveProfileId(profile.id);
@@ -1910,13 +1914,18 @@ export function usePortivaWorkspace() {
   }, []);
 
   const closeConnection = useCallback(async (connectionId: string) => {
-    const closingTabIndex = sessionTabs.findIndex((tab) => (tab.id ?? tab.connection.id) === connectionId);
+    const closingTabIndex = sessionTabs.findIndex(
+      (tab) =>
+        (tab.id ?? tab.connection.id) === connectionId ||
+        tab.connection.id === connectionId,
+    );
     const closingTab = closingTabIndex >= 0 ? sessionTabs[closingTabIndex] : null;
 
     if (!closingTab) {
       setWorkspaceMessage(`未找到可关闭的连接：${connectionId}。`);
       return;
     }
+    const closingTabId = closingTab.id ?? closingTab.connection.id;
 
     if ((closingTab.kind ?? "terminal") === "file-transfer") {
       try {
@@ -1932,7 +1941,7 @@ export function usePortivaWorkspace() {
         return;
       }
 
-      const remainingTabs = sessionTabs.filter((tab) => (tab.id ?? tab.connection.id) !== connectionId);
+      const remainingTabs = sessionTabs.filter((tab) => (tab.id ?? tab.connection.id) !== closingTabId);
       const nextTab =
         remainingTabs[closingTabIndex - 1] ??
         remainingTabs[closingTabIndex] ??
@@ -1941,7 +1950,7 @@ export function usePortivaWorkspace() {
 	      setSessionTabs(remainingTabs);
 	      setWorkspaceMessage("");
 
-      if (activeSessionTabId === connectionId) {
+      if (activeSessionTabId === closingTabId) {
         if (nextTab) {
           activateSessionTab(nextTab);
         } else {
@@ -1966,15 +1975,15 @@ export function usePortivaWorkspace() {
         await terminalClose(closingTab.terminal.id);
       }
 
-      await connectionClose(connectionId);
+      await connectionClose(closingTab.connection.id);
 	      const remainingTabs = sessionTabs.filter(
         (tab) =>
-          (tab.id ?? tab.connection.id) !== connectionId &&
+          (tab.id ?? tab.connection.id) !== closingTabId &&
           tab.parentConnectionId !== closingTab.connection.id,
       );
       const isClosingActive =
-        activeSessionTabId === connectionId ||
-        activeConnection?.id === connectionId ||
+        activeSessionTabId === closingTabId ||
+        activeConnection?.id === closingTab.connection.id ||
         activeConnection?.id === `${closingTab.connection.id}:sftp`;
       const nextTab =
         remainingTabs[closingTabIndex - 1] ??
@@ -2316,14 +2325,41 @@ export function usePortivaWorkspace() {
       throw new Error("请先打开支持 SSH/SFTP 的连接再执行文件传输操作。");
     }
 
-    if (activeFileTransferSession?.connectionId === activeConnection.id) {
+    const activeFileTab =
+      activeSessionTab && (activeSessionTab.kind ?? "terminal") === "file-transfer"
+        ? activeSessionTab
+        : null;
+
+    // 独立 SFTP 标签使用合成的界面 ID；后端连接 ID 以标签绑定的传输会话为准。
+    if (activeFileTab?.fileTransferSession) {
+      if (activeFileTransferSession?.id !== activeFileTab.fileTransferSession.id) {
+        setActiveFileTransferSession(activeFileTab.fileTransferSession);
+      }
+      return activeFileTab.fileTransferSession;
+    }
+
+    const backendConnectionId = activeFileTab?.parentConnectionId ?? activeConnection.id;
+
+    if (activeFileTransferSession?.connectionId === backendConnectionId) {
       return activeFileTransferSession;
     }
 
-    const session = await fileTransferOpen(activeConnection.id);
+    const session = await fileTransferOpen(backendConnectionId);
     setActiveFileTransferSession(session);
+
+    if (activeFileTab) {
+      const activeFileTabId = activeFileTab.id ?? activeFileTab.connection.id;
+      setSessionTabs((current) =>
+        current.map((tab) =>
+          (tab.id ?? tab.connection.id) === activeFileTabId
+            ? { ...tab, fileTransferSession: session }
+            : tab,
+        ),
+      );
+    }
+
     return session;
-  }, [activeConnection, activeConnectionCapabilities.fileTransfer, activeFileTransferSession]);
+  }, [activeConnection, activeConnectionCapabilities.fileTransfer, activeFileTransferSession, activeSessionTab]);
 
   const refreshLocalFiles = useCallback(async (pathOverride?: string) => {
     try {
@@ -2546,10 +2582,23 @@ export function usePortivaWorkspace() {
       setWorkspaceMessage(`已从 ${session.protocol} 加载 ${entries.length} 个远程条目。`);
       return true;
     } catch (error) {
-      setWorkspaceMessage(`文件传输失败，正在尝试重连 SFTP：${String(error)}`);
+      const errorMessage = String(error);
+
+      if (!isRetryableSftpConnectionError(errorMessage)) {
+        setWorkspaceMessage(`读取远程目录 ${targetPath} 失败：${errorMessage}`);
+        return false;
+      }
+
+      if ((activeSessionTab?.kind ?? "terminal") !== "file-transfer") {
+        setActiveFileTransferSession(null);
+        setWorkspaceMessage(`SFTP 通道恢复失败：${errorMessage}。请再次刷新目录重试。`);
+        return false;
+      }
+
+      setWorkspaceMessage(`SFTP 连接异常，正在尝试重连：${errorMessage}`);
       return Boolean(await reconnectActiveFileTransfer(targetPath));
     }
-  }, [ensureFileTransferSession, reconnectActiveFileTransfer, remotePath]);
+  }, [activeSessionTab?.kind, ensureFileTransferSession, reconnectActiveFileTransfer, remotePath]);
 
   const refreshVisibleLocalFiles = useCallback(async (targetPath: string) => {
     if (localPathRef.current !== targetPath) {
@@ -2918,6 +2967,51 @@ export function usePortivaWorkspace() {
     }
   }, [ensureFileTransferSession, refreshRemoteFiles, selectedRemoteEntry]);
 
+  const removeRemoteEntries = useCallback(async (entries: RemoteEntry[]) => {
+    const targets = entries.filter(
+      (entry, index, list) =>
+        entry.path !== "/" &&
+        entry.path !== "." &&
+        list.findIndex((candidate) => candidate.path === entry.path) === index,
+    );
+
+    if (targets.length === 0) {
+      setWorkspaceMessage("请先选择远程条目再删除。");
+      return { failedCount: 0, removedCount: 0 };
+    }
+
+    try {
+      const session = await ensureFileTransferSession();
+      const failures: string[] = [];
+      let removedCount = 0;
+
+      for (const entry of targets) {
+        try {
+          await fileTransferRemove(session.id, entry.path);
+          removedCount += 1;
+        } catch (error) {
+          failures.push(`${entry.name}：${String(error)}`);
+        }
+      }
+
+      setSelectedRemoteEntry(null);
+      await refreshRemoteFiles(remotePath);
+
+      if (failures.length === 0) {
+        setWorkspaceMessage(`已删除 ${removedCount} 个远程条目。`);
+      } else {
+        setWorkspaceMessage(
+          `批量删除完成：成功 ${removedCount} 项，失败 ${failures.length} 项。${failures[0]}`,
+        );
+      }
+
+      return { failedCount: failures.length, removedCount };
+    } catch (error) {
+      setWorkspaceMessage(`批量删除失败：${String(error)}`);
+      return { failedCount: targets.length, removedCount: 0 };
+    }
+  }, [ensureFileTransferSession, refreshRemoteFiles, remotePath]);
+
   const removeLocalEntry = useCallback(async (entryOverride?: RemoteEntry | null) => {
     const targetEntry = entryOverride ?? selectedLocalEntry;
 
@@ -3258,6 +3352,32 @@ export function usePortivaWorkspace() {
     setRemoteEntries(emptyRemoteEntries);
   }, []);
 
+  const reportTerminalWorkingDirectory = useCallback((terminalId: string, path: string) => {
+    const trimmedPath = path.trim();
+
+    if (!trimmedPath) {
+      return;
+    }
+
+    const normalizedPath = normalizeRemotePathInput(trimmedPath);
+    setSessionTabs((current) => {
+      let changed = false;
+      const next = current.map((tab) => {
+        if (tab.terminal?.id !== terminalId || tab.terminalWorkingDirectory === normalizedPath) {
+          return tab;
+        }
+
+        changed = true;
+        return {
+          ...tab,
+          terminalWorkingDirectory: normalizedPath,
+        };
+      });
+
+      return changed ? next : current;
+    });
+  }, []);
+
   const changeLocalPath = useCallback((path: string) => {
     setLocalPathState(path);
     setSelectedLocalEntry(null);
@@ -3331,6 +3451,7 @@ export function usePortivaWorkspace() {
     knownHosts,
     terminalSearchQuery,
     terminalSnapshot: activeSessionTerminalSnapshot,
+    terminalWorkingDirectory: activeTerminalWorkingDirectory,
     tunnels,
     transfers,
     workspaceMessage,
@@ -3365,6 +3486,7 @@ export function usePortivaWorkspace() {
     refreshLocalFiles,
     removeLocalEntry,
     removeRemoteEntry,
+    removeRemoteEntries,
 	    refreshRemoteFiles,
 	    refreshSerialPorts,
 	    refreshWorkspace,
@@ -3374,6 +3496,7 @@ export function usePortivaWorkspace() {
     renameLocalEntry,
     renameRemoteEntry,
     reorderSessionTabs,
+    reportTerminalWorkingDirectory,
     reportWorkspaceMessage,
     resolveTransferConflict,
     restoreDetachedSessionTab,
@@ -3420,6 +3543,20 @@ function profileDedupKey(profile: ConnectionProfile) {
 
   const username = "username" in profile ? profile.username ?? "" : "";
   return `${profile.type}:${username.trim().toLowerCase()}@${profile.host.trim().toLowerCase()}:${profile.port}`;
+}
+
+function isRetryableSftpConnectionError(error: string) {
+  const normalized = error.toLowerCase();
+  return [
+    "session closed",
+    "channel closed",
+    "connection closed",
+    "unexpected eof",
+    "end of file",
+    "broken pipe",
+    "connection reset",
+    "transport closed",
+  ].some((pattern) => normalized.includes(pattern));
 }
 
 function normalizeRemotePathInput(path: string) {
