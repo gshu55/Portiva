@@ -5,12 +5,14 @@ interface SftpDeleteConfirmDialogProps {
   entries: RemoteEntry[];
   onCancel: () => void;
   onConfirm: () => void | Promise<void>;
+  targetLabel?: string;
 }
 
 export function SftpDeleteConfirmDialog({
   entries,
   onCancel,
   onConfirm,
+  targetLabel = "服务器",
 }: SftpDeleteConfirmDialogProps) {
   if (entries.length === 0) {
     return null;
@@ -23,7 +25,7 @@ export function SftpDeleteConfirmDialog({
       onMouseDown={onCancel}
     >
       <section
-        aria-label="确认删除远程条目"
+        aria-label={`确认删除${targetLabel}条目`}
         aria-modal="true"
         className="modal-card simple-delete-confirm"
         role="dialog"
@@ -37,7 +39,7 @@ export function SftpDeleteConfirmDialog({
         </header>
         <div className="simple-delete-confirm-content">
           <p>
-            确定要删除选中的 {entries.length} 个远程条目吗？文件夹会递归删除，该操作会直接在服务器上执行。
+            确定要删除选中的 {entries.length} 个条目吗？文件夹会递归删除，该操作会直接在{targetLabel}上执行。
           </p>
           <div className="simple-delete-confirm-list">
             {entries.slice(0, 6).map((entry) => (

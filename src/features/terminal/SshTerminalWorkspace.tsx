@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { formatBytes, formatUptime } from "../../shared/format";
 import { Icon } from "../../shared/Icon";
-import { sshCollectHostOverview } from "../../shared/ipc/commands";
-import type { SshHostOverview } from "../../shared/types";
+import { sshCollectHostOverview, wslCollectHostOverview } from "../../shared/ipc/commands";
+import type { SshHostOverview, WslHostOverview } from "../../shared/types";
 import { Card, ConfirmDialog, IconButton, SegmentedControl, TextInput, VirtualList } from "../../shared/ui";
 import type { SavedSshCommand } from "./useSavedSshCommands";
 import "./sshTerminalWorkspace.css";
 
-const overviewRefreshIntervalMs = 10_000;
+const sshOverviewRefreshIntervalMs = 10_000;
+const wslOverviewRefreshIntervalMs = 2_000;
 
 interface SshTerminalWorkspaceProps {
   children: ReactNode;
@@ -15,9 +16,11 @@ interface SshTerminalWorkspaceProps {
   commandPanelVisible: boolean;
   compact: boolean;
   connectionId: string;
+  distribution?: string;
   isActive: boolean;
   profileId: string;
   savedCommands: SavedSshCommand[];
+  sessionKind?: "ssh" | "wsl";
   sftpPanelAvailable: boolean;
   sftpPanelVisible: boolean;
   statusPanelVisible: boolean;
@@ -39,6 +42,14 @@ interface NetworkSample {
 
 interface HostOverviewState {
   data: SshHostOverview | null;
+  error: string | null;
+  loading: boolean;
+  receivedBytesPerSecond: number | null;
+  transmittedBytesPerSecond: number | null;
+}
+
+interface WslHostOverviewState {
+  data: WslHostOverview | null;
   error: string | null;
   loading: boolean;
   receivedBytesPerSecond: number | null;
@@ -131,9 +142,93 @@ function useSshHostOverview(profileId: string, connectionId: string, enabled: bo
     }
 
     void refresh();
-    const timer = window.setInterval(() => void refresh(), overviewRefreshIntervalMs);
+    const timer = window.setInterval(() => void refresh(), sshOverviewRefreshIntervalMs);
     return () => window.clearInterval(timer);
   }, [connectionId, enabled, profileId, refresh]);
+
+  return { ...state, refresh };
+}
+
+function useWslHostOverview(distribution: string, enabled: boolean) {
+  const [state, setState] = useState<WslHostOverviewState>({
+    data: null,
+    error: null,
+    loading: false,
+    receivedBytesPerSecond: null,
+    transmittedBytesPerSecond: null,
+  });
+  const refreshingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const previousNetworkSampleRef = useRef<NetworkSample | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    if (!enabled || !distribution || refreshingRef.current) {
+      return;
+    }
+
+    refreshingRef.current = true;
+    setState((current) => ({ ...current, error: null, loading: true }));
+
+    try {
+      const data = await wslCollectHostOverview(distribution);
+      const sampledAt = Date.now();
+      const previous = previousNetworkSampleRef.current;
+      const elapsedSeconds = previous ? Math.max(0.001, (sampledAt - previous.sampledAt) / 1000) : null;
+      const canCalculateRate =
+        previous &&
+        elapsedSeconds &&
+        data.networkReceivedBytes !== null &&
+        data.networkTransmittedBytes !== null &&
+        data.networkReceivedBytes >= previous.receivedBytes &&
+        data.networkTransmittedBytes >= previous.transmittedBytes;
+
+      if (data.networkReceivedBytes !== null && data.networkTransmittedBytes !== null) {
+        previousNetworkSampleRef.current = {
+          receivedBytes: data.networkReceivedBytes,
+          sampledAt,
+          transmittedBytes: data.networkTransmittedBytes,
+        };
+      }
+
+      if (mountedRef.current) {
+        setState({
+          data,
+          error: null,
+          loading: false,
+          receivedBytesPerSecond: canCalculateRate
+            ? (data.networkReceivedBytes! - previous.receivedBytes) / elapsedSeconds
+            : null,
+          transmittedBytesPerSecond: canCalculateRate
+            ? (data.networkTransmittedBytes! - previous.transmittedBytes) / elapsedSeconds
+            : null,
+        });
+      }
+    } catch (error) {
+      if (mountedRef.current) {
+        setState((current) => ({ ...current, error: overviewError(error), loading: false }));
+      }
+    } finally {
+      refreshingRef.current = false;
+    }
+  }, [distribution, enabled]);
+
+  useEffect(() => {
+    previousNetworkSampleRef.current = null;
+    if (!enabled || !distribution) {
+      return;
+    }
+
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), wslOverviewRefreshIntervalMs);
+    return () => window.clearInterval(timer);
+  }, [distribution, enabled, refresh]);
 
   return { ...state, refresh };
 }
@@ -206,9 +301,11 @@ export function SshTerminalWorkspace({
   commandPanelVisible,
   compact,
   connectionId,
+  distribution = "",
   isActive,
   profileId,
   savedCommands,
+  sessionKind = "ssh",
   sftpPanelAvailable,
   sftpPanelVisible,
   statusPanelVisible,
@@ -226,13 +323,25 @@ export function SshTerminalWorkspace({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SavedSshCommand | null>(null);
-  const overview = useSshHostOverview(profileId, connectionId, isActive && statusPanelVisible && terminalReady);
+  const sshOverview = useSshHostOverview(
+    profileId,
+    connectionId,
+    sessionKind === "ssh" && isActive && statusPanelVisible && terminalReady,
+  );
+  const wslOverview = useWslHostOverview(
+    distribution,
+    sessionKind === "wsl" && isActive && statusPanelVisible && terminalReady,
+  );
+  const overview = sessionKind === "wsl" ? wslOverview : sshOverview;
   const savedCommandValues = useMemo(() => new Set(savedCommands.map((item) => item.command)), [savedCommands]);
   const memoryPercent = percent(overview.data?.memoryUsedBytes ?? null, overview.data?.memoryTotalBytes ?? null);
   const diskPercent = percent(overview.data?.diskUsedBytes ?? null, overview.data?.diskTotalBytes ?? null);
-  const cpuPercent =
-    overview.data?.cpuLoad1 !== null && overview.data?.cpuLoad1 !== undefined && overview.data.cpuCount
-      ? Math.min(100, Math.round((overview.data.cpuLoad1 / overview.data.cpuCount) * 100))
+  const cpuPercent = sessionKind === "wsl"
+    ? wslOverview.data?.cpuUsagePercent === null || wslOverview.data?.cpuUsagePercent === undefined
+      ? null
+      : Math.round(wslOverview.data.cpuUsagePercent)
+    : sshOverview.data?.cpuLoad1 !== null && sshOverview.data?.cpuLoad1 !== undefined && sshOverview.data.cpuCount
+      ? Math.min(100, Math.round((sshOverview.data.cpuLoad1 / sshOverview.data.cpuCount) * 100))
       : null;
 
   const addCommand = (event: FormEvent) => {
@@ -261,11 +370,14 @@ export function SshTerminalWorkspace({
   const networkDetail = overview.data
     ? `累计 ↓ ${formatBytes(overview.data.networkReceivedBytes)} · ↑ ${formatBytes(overview.data.networkTransmittedBytes)}`
     : "网络数据不可用";
+  const sessionLabel = sessionKind === "wsl" ? "WSL" : "SSH";
+  const filePanelLabel = sessionKind === "wsl" ? "WSL 文件栏" : "SFTP 栏";
 
   return (
     <section
       className={[
         "ssh-session-workspace",
+        sessionKind === "wsl" ? "wsl-session-workspace" : "",
         compact ? "compact" : "",
         commandPanelVisible ? "commands-expanded" : "commands-hidden",
         statusPanelVisible ? "status-visible" : "status-hidden",
@@ -274,7 +386,7 @@ export function SshTerminalWorkspace({
       <div className="ssh-terminal-stage">
         {children}
         {isActive ? (
-          <div aria-label="SSH 面板控制" className="ssh-terminal-panel-controls" role="toolbar">
+          <div aria-label={`${sessionLabel} 面板控制`} className="ssh-terminal-panel-controls" role="toolbar">
             <IconButton
               aria-label={commandPanelVisible ? "隐藏命令栏" : "显示命令栏"}
               aria-pressed={commandPanelVisible}
@@ -285,13 +397,13 @@ export function SshTerminalWorkspace({
               tone="muted"
             />
             <IconButton
-              aria-label={sftpPanelVisible ? "隐藏 SFTP 栏" : "显示 SFTP 栏"}
+              aria-label={sftpPanelVisible ? `隐藏 ${filePanelLabel}` : `显示 ${filePanelLabel}`}
               aria-pressed={sftpPanelAvailable && sftpPanelVisible}
               disabled={!sftpPanelAvailable}
               icon="folder-open"
               onClick={onToggleSftpPanel}
               size="sm"
-              title={sftpPanelAvailable ? (sftpPanelVisible ? "隐藏 SFTP 栏" : "显示 SFTP 栏") : "当前会话暂不可用 SFTP"}
+              title={sftpPanelAvailable ? (sftpPanelVisible ? `隐藏 ${filePanelLabel}` : `显示 ${filePanelLabel}`) : `当前会话暂不可用 ${filePanelLabel}`}
               tone="muted"
             />
             <IconButton
@@ -362,7 +474,7 @@ export function SshTerminalWorkspace({
                 <VirtualList
                   aria-label="常用命令"
                   className="ssh-command-list"
-                  empty={<span className="ssh-command-empty">保存后可跨 SSH 会话使用</span>}
+                  empty={<span className="ssh-command-empty">保存后可跨终端会话使用</span>}
                   estimateHeight={42}
                   items={savedCommands}
                   keyExtractor={(item) => item.id}
@@ -409,7 +521,7 @@ export function SshTerminalWorkspace({
       ) : null}
 
       {statusPanelVisible ? (
-        <Card as="footer" className="ssh-system-panel" tone="solid">
+        <Card as="footer" className={["ssh-system-panel", sessionKind === "wsl" ? "wsl-system-panel" : ""].filter(Boolean).join(" ")} tone="solid">
           <div className="ssh-system-summary">
           <span
             className={["ssh-system-host", overview.error ? "error" : ""].filter(Boolean).join(" ")}
@@ -420,13 +532,13 @@ export function SshTerminalWorkspace({
                   ? `${overview.data.operatingSystem} · ${overview.data.kernelVersion} · ${overview.data.latencyMs} ms`
                   : terminalReady
                     ? "正在采集主机状态…"
-                    : "SSH 认证完成后自动采集"
+                    : sessionKind === "wsl" ? "WSL 终端就绪后自动采集" : "SSH 认证完成后自动采集"
             }
           >
             <Icon name="server" />
-            <strong>{overview.data?.hostname ?? (overview.loading ? "采集中…" : "SSH 主机")}</strong>
+            <strong>{overview.data?.hostname ?? (overview.loading ? "采集中…" : sessionKind === "wsl" ? distribution || "WSL" : "SSH 主机")}</strong>
           </span>
-          <SystemSummaryItem icon="activity" label="CPU" title={overview.data?.cpuCount ? `${overview.data.cpuCount} 核 · 1 分钟负载` : "CPU 信息不可用"} value={cpuPercent === null ? "—" : `${cpuPercent}%`} />
+          <SystemSummaryItem icon="activity" label="CPU" title={overview.data?.cpuCount ? `${overview.data.cpuCount} 核${sessionKind === "ssh" ? " · 1 分钟负载换算" : " · 实时占用"}` : "CPU 信息不可用"} value={cpuPercent === null ? "—" : `${cpuPercent}%`} />
           <SystemSummaryItem icon="server" label="内存" title={overview.data ? `${formatBytes(overview.data.memoryUsedBytes)} / ${formatBytes(overview.data.memoryTotalBytes)}` : "内存信息不可用"} value={memoryPercent === null ? "—" : `${memoryPercent}%`} />
           <SystemSummaryItem icon="hard-drive" label="磁盘" title={overview.data ? `${formatBytes(overview.data.diskUsedBytes)} / ${formatBytes(overview.data.diskTotalBytes)}` : "根分区信息不可用"} value={diskPercent === null ? "—" : `${diskPercent}%`} />
           <SystemSummaryItem icon="network" label="网络" title={networkDetail} value={networkValue} />

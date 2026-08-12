@@ -16,6 +16,13 @@ export function ActiveFileTransferPanel({
     return null;
   }
 
+  const activeProfile = workspace.profiles.find(
+    (profile) => profile.id === workspace.activeConnection?.profileId,
+  );
+  const connectionName = activeProfile && (activeProfile.type === "ssh" || activeProfile.type === "sftp")
+    ? `${activeProfile.username}@${activeProfile.host}`
+    : workspace.activeConnection?.transport?.host || "远程主机";
+
   return (
     <FileTransferPanel
       capabilities={workspace.capabilities}
@@ -24,6 +31,7 @@ export function ActiveFileTransferPanel({
       localPath={workspace.localPath}
       remoteEntries={workspace.remoteEntries}
       remotePath={workspace.remotePath}
+      remoteTitle={`SFTP / ${connectionName}`}
       selectedLocalEntry={workspace.selectedLocalEntry}
       selectedRemoteEntry={workspace.selectedRemoteEntry}
       transfers={workspace.transfers}

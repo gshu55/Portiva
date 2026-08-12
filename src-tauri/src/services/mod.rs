@@ -21,3 +21,4 @@ pub mod terminal_service;
 pub mod transfer_service;
 pub mod tunnel_service;
 pub mod update_service;
+pub mod wsl_service;

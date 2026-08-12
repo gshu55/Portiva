@@ -21,6 +21,8 @@ export const localRootsPath = "portiva://local-roots";
 
 interface FileTransferPanelProps {
   capabilities: ConnectionCapabilities;
+  compact?: boolean;
+  layoutSide?: "left" | "right";
   openSshPending?: boolean;
   localEntries: RemoteEntry[];
   localPath: string;
@@ -32,6 +34,7 @@ interface FileTransferPanelProps {
   onCancelTransfer: (transferId: string) => void;
   onDeleteTransfer: (transferId: string) => void;
   onOpenSsh: () => void;
+  onToggleLayoutSide?: () => void;
   onCreateLocalDirectory: (name: string) => boolean | void | Promise<boolean | void>;
   onCreateRemoteDirectory: (name: string) => boolean | void | Promise<boolean | void>;
   onDownloadEntry: (entry: RemoteEntry) => void | Promise<void>;
@@ -50,16 +53,24 @@ interface FileTransferPanelProps {
   onUploadEntry: (entry: RemoteEntry) => void | Promise<void>;
   onUploadLocalPaths: (localPaths: string[]) => void | Promise<void>;
   onUploadSelected: () => void | Promise<void>;
+  remoteTitle?: string;
+  remoteEmptyMessage?: string;
+  remoteNameRules?: "remote" | "wsl";
+  deleteTargetLabel?: string;
+  openTerminalLabel?: string;
 }
 
 export function FileTransferPanel({
   capabilities,
+  compact = false,
+  layoutSide,
   openSshPending = false,
   localEntries,
   localPath,
   onCancelTransfer,
   onDeleteTransfer,
   onOpenSsh,
+  onToggleLayoutSide,
   onCreateLocalDirectory,
   onCreateRemoteDirectory,
   onDownloadEntry,
@@ -78,6 +89,11 @@ export function FileTransferPanel({
   onUploadEntry,
   onUploadLocalPaths,
   onUploadSelected,
+  remoteTitle = "SFTP",
+  remoteEmptyMessage,
+  remoteNameRules = "remote",
+  deleteTargetLabel,
+  openTerminalLabel,
   remoteEntries,
   remotePath,
   selectedLocalEntry,
@@ -229,50 +245,54 @@ export function FileTransferPanel({
 
   return (
     <section
-      className="panel file-manager"
+      className={["panel", "file-manager", compact ? "compact" : ""].filter(Boolean).join(" ")}
       ref={panelRef}
       style={{
         gridTemplateRows: `minmax(0, 1fr) 6px minmax(72px, ${transferPanelPercent}%)`,
       }}
     >
       <div className="file-manager-grid">
-        <FilePane
-          entries={localEntries}
-          path={localPath}
-          selectedEntry={selectedLocalEntry}
-          pathKind="local"
-          title="本地"
-          onCreateDirectory={(name) => onCreateLocalDirectory(name)}
-          onOpenDirectory={(path) => onRefreshLocal(path)}
-          onOpenRoots={() => {
-            onRefreshLocal(localRootsPath);
-          }}
-          onRefresh={() => onRefreshLocal()}
-          copyLabel="上传"
-          onCopyToPeer={(entry) => onUploadEntry(entry)}
-          onRemove={onRemoveLocal}
-          onRename={(entry, name) => onRenameLocal(entry, name)}
-          onSelectEntry={onSelectLocalEntry}
-        />
+        {!compact ? (
+          <FilePane
+            entries={localEntries}
+            path={localPath}
+            selectedEntry={selectedLocalEntry}
+            pathKind="local"
+            title="本地"
+            onCreateDirectory={(name) => onCreateLocalDirectory(name)}
+            onOpenDirectory={(path) => onRefreshLocal(path)}
+            onOpenRoots={() => {
+              onRefreshLocal(localRootsPath);
+            }}
+            onRefresh={() => onRefreshLocal()}
+            copyLabel="上传"
+            onCopyToPeer={(entry) => onUploadEntry(entry)}
+            onRemove={onRemoveLocal}
+            onRename={(entry, name) => onRenameLocal(entry, name)}
+            onSelectEntry={onSelectLocalEntry}
+          />
+        ) : null}
 
-        <div className="file-copy-actions" aria-label="传输操作">
-          <IconButton
-            disabled={!canUseRemote || !isTransferableEntry(selectedLocalEntry)}
-            icon="upload"
-            onClick={onUploadSelected}
-            aria-label="上传选中的本地文件或文件夹"
-            title="上传选中的本地文件或文件夹"
-          />
-          <IconButton
-            disabled={!canUseRemote || selectedTransferableEntries.length === 0}
-            icon="download"
-            onClick={() => void downloadRemoteEntries()}
-            aria-label="下载选中的远程文件或文件夹"
-            title="下载选中的远程文件或文件夹"
-          />
-          <span title={selectedLocalLabel}>本地</span>
-          <span title={selectedRemoteLabel}>远程</span>
-        </div>
+        {!compact ? (
+          <div className="file-copy-actions" aria-label="传输操作">
+            <IconButton
+              disabled={!canUseRemote || !isTransferableEntry(selectedLocalEntry)}
+              icon="upload"
+              onClick={onUploadSelected}
+              aria-label="上传选中的本地文件或文件夹"
+              title="上传选中的本地文件或文件夹"
+            />
+            <IconButton
+              disabled={!canUseRemote || selectedTransferableEntries.length === 0}
+              icon="download"
+              onClick={() => void downloadRemoteEntries()}
+              aria-label="下载选中的远程文件或文件夹"
+              title="下载选中的远程文件或文件夹"
+            />
+            <span title={selectedLocalLabel}>本地</span>
+            <span title={selectedRemoteLabel}>远程</span>
+          </div>
+        ) : null}
 
         <FilePane
           disabled={!canUseRemote}
@@ -281,7 +301,10 @@ export function FileTransferPanel({
           path={remotePath}
           selectedEntry={selectedRemoteEntry}
           pathKind="remote"
-          title="远程 SFTP"
+          title={remoteTitle}
+          emptyMessage={remoteEmptyMessage}
+          nameRules={remoteNameRules}
+          layoutSide={layoutSide}
           openSshPending={openSshPending}
           onDropUploadLocalPaths={onUploadLocalPaths}
           onCreateDirectory={(name) => onCreateRemoteDirectory(name)}
@@ -289,7 +312,9 @@ export function FileTransferPanel({
           onOpenRoot={() => {
             onRefreshRemote("/");
           }}
-          onOpenSsh={onOpenSsh}
+          onOpenSsh={compact ? undefined : onOpenSsh}
+          onToggleLayoutSide={onToggleLayoutSide}
+          openTerminalLabel={openTerminalLabel}
           onRefresh={() => onRefreshRemote()}
           copyLabel="下载"
           onCopyToPeer={(entry) => onDownloadEntry(entry)}
@@ -326,6 +351,7 @@ export function FileTransferPanel({
       />
       <SftpDeleteConfirmDialog
         entries={deleteConfirmEntries}
+        targetLabel={deleteTargetLabel}
         onCancel={() => setDeleteConfirmEntries([])}
         onConfirm={confirmDeleteRemoteEntries}
       />
@@ -335,7 +361,9 @@ export function FileTransferPanel({
 
 interface FilePaneProps {
   disabled?: boolean;
+  layoutSide?: "left" | "right";
   openSshPending?: boolean;
+  openTerminalLabel?: string;
   entries: RemoteEntry[];
   path: string;
   pathKind: "local" | "remote";
@@ -348,6 +376,7 @@ interface FilePaneProps {
   onOpenRoot?: () => void;
   onOpenRoots?: () => void;
   onOpenSsh?: () => void;
+  onToggleLayoutSide?: () => void;
   onRefresh: () => boolean | void | Promise<boolean | void>;
   onRemove: (entry?: RemoteEntry | null) => void | Promise<void>;
   onRename: (entry: RemoteEntry, name: string) => boolean | void | Promise<boolean | void>;
@@ -355,6 +384,8 @@ interface FilePaneProps {
   dropUploadEnabled?: boolean;
   onDropUploadLocalPaths?: (localPaths: string[]) => void;
   multiSelection?: FilePaneMultiSelection;
+  emptyMessage?: string;
+  nameRules?: "local" | "remote" | "wsl";
 }
 
 interface FilePaneMultiSelection {
@@ -383,17 +414,22 @@ function FilePane({
   onOpenRoot,
   onOpenRoots,
   onOpenSsh,
+  onToggleLayoutSide,
   onRefresh,
   onRemove,
   onRename,
   onDropUploadLocalPaths,
   onSelectEntry,
   multiSelection,
+  emptyMessage,
   path,
   pathKind,
+  layoutSide,
+  nameRules = pathKind,
   selectedEntry,
   title,
   openSshPending = false,
+  openTerminalLabel = "打开此主机的 SSH 终端",
 }: FilePaneProps) {
   const fileListRef = useRef<HTMLDivElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -478,7 +514,7 @@ function FilePane({
 
   const createDirectoryInline = () => {
     const baseName = "新建文件夹";
-    const nextName = uniqueEntryName(entries, baseName);
+    const nextName = uniqueEntryName(entries, baseName, nameRules);
 
     if (nextName !== baseName) {
       setInlineNotice(`已存在同名文件夹，自动创建为 ${nextName}`);
@@ -509,8 +545,8 @@ function FilePane({
   };
 
   const commitInlineRename = (entry: RemoteEntry) => {
-    const requestedName = sanitizeEntryName(editingName).trim();
-    const invalidReason = entryNameInvalidReason(requestedName);
+    const requestedName = sanitizeEntryName(editingName, nameRules).trim();
+    const invalidReason = entryNameInvalidReason(requestedName, nameRules);
 
     if (invalidReason) {
       setEditingName(requestedName);
@@ -523,7 +559,7 @@ function FilePane({
       return;
     }
 
-    const nextName = uniqueEntryName(entries, requestedName, entry.path);
+    const nextName = uniqueEntryName(entries, requestedName, nameRules, entry.path);
 
     if (nextName !== requestedName) {
       setInlineNotice(`已存在同名条目，自动重命名为 ${nextName}`);
@@ -548,13 +584,21 @@ function FilePane({
       <div className="file-pane-heading">
         <strong>{title}</strong>
         <div className="file-pane-tools">
+          {onToggleLayoutSide && layoutSide ? (
+            <IconButton
+              aria-label={layoutSide === "right" ? `切换 ${title} 到左侧` : `切换 ${title} 到右侧`}
+              icon={layoutSide === "right" ? "chevron-left" : "chevron-right"}
+              onClick={onToggleLayoutSide}
+              title={layoutSide === "right" ? `切换 ${title} 到左侧` : `切换 ${title} 到右侧`}
+            />
+          ) : null}
           {onOpenSsh ? (
             <IconButton
-              aria-label="打开此主机的 SSH 终端"
               disabled={openSshPending}
               icon="terminal"
               onClick={onOpenSsh}
-              title={openSshPending ? "正在打开 SSH 终端" : "快速打开 SSH 终端"}
+              aria-label={openTerminalLabel}
+              title={openSshPending ? "正在打开终端" : openTerminalLabel}
             />
           ) : null}
           {onOpenRoot ? (
@@ -686,10 +730,14 @@ function FilePane({
                     onBlur={() => commitInlineRename(entry)}
                     onChange={(event) => {
                       const nextName = event.currentTarget.value;
-                      const sanitizedName = sanitizeEntryName(nextName);
+                      const sanitizedName = sanitizeEntryName(nextName, nameRules);
 
                       if (nextName !== sanitizedName) {
-                        setInlineNotice("名称不能包含特殊符号：\\ / : * ? \" < > |");
+                        setInlineNotice(
+                          nameRules === "wsl"
+                            ? "WSL 的 Windows 文件通道不能访问名称中的 \\ / : * ? \" < > |。"
+                            : "名称不能包含特殊符号：\\ / : * ? \" < > |",
+                        );
                       }
 
                       setEditingName(sanitizedName);
@@ -771,7 +819,7 @@ function FilePane({
           )
         ) : (
           <span className="file-browser-empty">
-            {disabled ? "远程文件需要先打开 SFTP 连接。" : "当前目录为空或尚未刷新。"}
+            {disabled ? "远程文件需要先打开 SFTP 连接。" : emptyMessage ?? "当前目录为空或尚未刷新。"}
           </span>
         )}
       </div>
@@ -810,13 +858,18 @@ function FilePane({
   );
 }
 
-function uniqueEntryName(entries: RemoteEntry[], baseName: string, ignorePath?: string) {
+function uniqueEntryName(
+  entries: RemoteEntry[],
+  baseName: string,
+  rules: "local" | "remote" | "wsl" = "local",
+  ignorePath?: string,
+) {
   const names = new Set(
     entries
       .filter((entry) => entry.path !== ignorePath)
       .map((entry) => entry.name.trim().toLocaleLowerCase()),
   );
-  const normalizedBase = safeEntryBaseName(baseName);
+  const normalizedBase = safeEntryBaseName(baseName, rules);
 
   if (!names.has(normalizedBase.toLocaleLowerCase())) {
     return normalizedBase;
@@ -837,13 +890,16 @@ const invalidEntryNamePattern = /[<>:"/\\|?*\x00-\x1F]/g;
 const invalidEntryNameTestPattern = /[<>:"/\\|?*\x00-\x1F]/;
 const windowsReservedEntryNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
-function sanitizeEntryName(name: string) {
-  return name.replace(invalidEntryNamePattern, "");
+const invalidWslEntryNamePattern = /[<>:"/\\|?*\x00-\x1F]/g;
+const invalidWslEntryNameTestPattern = /[<>:"/\\|?*\x00-\x1F]/;
+
+function sanitizeEntryName(name: string, rules: "local" | "remote" | "wsl" = "local") {
+  return name.replace(rules === "wsl" ? invalidWslEntryNamePattern : invalidEntryNamePattern, "");
 }
 
-function safeEntryBaseName(name: string) {
-  const sanitized = sanitizeEntryName(name).trim();
-  const invalidReason = entryNameInvalidReason(sanitized);
+function safeEntryBaseName(name: string, rules: "local" | "remote" | "wsl" = "local") {
+  const sanitized = sanitizeEntryName(name, rules).trim();
+  const invalidReason = entryNameInvalidReason(sanitized, rules);
 
   if (!invalidReason) {
     return sanitized;
@@ -852,7 +908,7 @@ function safeEntryBaseName(name: string) {
   return "新建文件夹";
 }
 
-function entryNameInvalidReason(name: string) {
+function entryNameInvalidReason(name: string, rules: "local" | "remote" | "wsl" = "local") {
   if (!name) {
     return "名称不能为空。";
   }
@@ -861,16 +917,18 @@ function entryNameInvalidReason(name: string) {
     return "名称不能是 . 或 ..。";
   }
 
-  if (/[ .]$/.test(name)) {
+  if (rules !== "wsl" && /[ .]$/.test(name)) {
     return "名称不能以空格或点结尾。";
   }
 
-  if (windowsReservedEntryNames.test(name)) {
+  if (rules !== "wsl" && windowsReservedEntryNames.test(name)) {
     return "名称不能使用系统保留名。";
   }
 
-  if (invalidEntryNameTestPattern.test(name)) {
-    return "名称不能包含特殊符号：\\ / : * ? \" < > |";
+  if ((rules === "wsl" ? invalidWslEntryNameTestPattern : invalidEntryNameTestPattern).test(name)) {
+    return rules === "wsl"
+      ? "WSL 的 Windows 文件通道不能访问名称中的 \\ / : * ? \" < > |。"
+      : "名称不能包含特殊符号：\\ / : * ? \" < > |";
   }
 
   return "";

@@ -81,7 +81,8 @@ const isCustomTab = (tab: WorkspaceSessionTab | null | undefined) =>
   (tab?.kind ?? "terminal") === "settings" ||
   (tab?.kind ?? "terminal") === "http-console" ||
   (tab?.kind ?? "terminal") === "network-scan" ||
-  (tab?.kind ?? "terminal") === "host-dashboard";
+  (tab?.kind ?? "terminal") === "host-dashboard" ||
+  (tab?.kind ?? "terminal") === "wsl-files";
 const homeShortcutHints: Array<{
   fallback: string;
   key: keyof AppSettings["keymap"];
@@ -547,7 +548,7 @@ export function TerminalWorkspace({
         terminalSnapshot={tab.terminalSnapshot}
         onCloseDisconnected={() => onCloseSessionTab(getSessionTabId(tab))}
         onCommandSubmitted={
-          tab.connection.transport?.kind === "ssh"
+          tab.connection.transport?.kind === "ssh" || tab.connection.transport?.kind === "wsl"
             ? (command) => recordCommand(getSessionTabId(tab), command)
             : undefined
         }
@@ -571,21 +572,27 @@ export function TerminalWorkspace({
     const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible);
     const tabId = getSessionTabId(tab);
     const isSshTerminal = tab.connection.transport?.kind === "ssh";
+    const isWslTerminal = tab.connection.transport?.kind === "wsl";
     const sftpPanelAvailable = Boolean(sftpSidePanel && isActivePane && !isTerminalSplitActive);
     const showSftpPanel = sftpPanelAvailable && sshSftpPanelVisible;
-    const primaryContent = isSshTerminal ? (
+    const primaryContent = isSshTerminal || isWslTerminal ? (
       <SshTerminalWorkspace
         commandHistory={commandHistoryByTab[tabId] ?? []}
         commandPanelVisible={sshCommandPanelVisible}
         compact={isTerminalSplitActive}
         connectionId={tab.connection.id}
+        distribution={isWslTerminal ? tab.connection.transport?.host : undefined}
         isActive={isActivePane}
         profileId={tab.connection.profileId}
         savedCommands={savedSshCommands.commands}
+        sessionKind={isWslTerminal ? "wsl" : "ssh"}
         sftpPanelAvailable={sftpPanelAvailable}
         sftpPanelVisible={sshSftpPanelVisible}
         statusPanelVisible={sshStatusPanelVisible}
-        terminalReady={Boolean(tab.connection.transport?.authenticated && tab.terminal?.status === "attached")}
+        terminalReady={Boolean(
+          tab.terminal?.status === "attached" &&
+          (isWslTerminal || tab.connection.transport?.authenticated)
+        )}
         onAddSavedCommand={savedSshCommands.addCommand}
         onRemoveSavedCommand={savedSshCommands.removeCommand}
         onRunCommand={(command) => {
@@ -612,12 +619,12 @@ export function TerminalWorkspace({
         : `minmax(240px, calc(${panelWidth}% - 4px)) 8px minmax(260px, calc(${terminalWidth}% - 4px))`;
     const resizer = showSftpPanel ? (
       <div
-        aria-label="调整 SFTP 面板宽度"
+        aria-label="调整文件面板宽度"
         className="terminal-sftp-resizer"
         onPointerDown={startSftpPanelResize}
         role="separator"
         style={{ gridColumn: "2", gridRow: "1" }}
-        title="调整 SFTP 面板宽度"
+        title="调整文件面板宽度"
       />
     ) : null;
     const resolvedSftpPanel = showSftpPanel && sftpSidePanel ? (
@@ -790,7 +797,7 @@ export function TerminalWorkspace({
     const closedLocalShellTab = sessionTabs.find(
       (tab) =>
         (tab.kind ?? "terminal") === "terminal" &&
-        tab.connection.transport?.kind === "local-shell" &&
+        (tab.connection.transport?.kind === "local-shell" || tab.connection.transport?.kind === "wsl") &&
         isDisconnectedTerminalTab(tab),
     );
 

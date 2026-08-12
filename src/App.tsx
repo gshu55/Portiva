@@ -12,6 +12,7 @@ import { useKeyboardShortcuts } from "./app/useKeyboardShortcuts";
 import { usePortivaWorkspace } from "./app/usePortivaWorkspace";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { SimpleSftpPanel } from "./features/file-transfer/SimpleSftpPanel";
+import { WslFileTransferPanel } from "./features/file-transfer/WslFileTransferPanel";
 import type { ConnectionSecretInput } from "./features/connections/ConnectionProfileDialog";
 import { TerminalWorkspace } from "./features/terminal/TerminalWorkspace";
 import { Button, ConfirmDialog } from "./shared/ui";
@@ -22,7 +23,7 @@ import {
 } from "./shared/appBackgrounds";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
-import { sshCollectHostOverview } from "./shared/ipc/commands";
+import { sshCollectHostOverview, wslCollectHostOverview } from "./shared/ipc/commands";
 
 const detachedReattachRequestEvent = "portiva://detached-reattach-request";
 const detachedReattachCompleteEvent = "portiva://detached-reattach-complete";
@@ -38,6 +39,7 @@ const settingsTabId = "portiva-settings";
 const httpConsoleTabId = "portiva-http-console";
 const networkScannerTabId = "portiva-network-scanner";
 const hostDashboardTabId = "portiva-host-dashboard";
+const wslFilesTabPrefix = "portiva-wsl-files:";
 const HttpConsolePanel = lazy(() =>
   import("./features/http/HttpConsolePanel").then((module) => ({ default: module.HttpConsolePanel })),
 );
@@ -111,6 +113,33 @@ const hostDashboardSessionTab: WorkspaceSessionTab = {
 };
 
 const getAppSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
+const wslFilesTabId = (distribution: string) => `${wslFilesTabPrefix}${encodeURIComponent(distribution)}`;
+const isWslFilesTabId = (tabId: string | null | undefined) => Boolean(tabId?.startsWith(wslFilesTabPrefix));
+
+function wslFilesDistribution(tabId: string) {
+  try {
+    return decodeURIComponent(tabId.slice(wslFilesTabPrefix.length));
+  } catch {
+    return tabId.slice(wslFilesTabPrefix.length);
+  }
+}
+
+function createWslFilesSessionTab(distribution: string): WorkspaceSessionTab {
+  const id = wslFilesTabId(distribution);
+  return {
+    id,
+    kind: "wsl-files",
+    connection: {
+      capabilities: inactiveCapabilities,
+      id,
+      profileId: `wsl:${distribution}`,
+      status: "ready",
+      title: `${distribution} / 文件`,
+    },
+    terminal: null,
+    terminalSnapshot: null,
+  };
+}
 
 function areStringArraysEqual(left: string[], right: string[]) {
   return left.length === right.length && left.every((item, index) => item === right[index]);
@@ -203,6 +232,7 @@ function App() {
   const [settingsTabOpen, setSettingsTabOpen] = useState(false);
   const [httpConsoleOpen, setHttpConsoleOpen] = useState(false);
   const [networkScannerOpen, setNetworkScannerOpen] = useState(false);
+  const [wslFileDistributions, setWslFileDistributions] = useState<string[]>([]);
   const [appTabOrder, setAppTabOrder] = useState<string[]>([]);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
@@ -1032,6 +1062,10 @@ function App() {
     setNetworkScannerOpen(true);
     setActiveShellTabId(networkScannerTabId);
   };
+  const openWslFilesTab = useCallback((distribution: string) => {
+    setWslFileDistributions((current) => current.includes(distribution) ? current : [...current, distribution]);
+    setActiveShellTabId(wslFilesTabId(distribution));
+  }, []);
   const appTabSourceIds = useMemo(
     () => [
       ...workspace.sessionTabs.map(getAppSessionTabId),
@@ -1039,8 +1073,9 @@ function App() {
       ...(httpConsoleOpen ? [httpConsoleTabId] : []),
       ...(networkScannerOpen ? [networkScannerTabId] : []),
       ...(settingsTabOpen ? [settingsTabId] : []),
+      ...wslFileDistributions.map(wslFilesTabId),
     ],
-    [httpConsoleOpen, networkScannerOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs],
+    [httpConsoleOpen, networkScannerOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs, wslFileDistributions],
   );
 
   useEffect(() => {
@@ -1073,10 +1108,14 @@ function App() {
       tabById.set(settingsTabId, settingsSessionTab);
     }
 
+    wslFileDistributions.forEach((distribution) => {
+      tabById.set(wslFilesTabId(distribution), createWslFilesSessionTab(distribution));
+    });
+
     return appendMissingTabIds(appTabOrder, appTabSourceIds)
       .map((tabId) => tabById.get(tabId))
       .filter((tab): tab is WorkspaceSessionTab => Boolean(tab));
-  }, [appTabOrder, appTabSourceIds, httpConsoleOpen, networkScannerOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs]);
+  }, [appTabOrder, appTabSourceIds, httpConsoleOpen, networkScannerOpen, savedConnectionsOpen, settingsTabOpen, workspace.sessionTabs, wslFileDistributions]);
   const activeToolTabId =
     activeShellTabId === hostDashboardTabId && savedConnectionsOpen
       ? hostDashboardTabId
@@ -1086,6 +1125,8 @@ function App() {
           ? httpConsoleTabId
           : activeShellTabId === networkScannerTabId && networkScannerOpen
             ? networkScannerTabId
+            : isWslFilesTabId(activeShellTabId) && wslFileDistributions.includes(wslFilesDistribution(activeShellTabId ?? ""))
+              ? activeShellTabId
             : null;
   const fallbackAppTabId = !workspace.activeSessionTabId
     ? savedConnectionsOpen
@@ -1096,13 +1137,16 @@ function App() {
           ? networkScannerTabId
           : settingsTabOpen
             ? settingsTabId
-            : undefined
+            : wslFileDistributions[0]
+              ? wslFilesTabId(wslFileDistributions[0])
+              : undefined
     : workspace.activeSessionTabId;
   const activeAppTabId = activeToolTabId ?? fallbackAppTabId;
   const hostDashboardActive = activeAppTabId === hostDashboardTabId;
   const settingsTabActive = activeAppTabId === settingsTabId;
   const httpConsoleActive = activeAppTabId === httpConsoleTabId;
   const networkScannerActive = activeAppTabId === networkScannerTabId;
+  const wslFilesActive = isWslFilesTabId(activeAppTabId);
   const selectAppSessionTab = (tabId: string) => {
     if (tabId === hostDashboardTabId) {
       setSavedConnectionsOpen(true);
@@ -1122,6 +1166,10 @@ function App() {
     if (tabId === networkScannerTabId) {
       setNetworkScannerOpen(true);
       setActiveShellTabId(networkScannerTabId);
+      return;
+    }
+    if (isWslFilesTabId(tabId)) {
+      setActiveShellTabId(tabId);
       return;
     }
 
@@ -1145,18 +1193,29 @@ function App() {
       closeNetworkScannerTab();
       return;
     }
+    if (isWslFilesTabId(tabId)) {
+      const distribution = wslFilesDistribution(tabId);
+      const remaining = wslFileDistributions.filter((item) => item !== distribution);
+      setWslFileDistributions(remaining);
+      setActiveShellTabId((active) => {
+        if (active !== tabId) return active;
+        if (workspace.activeSessionTabId) return null;
+        return remaining[0] ? wslFilesTabId(remaining[0]) : null;
+      });
+      return;
+    }
 
     void workspace.closeConnection(tabId);
   };
   const openAppSessionWindow = (tabId: string) => {
-    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId || tabId === networkScannerTabId) {
+    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId || tabId === networkScannerTabId || isWslFilesTabId(tabId)) {
       return;
     }
 
     openSessionWindow(tabId);
   };
   const reconnectAppSessionTab = (tabId: string) => {
-    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId || tabId === networkScannerTabId) {
+    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId || tabId === networkScannerTabId || isWslFilesTabId(tabId)) {
       return;
     }
 
@@ -1171,7 +1230,9 @@ function App() {
       sourceTabId === networkScannerTabId ||
       targetTabId === networkScannerTabId ||
       sourceTabId === hostDashboardTabId ||
-      targetTabId === hostDashboardTabId
+      targetTabId === hostDashboardTabId ||
+      isWslFilesTabId(sourceTabId) ||
+      isWslFilesTabId(targetTabId)
     ) {
       return;
     }
@@ -1196,7 +1257,11 @@ function App() {
       workspace.activeConnection.transport?.kind === "ssh" &&
       workspace.activeConnection.transport.authenticated,
   );
-  const renderInlineSftpPanel = shouldShowInlineSftpPanel
+  const activeWslDistribution = workspace.activeSessionTabKind === "terminal" &&
+    workspace.activeConnection?.transport?.kind === "wsl"
+      ? workspace.activeConnection.transport.host
+      : null;
+  const renderInlineFilePanel = shouldShowInlineSftpPanel
     ? ({
         layoutSide,
         onToggleLayoutSide,
@@ -1210,7 +1275,25 @@ function App() {
           onToggleLayoutSide={onToggleLayoutSide}
         />
       )
-    : undefined;
+    : activeWslDistribution
+      ? ({
+          layoutSide,
+          onToggleLayoutSide,
+        }: {
+          layoutSide: "left" | "right";
+          onToggleLayoutSide: () => void;
+        }) => (
+          <WslFileTransferPanel
+            compact
+            distribution={activeWslDistribution}
+            key={activeWslDistribution}
+            layoutSide={layoutSide}
+            onOpenTerminal={(distribution) => workspace.openWslShellTab(distribution)}
+            onReportMessage={workspace.reportWorkspaceMessage}
+            onToggleLayoutSide={onToggleLayoutSide}
+          />
+        )
+      : undefined;
   const pendingHostTrust =
     hostTrustRequest &&
     workspace.pendingKnownHost &&
@@ -1311,7 +1394,7 @@ function App() {
           capabilities={workspace.capabilities}
           emptyStateNotice={workspace.workspaceMessage}
           fileTransferPanel={fileTransferPanel}
-          sftpSidePanel={renderInlineSftpPanel}
+          sftpSidePanel={renderInlineFilePanel}
           isFullscreen={terminalFullscreen}
           keymap={workspace.settings.keymap}
           reattachHintActive={detachedReattachHint}
@@ -1373,8 +1456,8 @@ function App() {
         <div className="content-grid without-file-manager">
           <TerminalWorkspace
             activeTabId={activeAppTabId}
-            capabilities={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive ? inactiveCapabilities : workspace.capabilities}
-            connection={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive ? null : workspace.activeConnection}
+            capabilities={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive || wslFilesActive ? inactiveCapabilities : workspace.capabilities}
+            connection={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive || wslFilesActive ? null : workspace.activeConnection}
             customTabPanels={{
               [hostDashboardTabId]: (
                 <ConnectionList
@@ -1399,8 +1482,16 @@ function App() {
                     setActiveShellTabId(null);
                     workspace.switchSessionTab(tabId);
                   }}
+                  onOpenWslDistribution={(distribution) => {
+                    setActiveShellTabId(null);
+                    return workspace.openWslShellTab(distribution);
+                  }}
+                  onOpenWslFiles={openWslFilesTab}
                   onRefreshHostOverview={sshCollectHostOverview}
+                  onRefreshWslHostOverview={wslCollectHostOverview}
+                  onRefreshWslDistributions={workspace.refreshWslDistributions}
                   onSelectProfile={workspace.setActiveProfileId}
+                  wslDiscovery={workspace.wslDiscovery}
                 />
               ),
               [httpConsoleTabId]: (
@@ -1414,10 +1505,22 @@ function App() {
                 </Suspense>
               ),
               [settingsTabId]: <SettingsTabPanel workspace={workspace} />,
+              ...Object.fromEntries(wslFileDistributions.map((distribution) => [
+                wslFilesTabId(distribution),
+                <WslFileTransferPanel
+                  distribution={distribution}
+                  key={distribution}
+                  onOpenTerminal={(targetDistribution) => {
+                    setActiveShellTabId(null);
+                    return workspace.openWslShellTab(targetDistribution);
+                  }}
+                  onReportMessage={workspace.reportWorkspaceMessage}
+                />,
+              ])),
             }}
             emptyStateNotice={workspace.sessionNotice}
             fileTransferPanel={fileTransferPanel}
-            sftpSidePanel={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive ? undefined : renderInlineSftpPanel}
+            sftpSidePanel={hostDashboardActive || settingsTabActive || httpConsoleActive || networkScannerActive || wslFilesActive ? undefined : renderInlineFilePanel}
             isFullscreen={terminalFullscreen}
             keymap={workspace.settings.keymap}
             reattachHintActive={detachedReattachHint}

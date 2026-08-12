@@ -98,6 +98,22 @@ impl ConnectionCapabilities {
             requires_host_key_verification: false,
         }
     }
+
+    pub fn wsl() -> Self {
+        Self {
+            terminal: true,
+            file_transfer: false,
+            sftp: false,
+            scp: false,
+            tunnel: false,
+            port_forwarding: false,
+            pty_resize: true,
+            secure_transport: true,
+            reconnect: true,
+            local_file_access: true,
+            requires_host_key_verification: false,
+        }
+    }
 }
 
 #[cfg(test)]

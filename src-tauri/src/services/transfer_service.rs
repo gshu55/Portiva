@@ -63,6 +63,7 @@ impl TransferService {
             local_path,
             normalize_remote_path(&remote_path),
             Vec::new(),
+            TransferProtocol::Sftp,
         )
     }
 
@@ -87,6 +88,7 @@ impl TransferService {
             local_path,
             normalize_remote_path(&remote_path),
             batch_items,
+            TransferProtocol::Sftp,
         )
     }
 
@@ -103,6 +105,26 @@ impl TransferService {
             local_path,
             normalize_remote_path(&remote_path),
             Vec::new(),
+            TransferProtocol::Sftp,
+        )
+    }
+
+    pub fn wsl_copy(
+        &self,
+        connection_id: String,
+        direction: TransferDirection,
+        item_kind: TransferTaskItemKind,
+        local_path: String,
+        remote_path: String,
+    ) -> Result<TransferTask, String> {
+        self.create_task(
+            connection_id,
+            direction,
+            item_kind,
+            local_path,
+            normalize_remote_path(&remote_path),
+            Vec::new(),
+            TransferProtocol::Wsl,
         )
     }
 
@@ -680,6 +702,7 @@ impl TransferService {
         local_path: String,
         remote_path: String,
         batch_items: Vec<TransferUploadItem>,
+        protocol: TransferProtocol,
     ) -> Result<TransferTask, String> {
         let now = now_stamp();
         let direction_label = match direction {
@@ -705,7 +728,7 @@ impl TransferService {
             ),
             connection_id,
             direction,
-            protocol: TransferProtocol::Sftp,
+            protocol,
             item_kind,
             local_path,
             remote_path,

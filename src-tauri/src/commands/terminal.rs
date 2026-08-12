@@ -13,6 +13,9 @@ use crate::services::settings_store::SettingsStore;
 use crate::services::ssh_session_service::SshSessionService;
 use crate::services::tcp_terminal_service::TcpTerminalService;
 use crate::services::terminal_service::TerminalService;
+use crate::services::wsl_service::{
+    collect_wsl_host_overview, discover_wsl, WslDiscovery, WslHostOverview,
+};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +64,64 @@ pub fn local_shell_open(
 }
 
 #[tauri::command]
+pub async fn wsl_distributions_list() -> Result<WslDiscovery, String> {
+    tauri::async_runtime::spawn_blocking(discover_wsl)
+        .await
+        .map_err(|error| format!("等待 WSL 枚举任务失败：{error}"))
+}
+
+#[tauri::command]
+pub async fn wsl_collect_host_overview(distribution: String) -> Result<WslHostOverview, String> {
+    tauri::async_runtime::spawn_blocking(move || collect_wsl_host_overview(&distribution))
+        .await
+        .map_err(|error| format!("等待 WSL 资源采集任务失败：{error}"))?
+}
+
+#[tauri::command]
+pub fn wsl_shell_open(
+    distribution: String,
+    size: TerminalSize,
+    app_handle: AppHandle,
+    connection_manager: State<'_, ConnectionManager>,
+    local_shells: State<'_, LocalShellService>,
+    terminal_service: State<'_, TerminalService>,
+) -> Result<LocalShellOpenResult, String> {
+    let distribution = distribution.trim().to_string();
+    let connection = connection_manager.open_wsl(distribution.clone())?;
+    let terminal = match terminal_service.attach(connection.id.clone(), size.clone()) {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            let _ = connection_manager.close(&connection.id);
+            return Err(error);
+        }
+    };
+
+    let shell_info = match local_shells.open_wsl(
+        &connection.id,
+        &terminal.id,
+        &distribution,
+        &size,
+        app_handle,
+    ) {
+        Ok(shell_info) => shell_info,
+        Err(error) => {
+            let _ = terminal_service.close(&terminal.id);
+            let _ = connection_manager.close(&connection.id);
+            return Err(error);
+        }
+    };
+    let connection = connection_manager
+        .update_title(&connection.id, format!("WSL / {}", shell_info.shell_label))?;
+    let terminal_snapshot = terminal_service.snapshot(&terminal.id)?;
+
+    Ok(LocalShellOpenResult {
+        connection,
+        terminal,
+        terminal_snapshot,
+    })
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn terminal_attach(
     connection_id: String,
@@ -87,6 +148,7 @@ pub async fn terminal_attach(
     let is_ssh_transport = matches!(transport_kind, Some(ConnectionTransportKind::Ssh));
     let is_local_shell_transport =
         matches!(transport_kind, Some(ConnectionTransportKind::LocalShell));
+    let is_wsl_transport = matches!(transport_kind, Some(ConnectionTransportKind::Wsl));
     let is_serial_transport = matches!(transport_kind, Some(ConnectionTransportKind::Serial));
     let is_tcp_transport = matches!(
         transport_kind,
@@ -111,6 +173,22 @@ pub async fn terminal_attach(
         let _ = connection_manager.mark_terminal_channel_ready(&connection_id)?;
     } else if is_local_shell_transport {
         if let Err(error) = local_shells.open(&connection_id, &terminal.id, &size, app_handle) {
+            let _ = terminal_service.close(&terminal.id);
+            return Err(error);
+        }
+    } else if is_wsl_transport {
+        let distribution = session
+            .transport
+            .as_ref()
+            .map(|transport| transport.host.as_str())
+            .unwrap_or_default();
+        if let Err(error) = local_shells.open_wsl(
+            &connection_id,
+            &terminal.id,
+            distribution,
+            &size,
+            app_handle,
+        ) {
             let _ = terminal_service.close(&terminal.id);
             return Err(error);
         }

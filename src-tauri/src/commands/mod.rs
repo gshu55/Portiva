@@ -14,3 +14,4 @@ pub mod settings;
 pub mod terminal;
 pub mod tunnel;
 pub mod updater;
+pub mod wsl_files;

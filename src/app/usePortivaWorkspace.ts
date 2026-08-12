@@ -66,6 +66,8 @@ import {
   terminalWriteBytes,
   transferList,
   tunnelList,
+  wslDistributionsList,
+  wslShellOpen,
 } from "../shared/ipc/commands";
 import type { TestConnectionResult } from "../shared/ipc/commands";
 import {
@@ -102,6 +104,7 @@ import type {
   TransferTask,
   ConnectionProfile,
   WorkspaceSessionTab,
+  WslDiscovery,
 } from "../shared/types";
 
 type DataSource = "loading" | "tauri" | "mock";
@@ -144,6 +147,12 @@ const terminalPreviewMaxChars = 256 * 1024;
 const localRootsPath = "portiva://local-roots";
 const remoteRootPath = "/";
 const emptyRemoteEntries: RemoteEntry[] = [];
+const emptyWslDiscovery: WslDiscovery = {
+  supported: false,
+  available: false,
+  distributions: [],
+  message: null,
+};
 const connectionResult = (status: OpenConnectionStatus, message: string): OpenConnectionResult => ({
   message,
   status,
@@ -347,6 +356,7 @@ export function usePortivaWorkspace() {
   } | null>(null);
   const [knownHosts, setKnownHosts] = useState<KnownHostEntry[]>(sampleKnownHosts);
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>(sampleSerialPorts);
+  const [wslDiscovery, setWslDiscovery] = useState<WslDiscovery>(emptyWslDiscovery);
   const [tunnels, setTunnels] = useState<TunnelRule[]>(sampleTunnels);
   const [remoteEntries, setRemoteEntries] = useState<RemoteEntry[]>(emptyRemoteEntries);
   const [localEntries, setLocalEntries] = useState<RemoteEntry[]>(emptyRemoteEntries);
@@ -821,6 +831,7 @@ export function usePortivaWorkspace() {
         lastDetectedSerialPortNamesRef.current = new Set(nextSerialPorts.map((port) => port.portName));
         setSerialPorts(nextSerialPorts);
       }, []),
+      loadSlice("WSL", wslDistributionsList(), setWslDiscovery, emptyWslDiscovery),
       loadSlice("隧道", tunnelList(), setTunnels, []),
     ]);
 
@@ -1317,6 +1328,49 @@ export function usePortivaWorkspace() {
       return connectionResult("failed", message);
     }
   }, [clearFileTransferView, dataSource]);
+  const openWslShellTab = useCallback(async (distribution: string): Promise<OpenConnectionResult> => {
+    if (dataSource === "mock") {
+      const message = "WSL 终端需要在 Windows Tauri 桌面环境中运行。";
+      setWorkspaceMessage(message);
+      return connectionResult("failed", message);
+    }
+
+    try {
+      setSessionNotice("");
+      const opened = await wslShellOpen(distribution, defaultTerminalSize);
+      const nextTab: WorkspaceSessionTab = {
+        id: opened.connection.id,
+        kind: "terminal",
+        connection: opened.connection,
+        terminal: opened.terminal,
+        terminalSnapshot: opened.terminalSnapshot,
+      };
+
+      setSessionTabs((current) => [
+        ...current.filter((tab) => (tab.id ?? tab.connection.id) !== opened.connection.id),
+        nextTab,
+      ]);
+      setActiveConnection(opened.connection);
+      setActiveSessionTabId(opened.connection.id);
+      setActiveTerminal(opened.terminal);
+      setTerminalSnapshotState(opened.terminalSnapshot);
+      clearFileTransferView();
+      setWslDiscovery((current) => ({
+        ...current,
+        distributions: current.distributions.map((item) =>
+          item.name === distribution ? { ...item, state: "running" } : item,
+        ),
+      }));
+
+      const message = `${opened.connection.title} 已打开。`;
+      setWorkspaceMessage(message);
+      return connectionResult("opened", message);
+    } catch (error) {
+      const message = `WSL 终端打开失败：${String(error)}`;
+      setWorkspaceMessage(message);
+      return connectionResult("failed", message);
+    }
+  }, [clearFileTransferView, dataSource]);
   const openSerialTerminalTab = useCallback(async (): Promise<OpenConnectionResult> => {
     if (dataSource === "mock") {
       const message = "串口终端需要在 Tauri 桌面环境中运行。";
@@ -1451,6 +1505,17 @@ export function usePortivaWorkspace() {
     return nextSerialPorts;
   }, [dataSource, markSerialTerminalDisconnected]);
 
+  const refreshWslDistributions = useCallback(async () => {
+    if (dataSource === "mock") {
+      setWslDiscovery(emptyWslDiscovery);
+      return emptyWslDiscovery;
+    }
+
+    const discovery = await wslDistributionsList();
+    setWslDiscovery(discovery);
+    return discovery;
+  }, [dataSource]);
+
   useEffect(() => {
     if (dataSource !== "tauri" || !sessionTabs.some((tab) => tab.connection.transport?.kind === "serial")) {
       return undefined;
@@ -1483,9 +1548,11 @@ export function usePortivaWorkspace() {
       return connectionResult("failed", message);
     }
 
-    if (reconnectTab.connection.transport?.kind === "local-shell") {
+    const localTerminalKind = reconnectTab.connection.transport?.kind;
+    if (localTerminalKind === "local-shell" || localTerminalKind === "wsl") {
+      const isWslTerminal = localTerminalKind === "wsl";
       if (dataSource === "mock") {
-        const message = "本地终端需要在 Tauri 桌面环境中运行。";
+        const message = `${isWslTerminal ? "WSL" : "本地"}终端需要在 Tauri 桌面环境中运行。`;
         setWorkspaceMessage(message);
         return connectionResult("failed", message);
       }
@@ -1498,7 +1565,9 @@ export function usePortivaWorkspace() {
         await connectionClose(reconnectTab.connection.id).catch(() => undefined);
         markConnectionTabsDisconnected(reconnectTab.connection.id);
 
-        const opened = await localShellOpen(defaultTerminalSize);
+        const opened = isWslTerminal
+          ? await wslShellOpen(reconnectTab.connection.transport?.host ?? "", defaultTerminalSize)
+          : await localShellOpen(defaultTerminalSize);
         const nextTab: WorkspaceSessionTab = {
           id: tabId,
           kind: "terminal",
@@ -1524,7 +1593,7 @@ export function usePortivaWorkspace() {
         setWorkspaceMessage(message);
         return connectionResult("opened", message);
       } catch (error) {
-        const message = `本地终端重连失败：${String(error)}`;
+        const message = `${isWslTerminal ? "WSL" : "本地"}终端重连失败：${String(error)}`;
         setWorkspaceMessage(message);
         return connectionResult("failed", message);
       }
@@ -3454,6 +3523,7 @@ export function usePortivaWorkspace() {
     terminalWorkingDirectory: activeTerminalWorkingDirectory,
     tunnels,
     transfers,
+    wslDiscovery,
     workspaceMessage,
     sshPassword,
     attachDetachedSessionTab,
@@ -3473,6 +3543,7 @@ export function usePortivaWorkspace() {
     openActiveConnection,
     openFileTransferTab,
     openLocalShellTab,
+    openWslShellTab,
     openSerialTerminalTab,
     openSerialTerminal,
     openProfileConnection,
@@ -3489,6 +3560,7 @@ export function usePortivaWorkspace() {
     removeRemoteEntries,
 	    refreshRemoteFiles,
 	    refreshSerialPorts,
+	    refreshWslDistributions,
 	    refreshWorkspace,
     refreshTerminalSnapshot,
     reconnectSessionTab,

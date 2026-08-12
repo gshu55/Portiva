@@ -39,7 +39,7 @@
   position: absolute;
   z-index: 6;
   top: 6px;
-  right: 6px;
+  right: 18px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -329,6 +329,11 @@
   height: 12px;
   flex: 0 0 auto;
   color: var(--accent);
+}
+
+.wsl-system-panel .ssh-system-host .icon,
+.wsl-system-panel .ssh-system-summary-item .icon {
+  color: #35c49b;
 }
 
 .ssh-system-summary-item small {

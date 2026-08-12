@@ -131,7 +131,7 @@ export interface ConnectionSummary {
 }
 
 export interface ConnectionTransportInfo {
-  kind: "ssh" | "telnet" | "serial" | "raw-tcp" | "local-shell";
+  kind: "ssh" | "telnet" | "serial" | "raw-tcp" | "local-shell" | "wsl";
   host: string;
   port: number;
   serverIdentification?: string;
@@ -139,6 +139,39 @@ export interface ConnectionTransportInfo {
   authenticated: boolean;
   terminalChannelReady: boolean;
   fileTransferReady: boolean;
+}
+
+export type WslDistributionState = "running" | "stopped" | "unknown";
+
+export interface WslDistributionInfo {
+  name: string;
+  isDefault: boolean;
+  state: WslDistributionState;
+  version?: number | null;
+}
+
+export interface WslDiscovery {
+  supported: boolean;
+  available: boolean;
+  distributions: WslDistributionInfo[];
+  message?: string | null;
+}
+
+export interface WslHostOverview {
+  distribution: string;
+  hostname: string;
+  operatingSystem: string;
+  kernelVersion: string;
+  cpuUsagePercent: number | null;
+  cpuCount: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  diskUsedBytes: number | null;
+  diskTotalBytes: number | null;
+  networkReceivedBytes: number | null;
+  networkTransmittedBytes: number | null;
+  uptimeSeconds: number | null;
+  latencyMs: number;
 }
 
 export interface SshHostOverview {
@@ -184,7 +217,7 @@ export interface TransferTask {
   id: string;
   connectionId: string;
   direction: "upload" | "download";
-  protocol: "sftp" | "scp" | "ftp" | "webdav" | "s3";
+  protocol: "sftp" | "scp" | "ftp" | "webdav" | "s3" | "wsl";
   itemKind: "file" | "directory" | "batch";
   localPath: string;
   remotePath: string;
@@ -294,7 +327,7 @@ export interface AppBackgroundSettings {
 
 export interface WorkspaceSessionTab {
   id?: string;
-  kind?: "terminal" | "file-transfer" | "settings" | "http-console" | "host-dashboard" | "network-scan";
+  kind?: "terminal" | "file-transfer" | "settings" | "http-console" | "host-dashboard" | "network-scan" | "wsl-files";
   connection: ConnectionSummary;
   fileTransferSession?: FileTransferSession | null;
   parentConnectionId?: string;

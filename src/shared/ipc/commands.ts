@@ -22,6 +22,8 @@ import type {
   NetworkInterfaceInfo,
   NetworkScanRequest,
   NetworkScanSession,
+  WslDiscovery,
+  WslHostOverview,
 } from "../types";
 
 export const commandNames = {
@@ -100,6 +102,18 @@ export const commandNames = {
   logList: "log_list",
   logRecordPlaceholder: "log_record_placeholder",
   localShellOpen: "local_shell_open",
+  wslDistributionsList: "wsl_distributions_list",
+  wslCollectHostOverview: "wsl_collect_host_overview",
+  wslShellOpen: "wsl_shell_open",
+  wslFileHome: "wsl_file_home",
+  wslFileList: "wsl_file_list",
+  wslFileMkdir: "wsl_file_mkdir",
+  wslFileRemove: "wsl_file_remove",
+  wslFileRename: "wsl_file_rename",
+  wslTransferUpload: "wsl_transfer_upload",
+  wslTransferDownload: "wsl_transfer_download",
+  wslTransferList: "wsl_transfer_list",
+  wslTransferAction: "wsl_transfer_action",
   httpSend: "http_send",
   httpSendStream: "http_send_stream",
   httpCancel: "http_cancel",
@@ -268,6 +282,11 @@ export function secretDelete(secretId: string) {
   return invoke<void>(commandNames.secretDelete, { secretId });
 }
 
+export interface WslFileListResult {
+  path: string;
+  entries: RemoteEntry[];
+}
+
 export function secretRevealPassword(profileId: string) {
   return invoke<string | null>(commandNames.secretRevealPassword, { profileId });
 }
@@ -349,6 +368,57 @@ export function terminalAttach(connectionId: string, size: TerminalSize) {
 
 export function localShellOpen(size: TerminalSize) {
   return invoke<LocalShellOpenResult>(commandNames.localShellOpen, { size });
+}
+
+export function wslDistributionsList() {
+  return invoke<WslDiscovery>(commandNames.wslDistributionsList);
+}
+
+export function wslCollectHostOverview(distribution: string) {
+  return invoke<WslHostOverview>(commandNames.wslCollectHostOverview, { distribution });
+}
+
+export function wslShellOpen(distribution: string, size: TerminalSize) {
+  return invoke<LocalShellOpenResult>(commandNames.wslShellOpen, { distribution, size });
+}
+
+export function wslFileHome(distribution: string) {
+  return invoke<string>(commandNames.wslFileHome, { distribution });
+}
+
+export function wslFileList(distribution: string, path: string) {
+  return invoke<WslFileListResult>(commandNames.wslFileList, { distribution, path });
+}
+
+export function wslFileMkdir(distribution: string, path: string) {
+  return invoke<void>(commandNames.wslFileMkdir, { distribution, path });
+}
+
+export function wslFileRemove(distribution: string, path: string) {
+  return invoke<void>(commandNames.wslFileRemove, { distribution, path });
+}
+
+export function wslFileRename(distribution: string, from: string, to: string) {
+  return invoke<void>(commandNames.wslFileRename, { distribution, from, to });
+}
+
+export function wslTransferUpload(distribution: string, localPath: string, wslPath: string) {
+  return invoke<TransferTask>(commandNames.wslTransferUpload, { distribution, localPath, wslPath });
+}
+
+export function wslTransferDownload(distribution: string, wslPath: string, localPath: string) {
+  return invoke<TransferTask>(commandNames.wslTransferDownload, { distribution, wslPath, localPath });
+}
+
+export function wslTransferList(distribution: string) {
+  return invoke<TransferTask[]>(commandNames.wslTransferList, { distribution });
+}
+
+export function wslTransferAction(
+  transferId: string,
+  action: "pause" | "resume" | "retry" | "cancel" | "delete",
+) {
+  return invoke<TransferTask>(commandNames.wslTransferAction, { transferId, action });
 }
 
 export function serialTerminalCreate(profile: ConnectionProfile, size: TerminalSize) {

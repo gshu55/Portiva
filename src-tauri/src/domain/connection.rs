@@ -52,6 +52,7 @@ pub enum ConnectionTransportKind {
     Serial,
     RawTcp,
     LocalShell,
+    Wsl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

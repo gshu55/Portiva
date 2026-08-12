@@ -40,8 +40,17 @@ Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建
 
 - 支持启动本机 shell。
 - Windows 下优先尝试 `pwsh.exe`，然后是 `powershell.exe` 和 `cmd.exe`。
+- Windows 主机概览会自动枚举已安装的 WSL 发行版，显示默认项、运行状态和 WSL 版本，并可一键打开对应 Linux 终端。
 - macOS/Linux 下优先使用 `$SHELL`，并回退到常见 shell。
 - 基于 `portable-pty` 管理本地 PTY，支持输入输出和 resize。
+
+### WSL 文件管理
+
+- WSL 发行版卡片可直接打开 Windows ↔ Linux 双栏文件管理，无需安装或配置 SSH 服务。
+- 后端通过受控的 `\\wsl.localhost\<distribution>` 文件通道访问 WSL，前端仅使用发行版名称和 Linux 绝对路径。
+- 支持文件和目录双向复制、拖放传入、传输进度、暂停、继续、取消、重试以及目标冲突确认。
+- 支持 WSL 目录浏览、新建、递归删除和重命名，并禁止删除或替换 Linux 根目录。
+- 软链接和 Windows 文件通道无法表示的特殊文件名暂不参与传输；独立挂载点可能不会映射为相同视图，需要保留 Linux owner、mode、挂载内容或链接语义的目录仍建议使用 `tar`。
 
 ### HTTP/API 调试
 
@@ -76,6 +85,7 @@ Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建
 | SFTP | 可用 | 通过 SSH 会话打开 SFTP，支持基础文件管理和传输队列 |
 | Serial | 可用 | 支持串口枚举、配置、读写和终端显示 |
 | Local Shell | 可用 | 支持本地 PTY 终端 |
+| WSL | 可用 | Windows 下自动发现发行版，支持本地 PTY 终端和 Windows ↔ Linux 双栏文件传输 |
 | Telnet | 可用 | 支持基础 Telnet 协商、终端收发、编码、换行和重连 |
 | Raw TCP | 可用 | 支持 TCP 字节流、终端收发、编码、换行和重连 |
 | HTTP/API 调试 | 可用 | 单实例 HTTP Console，通过 Rust IPC 发送 HTTP/HTTPS 请求 |

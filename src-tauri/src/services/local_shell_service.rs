@@ -50,6 +50,7 @@ struct ShellCandidate {
     program: String,
     args: Vec<String>,
     label: String,
+    use_host_home: bool,
 }
 
 impl LocalShellService {
@@ -60,14 +61,53 @@ impl LocalShellService {
         size: &TerminalSize,
         app_handle: AppHandle,
     ) -> Result<LocalShellInfo, String> {
+        self.open_candidates(
+            connection_id,
+            terminal_id,
+            size,
+            app_handle,
+            local_shell_candidates(),
+            "Shell",
+        )
+    }
+
+    pub fn open_wsl(
+        &self,
+        connection_id: &str,
+        terminal_id: &str,
+        distribution: &str,
+        size: &TerminalSize,
+        app_handle: AppHandle,
+    ) -> Result<LocalShellInfo, String> {
+        let candidate = wsl_shell_candidate(distribution)?;
+        let existing_label = candidate.label.clone();
+        self.open_candidates(
+            connection_id,
+            terminal_id,
+            size,
+            app_handle,
+            vec![candidate],
+            &existing_label,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_candidates(
+        &self,
+        connection_id: &str,
+        terminal_id: &str,
+        size: &TerminalSize,
+        app_handle: AppHandle,
+        candidates: Vec<ShellCandidate>,
+        existing_label: &str,
+    ) -> Result<LocalShellInfo, String> {
         if self.has_pty(connection_id, terminal_id)? {
             return Ok(LocalShellInfo {
-                shell_label: "Shell".to_string(),
+                shell_label: existing_label.to_string(),
             });
         }
 
         let pty_system = native_pty_system();
-        let candidates = local_shell_candidates();
         let mut last_error = None;
 
         for candidate in candidates {
@@ -247,10 +287,12 @@ fn spawn_local_shell(
 
     command.args(candidate.args.iter().map(String::as_str));
     command.env("TERM", "xterm-256color");
-    if let Some(home) = home_dir() {
-        command.env("HOME", &home);
-        command.env("USERPROFILE", &home);
-        command.cwd(&home);
+    if candidate.use_host_home {
+        if let Some(home) = home_dir() {
+            command.env("HOME", &home);
+            command.env("USERPROFILE", &home);
+            command.cwd(&home);
+        }
     }
 
     let child = pair
@@ -453,6 +495,7 @@ fn local_shell_candidates() -> Vec<ShellCandidate> {
                 "-NoExit".to_string(),
             ],
             label: "PowerShell".to_string(),
+            use_host_home: true,
         });
         candidates.push(ShellCandidate {
             program: "powershell.exe".to_string(),
@@ -462,11 +505,13 @@ fn local_shell_candidates() -> Vec<ShellCandidate> {
                 "-NoExit".to_string(),
             ],
             label: "Windows PowerShell".to_string(),
+            use_host_home: true,
         });
         candidates.push(ShellCandidate {
             program: "cmd.exe".to_string(),
             args: Vec::new(),
             label: "Command Prompt".to_string(),
+            use_host_home: true,
         });
     }
 
@@ -478,6 +523,7 @@ fn local_shell_candidates() -> Vec<ShellCandidate> {
                     label: shell_label(&shell),
                     program: shell,
                     args: Vec::new(),
+                    use_host_home: true,
                 });
             }
         }
@@ -494,6 +540,34 @@ fn local_shell_candidates() -> Vec<ShellCandidate> {
     candidates
 }
 
+#[cfg(windows)]
+fn wsl_shell_candidate(distribution: &str) -> Result<ShellCandidate, String> {
+    let distribution = distribution.trim();
+    if distribution.is_empty() {
+        return Err("WSL 发行版名称不能为空".to_string());
+    }
+    if distribution.contains(['\0', '\r', '\n']) {
+        return Err("WSL 发行版名称包含无效字符".to_string());
+    }
+
+    Ok(ShellCandidate {
+        program: "wsl.exe".to_string(),
+        args: vec![
+            "--distribution".to_string(),
+            distribution.to_string(),
+            "--cd".to_string(),
+            "~".to_string(),
+        ],
+        label: distribution.to_string(),
+        use_host_home: false,
+    })
+}
+
+#[cfg(not(windows))]
+fn wsl_shell_candidate(_distribution: &str) -> Result<ShellCandidate, String> {
+    Err("WSL 终端仅支持 Windows".to_string())
+}
+
 #[cfg(not(windows))]
 fn push_unique_shell(candidates: &mut Vec<ShellCandidate>, program: &str, label: &str) {
     if candidates
@@ -507,6 +581,7 @@ fn push_unique_shell(candidates: &mut Vec<ShellCandidate>, program: &str, label:
         program: program.to_string(),
         args: Vec::new(),
         label: label.to_string(),
+        use_host_home: true,
     });
 }
 
@@ -557,5 +632,14 @@ mod tests {
             just_flushed,
             TERMINAL_OUTPUT_FLUSH_INTERVAL,
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wsl_shell_starts_in_linux_home_without_shell_interpolation() {
+        let candidate = wsl_shell_candidate("Ubuntu").unwrap();
+
+        assert_eq!(candidate.args, ["--distribution", "Ubuntu", "--cd", "~"]);
+        assert!(!candidate.use_host_home);
     }
 }

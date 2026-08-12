@@ -89,6 +89,7 @@ pub enum TransferProtocol {
     Ftp,
     Webdav,
     S3,
+    Wsl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

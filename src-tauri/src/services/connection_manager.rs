@@ -63,6 +63,20 @@ mod tests {
     }
 
     #[test]
+    fn opens_wsl_session_with_distribution_metadata() {
+        let manager = ConnectionManager::default();
+
+        let session = manager.open_wsl("Ubuntu-24.04".to_string()).unwrap();
+        let transport = session.transport.unwrap();
+
+        assert!(matches!(
+            transport.kind,
+            crate::domain::connection::ConnectionTransportKind::Wsl
+        ));
+        assert_eq!(transport.host, "Ubuntu-24.04");
+    }
+
+    #[test]
     fn opens_verified_ssh_transport_session_with_metadata() {
         let manager = ConnectionManager::default();
         let profile = sample_profile(ConnectionType::Ssh);
@@ -130,6 +144,31 @@ impl ConnectionManager {
             transport: Some(ConnectionTransportInfo {
                 kind: ConnectionTransportKind::LocalShell,
                 host: "localhost".to_string(),
+                port: 0,
+                server_identification: None,
+                host_key_fingerprint: None,
+                authenticated: true,
+                terminal_channel_ready: true,
+                file_transfer_ready: false,
+            }),
+        })
+    }
+
+    pub fn open_wsl(&self, distribution: String) -> Result<ConnectionSession, String> {
+        let distribution = distribution.trim();
+        if distribution.is_empty() {
+            return Err("WSL 发行版名称不能为空".to_string());
+        }
+
+        self.register_session(ConnectionSession {
+            id: "session-wsl".to_string(),
+            profile_id: format!("wsl:{distribution}"),
+            title: format!("WSL / {distribution}"),
+            status: ConnectionStatus::Connected,
+            capabilities: ConnectionCapabilities::wsl(),
+            transport: Some(ConnectionTransportInfo {
+                kind: ConnectionTransportKind::Wsl,
+                host: distribution.to_string(),
                 port: 0,
                 server_identification: None,
                 host_key_fingerprint: None,

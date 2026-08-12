@@ -6,6 +6,9 @@ import { formatBytes, formatUptime } from "../../shared/format";
 import type {
   ConnectionProfile,
   SshHostOverview,
+  WslDiscovery,
+  WslDistributionInfo,
+  WslHostOverview,
   WorkspaceSessionTab,
 } from "../../shared/types";
 
@@ -20,12 +23,24 @@ interface ConnectionListProps {
   onEditProfile: (profile: ConnectionProfile) => void;
   onOpenFileTransfer: (profile: ConnectionProfile, connectionId?: string) => void;
   onOpenSession: (tabId: string) => void;
+  onOpenWslDistribution: (distribution: string) => Promise<unknown>;
+  onOpenWslFiles: (distribution: string) => void;
   onRefreshHostOverview: (profileId: string, connectionId?: string) => Promise<SshHostOverview>;
+  onRefreshWslHostOverview: (distribution: string) => Promise<WslHostOverview>;
+  onRefreshWslDistributions: () => Promise<WslDiscovery>;
   onSelectProfile: (profileId: string) => void;
+  wslDiscovery: WslDiscovery;
 }
 
 interface HostOverviewState {
   data: SshHostOverview | null;
+  error: string | null;
+  loading: boolean;
+  refreshedAt: number | null;
+}
+
+interface WslOverviewState {
+  data: WslHostOverview | null;
   error: string | null;
   loading: boolean;
   refreshedAt: number | null;
@@ -48,16 +63,25 @@ export function ConnectionList({
   onEditProfile,
   onOpenFileTransfer,
   onOpenSession,
+  onOpenWslDistribution,
+  onOpenWslFiles,
   onRefreshHostOverview,
+  onRefreshWslHostOverview,
+  onRefreshWslDistributions,
   onSelectProfile,
   profiles,
   sessionTabs,
+  wslDiscovery,
 }: ConnectionListProps) {
   const savedProfiles = useMemo(() => uniqueProfilesByTarget(profiles), [profiles]);
   const [query, setQuery] = useState("");
   const [overviewByProfile, setOverviewByProfile] = useState<Record<string, HostOverviewState>>({});
+  const [wslOverviewByDistribution, setWslOverviewByDistribution] = useState<Record<string, WslOverviewState>>({});
   const [openMenuProfileId, setOpenMenuProfileId] = useState<string | null>(null);
+  const [openingWslDistribution, setOpeningWslDistribution] = useState<string | null>(null);
+  const [wslRefreshing, setWslRefreshing] = useState(false);
   const refreshingProfileIds = useRef(new Set<string>());
+  const refreshingWslDistributions = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const connectionPending = Boolean(connectingProfileId);
 
@@ -90,6 +114,33 @@ export function ConnectionList({
         .includes(normalizedQuery),
     );
   }, [query, savedProfiles]);
+
+  const filteredWslDistributions = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) {
+      return wslDiscovery.distributions;
+    }
+
+    return wslDiscovery.distributions.filter((distribution) =>
+      [distribution.name, `WSL${distribution.version ?? ""}`, distribution.isDefault ? "默认" : ""]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    );
+  }, [query, wslDiscovery.distributions]);
+
+  const wslSessionCountByDistribution = useMemo(() => {
+    const counts = new Map<string, number>();
+    sessionTabs.forEach((tab) => {
+      const transport = tab.connection.transport;
+      if (transport?.kind !== "wsl" || tab.connection.status === "disconnected") {
+        return;
+      }
+
+      counts.set(transport.host, (counts.get(transport.host) ?? 0) + 1);
+    });
+    return counts;
+  }, [sessionTabs]);
 
   const refreshOverview = useCallback(
     async (profile: ConnectionProfile) => {
@@ -143,11 +194,102 @@ export function ConnectionList({
     [onRefreshHostOverview, sessionsByProfile],
   );
 
-  const refreshAll = useCallback(() => {
+  const refreshWslOverview = useCallback(async (distribution: WslDistributionInfo) => {
+    if (distribution.state !== "running") {
+      setWslOverviewByDistribution((current) => {
+        if (!current[distribution.name]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[distribution.name];
+        return next;
+      });
+      return;
+    }
+    if (refreshingWslDistributions.current.has(distribution.name)) {
+      return;
+    }
+
+    refreshingWslDistributions.current.add(distribution.name);
+    setWslOverviewByDistribution((current) => ({
+      ...current,
+      [distribution.name]: {
+        data: current[distribution.name]?.data ?? null,
+        error: null,
+        loading: true,
+        refreshedAt: current[distribution.name]?.refreshedAt ?? null,
+      },
+    }));
+
+    try {
+      const overview = await onRefreshWslHostOverview(distribution.name);
+      if (!mountedRef.current) {
+        return;
+      }
+      setWslOverviewByDistribution((current) => ({
+        ...current,
+        [distribution.name]: {
+          data: overview,
+          error: null,
+          loading: false,
+          refreshedAt: Date.now(),
+        },
+      }));
+    } catch (error) {
+      if (!mountedRef.current) {
+        return;
+      }
+      setWslOverviewByDistribution((current) => ({
+        ...current,
+        [distribution.name]: {
+          data: current[distribution.name]?.data ?? null,
+          error: hostOverviewErrorMessage(error),
+          loading: false,
+          refreshedAt: current[distribution.name]?.refreshedAt ?? null,
+        },
+      }));
+    } finally {
+      refreshingWslDistributions.current.delete(distribution.name);
+    }
+  }, [onRefreshWslHostOverview]);
+
+  const refreshWsl = useCallback(async () => {
+    setWslRefreshing(true);
+    try {
+      const discovery = await onRefreshWslDistributions();
+      discovery.distributions.forEach((distribution) => {
+        void refreshWslOverview(distribution);
+      });
+    } finally {
+      setWslRefreshing(false);
+    }
+  }, [onRefreshWslDistributions, refreshWslOverview]);
+
+  const refreshSavedOverviews = useCallback(() => {
     savedProfiles.forEach((profile) => {
       void refreshOverview(profile);
     });
   }, [refreshOverview, savedProfiles]);
+
+  const refreshAll = useCallback(() => {
+    refreshSavedOverviews();
+    if (wslDiscovery.supported) {
+      void refreshWsl();
+    }
+  }, [refreshSavedOverviews, refreshWsl, wslDiscovery.supported]);
+
+  const openWslDistribution = useCallback(async (distribution: string) => {
+    if (openingWslDistribution) {
+      return;
+    }
+
+    setOpeningWslDistribution(distribution);
+    try {
+      await onOpenWslDistribution(distribution);
+    } finally {
+      setOpeningWslDistribution(null);
+    }
+  }, [onOpenWslDistribution, openingWslDistribution]);
 
   const autoRefreshKey = useMemo(
     () =>
@@ -157,16 +299,30 @@ export function ConnectionList({
         .join("|"),
     [savedProfiles, sessionsByProfile],
   );
+  const wslAutoRefreshKey = useMemo(
+    () => wslDiscovery.distributions
+      .map((distribution) => `${distribution.name}:${distribution.state}:${distribution.version ?? ""}`)
+      .join("|"),
+    [wslDiscovery.distributions],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
-    refreshAll();
+    refreshSavedOverviews();
     return () => {
       mountedRef.current = false;
     };
     // autoRefreshKey intentionally captures profile edits and newly authenticated sessions.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefreshKey]);
+
+  useEffect(() => {
+    wslDiscovery.distributions.forEach((distribution) => {
+      void refreshWslOverview(distribution);
+    });
+    // wslAutoRefreshKey intentionally captures distribution lifecycle changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wslAutoRefreshKey]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -195,6 +351,16 @@ export function ConnectionList({
     return Boolean(overviewByProfile[profile.id]?.data || session?.connection.transport?.authenticated);
   }).length;
   const refreshingCount = Object.values(overviewByProfile).filter((state) => state.loading).length;
+  const refreshingWslCount = Object.values(wslOverviewByDistribution).filter((state) => state.loading).length;
+  const totalRefreshingCount = refreshingCount + refreshingWslCount + (wslRefreshing ? 1 : 0);
+  const hasInventory = savedProfiles.length > 0 || wslDiscovery.distributions.length > 0;
+  const hasFilteredInventory = filteredProfiles.length > 0 || filteredWslDistributions.length > 0;
+  const normalizedQuery = query.trim();
+  const showWslSection = wslDiscovery.supported && (
+    !normalizedQuery
+    || filteredWslDistributions.length > 0
+    || wslDiscovery.distributions.length === 0
+  );
 
   return (
     <section aria-label="轻量运维工作台" className="saved-connections-page">
@@ -203,15 +369,19 @@ export function ConnectionList({
             <span className="saved-connections-title-icon"><Icon name="server" /></span>
             <div>
               <strong>主机概览</strong>
-              <span>{savedProfiles.length} 个已保存连接 · {reachableCount} 个可达</span>
+              <span>
+                {savedProfiles.length} 个已保存连接
+                {wslDiscovery.supported ? ` · ${wslDiscovery.distributions.length} 个 WSL 环境` : ""}
+                {` · ${reachableCount} 个远程可达`}
+              </span>
             </div>
           </div>
           <div className="saved-connections-topbar-actions">
             <label className="saved-connections-search">
               <Icon name="search" />
               <input
-                aria-label="搜索已保存连接"
-                placeholder="搜索主机"
+                aria-label="搜索主机和本机环境"
+                placeholder="搜索主机或 WSL"
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -220,12 +390,12 @@ export function ConnectionList({
             <button
               aria-label="刷新全部主机概览"
               className="saved-toolbar-icon-button"
-              disabled={refreshingCount > 0}
+              disabled={totalRefreshingCount > 0}
               onClick={refreshAll}
-              title={refreshingCount > 0 ? `正在刷新 ${refreshingCount} 个主机` : "刷新全部"}
+              title={totalRefreshingCount > 0 ? "正在刷新主机概览" : "刷新全部"}
               type="button"
             >
-              <Icon className={refreshingCount > 0 ? "is-spinning" : ""} name="refresh-ccw" />
+              <Icon className={totalRefreshingCount > 0 ? "is-spinning" : ""} name="refresh-ccw" />
             </button>
             <button className="saved-create-button" disabled={connectionPending} onClick={onCreateProfile} type="button">
               <Icon name="plus" />
@@ -235,6 +405,64 @@ export function ConnectionList({
         </header>
 
         <div className="saved-connections-content">
+          {showWslSection ? (
+            <section aria-label="Windows Subsystem for Linux" className="wsl-environments-section">
+              <header className="saved-section-heading">
+                <div>
+                  <span className="wsl-section-mark"><Icon name="terminal" /></span>
+                  <span>
+                    <strong>本机 WSL 环境</strong>
+                  </span>
+                </div>
+                <button
+                  aria-label="刷新 WSL 发行版"
+                  disabled={wslRefreshing}
+                  onClick={() => void refreshWsl()}
+                  title="刷新 WSL 发行版"
+                  type="button"
+                >
+                  <Icon className={wslRefreshing ? "is-spinning" : ""} name="refresh-ccw" />
+                </button>
+              </header>
+
+              {filteredWslDistributions.length > 0 ? (
+                <div className="wsl-environments-grid">
+                  {filteredWslDistributions.map((distribution, index) => (
+                    <WslDistributionCard
+                      activeSessions={wslSessionCountByDistribution.get(distribution.name) ?? 0}
+                      distribution={distribution}
+                      index={index}
+                      key={distribution.name}
+                      overview={wslOverviewByDistribution[distribution.name]}
+                      opening={openingWslDistribution === distribution.name}
+                      openingBlocked={Boolean(openingWslDistribution) || connectionPending}
+                      onOpen={openWslDistribution}
+                      onOpenFiles={onOpenWslFiles}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className={["wsl-environments-notice", wslDiscovery.available ? "" : "error"].filter(Boolean).join(" ")}>
+                  <Icon name={wslDiscovery.available ? "terminal" : "ban"} />
+                  <div>
+                    <strong>{wslDiscovery.available ? "尚未安装 Linux 发行版" : "WSL 当前不可用"}</strong>
+                    <span>{wslDiscovery.message ?? "安装发行版后刷新此页面即可使用。"}</span>
+                  </div>
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {filteredProfiles.length > 0 && wslDiscovery.supported ? (
+            <div className="saved-section-heading remote-section-heading">
+              <div>
+                <span className="remote-section-mark"><Icon name="server" /></span>
+                <span>
+                  <strong>远程与设备连接</strong>
+                </span>
+              </div>
+            </div>
+          ) : null}
           {filteredProfiles.length > 0 ? (
             <div className="saved-connections-grid">
               {filteredProfiles.map((profile, index) => {
@@ -373,22 +601,164 @@ export function ConnectionList({
                 );
               })}
             </div>
-          ) : savedProfiles.length > 0 ? (
+          ) : !hasFilteredInventory && normalizedQuery ? (
             <div className="saved-connections-empty">
               <Icon name="search" />
-              <strong>没有匹配的主机</strong>
-              <span>换个名称、地址或协议试试。</span>
+              <strong>没有匹配的主机或 WSL 环境</strong>
+              <span>换个名称、地址、协议或发行版试试。</span>
             </div>
-          ) : (
-            <div className="saved-connections-empty">
+          ) : !hasInventory ? (
+            <div className="saved-connections-empty inventory-empty">
               <Icon name="server" />
-              <strong>还没有保存的连接</strong>
-              <span>创建 SSH 连接后，这里会自动采集 CPU、内存、磁盘、网络和运行时长。</span>
-              <button onClick={onCreateProfile} type="button"><Icon name="plus" />新建连接</button>
+              <strong>暂无连接</strong>
+              <span>新建连接后会显示在这里。</span>
+              <button disabled={connectionPending} onClick={onCreateProfile} type="button"><Icon name="plus" />新建连接</button>
             </div>
-          )}
+          ) : null}
         </div>
     </section>
+  );
+}
+
+function WslDistributionCard({
+  activeSessions,
+  distribution,
+  index,
+  onOpen,
+  onOpenFiles,
+  overview,
+  opening,
+  openingBlocked,
+}: {
+  activeSessions: number;
+  distribution: WslDistributionInfo;
+  index: number;
+  onOpen: (distribution: string) => Promise<void>;
+  onOpenFiles: (distribution: string) => void;
+  overview: WslOverviewState | undefined;
+  opening: boolean;
+  openingBlocked: boolean;
+}) {
+  const stateLabel = distribution.state === "running"
+    ? "运行中"
+    : distribution.state === "stopped"
+      ? "已停止"
+      : "状态未知";
+  const versionLabel = distribution.version ? `WSL ${distribution.version}` : "WSL";
+
+  return (
+    <article
+      aria-busy={opening}
+      className={["wsl-environment-card", distribution.state === "running" ? "is-running" : ""].filter(Boolean).join(" ")}
+      style={{ "--card-index": index } as CSSProperties}
+    >
+      <div className="wsl-card-header">
+        <span className="wsl-card-glyph"><Icon name="terminal" /></span>
+        <div className="wsl-card-identity">
+          <strong title={distribution.name}>{distribution.name}</strong>
+          <span>{versionLabel}{distribution.isDefault ? " · 默认发行版" : ""}</span>
+        </div>
+        <span className={["wsl-state-chip", distribution.state].join(" ")}>{stateLabel}</span>
+      </div>
+
+      <WslOverviewPanel distribution={distribution} state={overview} />
+
+      <div className="wsl-card-meta">
+        <span><i className={["saved-status-dot", distribution.state === "running" ? "online" : "idle"].join(" ")} />{stateLabel}</span>
+        <span>{activeSessions > 0 ? `${activeSessions} 个终端会话` : "尚未打开终端"}</span>
+      </div>
+
+      <div className="wsl-card-actions">
+        <button
+          className="wsl-card-open"
+          disabled={openingBlocked}
+          onClick={() => void onOpen(distribution.name)}
+          type="button"
+        >
+          <Icon name="terminal" />
+          <span>{opening ? "正在启动…" : "打开 Linux 终端"}</span>
+        </button>
+        <button
+          aria-label={`打开 ${distribution.name} 文件管理`}
+          className="wsl-card-files"
+          onClick={() => onOpenFiles(distribution.name)}
+          title="Windows ↔ WSL 快速传文件"
+          type="button"
+        >
+          <Icon name="folder-open" />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function WslOverviewPanel({
+  distribution,
+  state,
+}: {
+  distribution: WslDistributionInfo;
+  state: WslOverviewState | undefined;
+}) {
+  if (distribution.state !== "running") {
+    return (
+      <div className="saved-card-message wsl-not-running">
+        <Icon name="activity" />
+        <div>
+          <strong>资源采集已暂停</strong>
+          <span>发行版未运行，不会读取占用信息或启动 WSL。</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (state?.data) {
+    const overview = state.data;
+    const memoryPercent = usagePercent(overview.memoryUsedBytes, overview.memoryTotalBytes);
+    const diskPercent = usagePercent(overview.diskUsedBytes, overview.diskTotalBytes);
+    const cpuPercent = overview.cpuUsagePercent === null ? null : Math.round(overview.cpuUsagePercent);
+
+    return (
+      <div className="saved-card-overview wsl-card-overview">
+        <div className="saved-card-metrics">
+          <Metric label="CPU" value={cpuPercent === null ? "—" : `${cpuPercent}%`} detail={overview.cpuCount ? `${overview.cpuCount} 核` : "不可用"} progress={cpuPercent} />
+          <Metric
+            label="内存"
+            value={memoryPercent === null ? "—" : `${memoryPercent}%`}
+            detail={formatUsage(overview.memoryUsedBytes, overview.memoryTotalBytes)}
+            progress={memoryPercent}
+          />
+          <Metric
+            label="磁盘"
+            value={diskPercent === null ? "—" : `${diskPercent}%`}
+            detail={formatUsage(overview.diskUsedBytes, overview.diskTotalBytes)}
+            progress={diskPercent}
+          />
+        </div>
+        <div className="saved-card-system" title={`${overview.operatingSystem} · ${overview.kernelVersion}`}>
+          <Icon name="activity" />
+          <span>{overview.operatingSystem} · 已运行 {formatUptime(overview.uptimeSeconds)}{state.loading ? " · 刷新中" : ""}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (state?.error) {
+    return (
+      <div className="saved-card-message error" title={state.error}>
+        <Icon name="activity" />
+        <div>
+          <strong>WSL 占用获取失败</strong>
+          <span>{state.error}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="saved-card-message loading">
+      <Icon className="is-spinning" name="refresh-ccw" />
+      <span>正在读取 WSL 资源占用…</span>
+    </div>
   );
 }
 
@@ -472,13 +842,23 @@ function Metric({
       <span>{label}</span>
       <strong>{value}</strong>
       {typeof progress === "number" ? (
-        <span className="saved-metric-progress" aria-label={`内存使用率 ${progress}%`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+        <span className="saved-metric-progress" aria-label={`${label}使用率 ${progress}%`} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
           <i style={{ width: `${progress}%` }} />
         </span>
       ) : null}
       <small>{detail}</small>
     </div>
   );
+}
+
+function usagePercent(used: number | null, total: number | null) {
+  return used !== null && total
+    ? Math.min(100, Math.max(0, Math.round((used / total) * 100)))
+    : null;
+}
+
+function formatUsage(used: number | null, total: number | null) {
+  return used !== null && total !== null ? `${formatBytes(used)} / ${formatBytes(total)}` : "不可用";
 }
 
 function refreshedAtLabel(value: number | null) {

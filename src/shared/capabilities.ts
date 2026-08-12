@@ -66,6 +66,7 @@ export const capabilitiesByType: Record<ConnectionType, ConnectionCapabilities> 
     ptyResize: true,
     reconnect: true,
     localFileAccess: true,
+    secureTransport: true,
   },
   "docker-exec": {
     ...disabled,
