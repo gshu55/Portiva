@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+const WSL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+const WSL_HOST_OVERVIEW_TIMEOUT: Duration = Duration::from_secs(4);
+
 const WSL_HOST_OVERVIEW_COMMAND: &str = r#"LC_ALL=C
 cpu_usage_percent=""
 cpu_count=""
@@ -189,23 +192,28 @@ fn ensure_distribution_is_running(
 
 #[cfg(windows)]
 fn collect_wsl_host_overview_for_platform(distribution: &str) -> Result<WslHostOverview, String> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let started_at = Instant::now();
-    let output = Command::new("wsl.exe")
-        .args([
+    let output = run_wsl_command(
+        &[
             "--distribution",
             distribution,
             "--exec",
             "sh",
             "-lc",
             WSL_HOST_OVERVIEW_COMMAND,
-        ])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|error| format!("无法读取 WSL 资源占用：{error}"))?;
+        ],
+        WSL_HOST_OVERVIEW_TIMEOUT,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            format!(
+                "读取 WSL 资源占用超时（{} 秒）",
+                WSL_HOST_OVERVIEW_TIMEOUT.as_secs()
+            )
+        } else {
+            format!("无法读取 WSL 资源占用：{error}")
+        }
+    })?;
 
     let stdout = decode_wsl_output(&output.stdout);
     if !output.status.success() {
@@ -228,16 +236,8 @@ fn collect_wsl_host_overview_for_platform(_distribution: &str) -> Result<WslHost
 #[cfg(windows)]
 fn discover_wsl_for_platform() -> WslDiscovery {
     use std::io::ErrorKind;
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
 
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut command = Command::new("wsl.exe");
-    command
-        .args(["--list", "--verbose"])
-        .creation_flags(CREATE_NO_WINDOW);
-
-    let output = match command.output() {
+    let output = match run_wsl_command(&["--list", "--verbose"], WSL_DISCOVERY_TIMEOUT) {
         Ok(output) => output,
         Err(error) if error.kind() == ErrorKind::NotFound => {
             return WslDiscovery {
@@ -252,7 +252,11 @@ fn discover_wsl_for_platform() -> WslDiscovery {
                 supported: true,
                 available: false,
                 distributions: Vec::new(),
-                message: Some(format!("无法查询 WSL：{error}")),
+                message: Some(if error.kind() == ErrorKind::TimedOut {
+                    format!("查询 WSL 超时（{} 秒）", WSL_DISCOVERY_TIMEOUT.as_secs())
+                } else {
+                    format!("无法查询 WSL：{error}")
+                }),
             };
         }
     };
@@ -282,6 +286,49 @@ fn discover_wsl_for_platform() -> WslDiscovery {
             None
         },
         distributions,
+    }
+}
+
+#[cfg(windows)]
+fn run_wsl_command(args: &[&str], timeout: Duration) -> std::io::Result<std::process::Output> {
+    use std::io::{Error, ErrorKind, Read};
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Output, Stdio};
+    use std::thread;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut child = Command::new("wsl.exe")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + timeout;
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            if let Some(mut pipe) = child.stdout.take() {
+                pipe.read_to_end(&mut stdout)?;
+            }
+            if let Some(mut pipe) = child.stderr.take() {
+                pipe.read_to_end(&mut stderr)?;
+            }
+            return Ok(Output {
+                status,
+                stdout,
+                stderr,
+            });
+        }
+
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::new(ErrorKind::TimedOut, "wsl.exe command timed out"));
+        }
+        thread::sleep(Duration::from_millis(25));
     }
 }
 

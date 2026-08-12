@@ -2951,6 +2951,11 @@ body.terminal-split-resizing {
   font-size: 9px;
 }
 
+.saved-section-heading small.error,
+.wsl-environment-card .saved-card-system.error {
+  color: var(--danger);
+}
+
 .saved-section-heading > button,
 .wsl-section-mark,
 .remote-section-mark {

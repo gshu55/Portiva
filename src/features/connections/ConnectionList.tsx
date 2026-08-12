@@ -80,8 +80,10 @@ export function ConnectionList({
   const [openMenuProfileId, setOpenMenuProfileId] = useState<string | null>(null);
   const [openingWslDistribution, setOpeningWslDistribution] = useState<string | null>(null);
   const [wslRefreshing, setWslRefreshing] = useState(false);
+  const [wslRefreshError, setWslRefreshError] = useState<string | null>(null);
   const refreshingProfileIds = useRef(new Set<string>());
   const refreshingWslDistributions = useRef(new Set<string>());
+  const refreshingWslDiscoveryRef = useRef(false);
   const mountedRef = useRef(true);
   const connectionPending = Boolean(connectingProfileId);
 
@@ -253,15 +255,29 @@ export function ConnectionList({
     }
   }, [onRefreshWslHostOverview]);
 
-  const refreshWsl = useCallback(async () => {
-    setWslRefreshing(true);
+  const refreshWsl = useCallback(async (silent = false) => {
+    if (refreshingWslDiscoveryRef.current) {
+      return null;
+    }
+    refreshingWslDiscoveryRef.current = true;
+    if (!silent) {
+      setWslRefreshing(true);
+    }
     try {
       const discovery = await onRefreshWslDistributions();
+      setWslRefreshError(null);
       discovery.distributions.forEach((distribution) => {
         void refreshWslOverview(distribution);
       });
+      return discovery;
+    } catch (error) {
+      setWslRefreshError(hostOverviewErrorMessage(error));
+      return null;
     } finally {
-      setWslRefreshing(false);
+      refreshingWslDiscoveryRef.current = false;
+      if (!silent) {
+        setWslRefreshing(false);
+      }
     }
   }, [onRefreshWslDistributions, refreshWslOverview]);
 
@@ -325,6 +341,16 @@ export function ConnectionList({
   }, [wslAutoRefreshKey]);
 
   useEffect(() => {
+    if (!wslDiscovery.supported) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void refreshWsl(true);
+    }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [refreshWsl, wslDiscovery.supported]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (openMenuProfileId) {
@@ -356,11 +382,13 @@ export function ConnectionList({
   const hasInventory = savedProfiles.length > 0 || wslDiscovery.distributions.length > 0;
   const hasFilteredInventory = filteredProfiles.length > 0 || filteredWslDistributions.length > 0;
   const normalizedQuery = query.trim();
-  const showWslSection = wslDiscovery.supported && (
-    !normalizedQuery
-    || filteredWslDistributions.length > 0
-    || wslDiscovery.distributions.length === 0
-  );
+  const showWslSection = wslDiscovery.supported
+    && hasInventory
+    && (
+      !normalizedQuery
+      || filteredWslDistributions.length > 0
+      || wslDiscovery.distributions.length === 0
+    );
 
   return (
     <section aria-label="轻量运维工作台" className="saved-connections-page">
@@ -397,7 +425,7 @@ export function ConnectionList({
             >
               <Icon className={totalRefreshingCount > 0 ? "is-spinning" : ""} name="refresh-ccw" />
             </button>
-            <button className="saved-create-button" disabled={connectionPending} onClick={onCreateProfile} type="button">
+            <button aria-label="新建连接" className="saved-create-button" disabled={connectionPending} onClick={onCreateProfile} type="button">
               <Icon name="plus" />
               <span>新建连接</span>
             </button>
@@ -412,6 +440,7 @@ export function ConnectionList({
                   <span className="wsl-section-mark"><Icon name="terminal" /></span>
                   <span>
                     <strong>本机 WSL 环境</strong>
+                    {wslRefreshError ? <small className="error" role="status" title={wslRefreshError}>刷新失败</small> : null}
                   </span>
                 </div>
                 <button
@@ -734,9 +763,9 @@ function WslOverviewPanel({
             progress={diskPercent}
           />
         </div>
-        <div className="saved-card-system" title={`${overview.operatingSystem} · ${overview.kernelVersion}`}>
+        <div className={["saved-card-system", state.error ? "error" : ""].filter(Boolean).join(" ")} title={state.error ?? `${overview.operatingSystem} · ${overview.kernelVersion}`}>
           <Icon name="activity" />
-          <span>{overview.operatingSystem} · 已运行 {formatUptime(overview.uptimeSeconds)}{state.loading ? " · 刷新中" : ""}</span>
+          <span>{overview.operatingSystem} · 已运行 {formatUptime(overview.uptimeSeconds)}{state.error ? " · 更新失败" : state.loading ? " · 刷新中" : ""}</span>
         </div>
       </div>
     );

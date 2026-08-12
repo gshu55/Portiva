@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -37,6 +37,13 @@ struct CopyPlan {
     files: Vec<PlannedCopyFile>,
     skipped_items: u64,
     total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DestinationConflictResolution {
+    Proceed,
+    ReplaceExisting,
+    Skip,
 }
 
 #[tauri::command]
@@ -480,34 +487,55 @@ fn copy_wsl_task(
         }
     };
 
-    if !resolve_destination_conflict(transfer_service, &task.id, &target)? {
+    let conflict_resolution = resolve_destination_conflict(transfer_service, &task.id, &target)?;
+    if conflict_resolution == DestinationConflictResolution::Skip {
         transfer_service.set_totals(&task.id, 0, 1)?;
         transfer_service.mark_item_skipped(&task.id)?;
         return Ok((0, 0));
     }
 
-    let plan = scan_copy_plan(transfer_service, &task.id, &source, &target)?;
+    let staged_target = (conflict_resolution == DestinationConflictResolution::ReplaceExisting)
+        .then(|| staged_replacement_path(&target, &task.id))
+        .transpose()?;
+    if let Some(staged_target) = &staged_target {
+        if staged_target.exists() {
+            remove_path(staged_target)?;
+        }
+    }
+    let copy_target = staged_target.as_deref().unwrap_or(&target);
+    let plan = scan_copy_plan(transfer_service, &task.id, &source, copy_target)?;
     let total_items = plan.directories.len() as u64 + plan.files.len() as u64 + plan.skipped_items;
     transfer_service.set_totals(&task.id, plan.total_bytes, total_items.max(1))?;
     if plan.skipped_items > 0 {
         transfer_service.mark_items_skipped(&task.id, plan.skipped_items)?;
     }
 
-    let target_was_created = !target.exists();
+    let target_was_created = !copy_target.exists();
     let result = execute_copy_plan(transfer_service, &task.id, &plan);
-    if result.is_err() && target_was_created {
-        let _ = remove_path(&target);
+    if result.is_err() && target_was_created && copy_target.exists() {
+        let _ = remove_path(copy_target);
     }
-    result.map(|transferred| (transferred, plan.total_bytes))
+    let transferred = result?;
+
+    if let Some(staged_target) = &staged_target {
+        if let Err(error) = replace_target_with_staged(staged_target, &target, &task.id) {
+            if staged_target.exists() {
+                let _ = remove_path(staged_target);
+            }
+            return Err(error);
+        }
+    }
+
+    Ok((transferred, plan.total_bytes))
 }
 
 fn resolve_destination_conflict(
     transfer_service: &TransferService,
     task_id: &str,
     target: &Path,
-) -> Result<bool, String> {
+) -> Result<DestinationConflictResolution, String> {
     if !target.exists() {
-        return Ok(true);
+        return Ok(DestinationConflictResolution::Proceed);
     }
 
     loop {
@@ -518,10 +546,11 @@ fn resolve_destination_conflict(
         }
         match requested.conflict_policy {
             crate::domain::file_transfer::TransferConflictPolicy::OverwriteAll => {
-                remove_path(target)?;
-                return Ok(true);
+                return Ok(DestinationConflictResolution::ReplaceExisting);
             }
-            crate::domain::file_transfer::TransferConflictPolicy::SkipAll => return Ok(false),
+            crate::domain::file_transfer::TransferConflictPolicy::SkipAll => {
+                return Ok(DestinationConflictResolution::Skip)
+            }
             _ => thread::sleep(Duration::from_millis(120)),
         }
     }
@@ -530,13 +559,68 @@ fn resolve_destination_conflict(
         match transfer_service.take_conflict_directive(task_id)? {
             ConflictDirective::Wait => thread::sleep(Duration::from_millis(120)),
             ConflictDirective::Overwrite => {
-                remove_path(target)?;
-                return Ok(true);
+                return Ok(DestinationConflictResolution::ReplaceExisting);
             }
-            ConflictDirective::Skip => return Ok(false),
+            ConflictDirective::Skip => return Ok(DestinationConflictResolution::Skip),
             ConflictDirective::Cancel => return Err(TRANSFER_CANCELLED.to_string()),
         }
     }
+}
+
+fn staged_replacement_path(target: &Path, task_id: &str) -> Result<PathBuf, String> {
+    sibling_task_path(target, task_id, "replace")
+}
+
+fn replacement_backup_path(target: &Path, task_id: &str) -> Result<PathBuf, String> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    sibling_task_path(target, &format!("{task_id}-{timestamp}"), "backup")
+}
+
+fn sibling_task_path(target: &Path, task_id: &str, role: &str) -> Result<PathBuf, String> {
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("invalid transfer target: {}", target.display()))?;
+    let suffix = task_id
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '-')
+        .collect::<String>();
+    Ok(target.with_file_name(format!(".{name}.portiva-{suffix}.{role}")))
+}
+
+fn replace_target_with_staged(staged: &Path, target: &Path, task_id: &str) -> Result<(), String> {
+    let backup = replacement_backup_path(target, task_id)?;
+    fs::rename(target, &backup).map_err(|error| {
+        format!(
+            "failed to preserve existing transfer target {}: {error}",
+            target.display()
+        )
+    })?;
+
+    if let Err(error) = fs::rename(staged, target) {
+        let restore_result = fs::rename(&backup, target);
+        return Err(match restore_result {
+            Ok(()) => format!(
+                "failed to replace transfer target {}; the original was restored: {error}",
+                target.display()
+            ),
+            Err(restore_error) => format!(
+                "failed to replace transfer target {} and failed to restore its backup {}: {error}; restore error: {restore_error}",
+                target.display(),
+                backup.display()
+            ),
+        });
+    }
+
+    remove_path(&backup).map_err(|error| {
+        format!(
+            "transfer target was replaced, but its backup could not be removed {}: {error}",
+            backup.display()
+        )
+    })
 }
 
 fn scan_copy_plan(
@@ -786,7 +870,8 @@ fn remove_path(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_copy_plan, normalize_linux_path, scan_copy_plan, validate_distribution_name,
+        execute_copy_plan, normalize_linux_path, replace_target_with_staged, scan_copy_plan,
+        staged_replacement_path, validate_distribution_name,
     };
     use crate::domain::file_transfer::{TransferDirection, TransferStatus, TransferTaskItemKind};
     use crate::services::transfer_service::TransferService;
@@ -824,6 +909,26 @@ mod tests {
         assert_eq!(normalize_linux_path("/").unwrap(), "/");
         assert!(normalize_linux_path("relative/path").is_err());
         assert!(normalize_linux_path("/mnt/c/a\\b").is_err());
+    }
+
+    #[test]
+    fn replaces_existing_target_only_after_staged_copy_is_ready() {
+        let temp = TempDirectory::new("safe-replace");
+        let target = temp.0.join("config.txt");
+        std::fs::write(&target, b"old value").unwrap();
+        let staged = staged_replacement_path(&target, "transfer-safe-replace").unwrap();
+        std::fs::write(&staged, b"new value").unwrap();
+
+        replace_target_with_staged(&staged, &target, "transfer-safe-replace").unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"new value");
+        assert!(!staged.exists());
+        let leftover_backups = std::fs::read_dir(&temp.0)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".backup"))
+            .count();
+        assert_eq!(leftover_backups, 0);
     }
 
     #[test]

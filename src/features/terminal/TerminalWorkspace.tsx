@@ -75,6 +75,7 @@ interface SftpSidePanelRenderProps {
 }
 
 const getSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
+const closedTerminalPanelVisibility = { command: false, status: false } as const;
 const isFileTransferTab = (tab: WorkspaceSessionTab | null | undefined) =>
   (tab?.kind ?? "terminal") === "file-transfer";
 const isCustomTab = (tab: WorkspaceSessionTab | null | undefined) =>
@@ -186,9 +187,11 @@ export function TerminalWorkspace({
   const [splitRatio, setSplitRatio] = useState(0.5);
   const [sftpPanelRatio, setSftpPanelRatio] = useState(0.22);
   const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("left");
-  const [sshCommandPanelVisible, setSshCommandPanelVisible] = useState(false);
   const [sshSftpPanelVisible, setSshSftpPanelVisible] = useState(true);
-  const [sshStatusPanelVisible, setSshStatusPanelVisible] = useState(false);
+  const [terminalPanelVisibilityByTab, setTerminalPanelVisibilityByTab] = useState<Record<
+    string,
+    { command: boolean; status: boolean }
+  >>({});
   const [commandHistoryByTab, setCommandHistoryByTab] = useState<Record<string, string[]>>({});
   const savedSshCommands = useSavedSshCommands();
   const tabBarRef = useRef<HTMLDivElement>(null);
@@ -571,6 +574,7 @@ export function TerminalWorkspace({
     // Vim/tmux 等全屏程序依赖连续解析控制序列；隐藏标签页也必须保持 xterm 状态同步。
     const terminalPane = renderTerminalPane(tab, isActivePane, reportSizeWhenVisible);
     const tabId = getSessionTabId(tab);
+    const panelVisibility = terminalPanelVisibilityByTab[tabId] ?? closedTerminalPanelVisibility;
     const isSshTerminal = tab.connection.transport?.kind === "ssh";
     const isWslTerminal = tab.connection.transport?.kind === "wsl";
     const sftpPanelAvailable = Boolean(sftpSidePanel && isActivePane && !isTerminalSplitActive);
@@ -578,7 +582,7 @@ export function TerminalWorkspace({
     const primaryContent = isSshTerminal || isWslTerminal ? (
       <SshTerminalWorkspace
         commandHistory={commandHistoryByTab[tabId] ?? []}
-        commandPanelVisible={sshCommandPanelVisible}
+        commandPanelVisible={panelVisibility.command}
         compact={isTerminalSplitActive}
         connectionId={tab.connection.id}
         distribution={isWslTerminal ? tab.connection.transport?.host : undefined}
@@ -588,7 +592,7 @@ export function TerminalWorkspace({
         sessionKind={isWslTerminal ? "wsl" : "ssh"}
         sftpPanelAvailable={sftpPanelAvailable}
         sftpPanelVisible={sshSftpPanelVisible}
-        statusPanelVisible={sshStatusPanelVisible}
+        statusPanelVisible={panelVisibility.status}
         terminalReady={Boolean(
           tab.terminal?.status === "attached" &&
           (isWslTerminal || tab.connection.transport?.authenticated)
@@ -602,9 +606,21 @@ export function TerminalWorkspace({
           recordCommand(tabId, command);
           void onSendTerminalData(`${command}\r`, tab.terminal.id);
         }}
-        onToggleCommandPanel={() => setSshCommandPanelVisible((current) => !current)}
+        onToggleCommandPanel={() => setTerminalPanelVisibilityByTab((current) => ({
+          ...current,
+          [tabId]: {
+            command: !(current[tabId]?.command ?? false),
+            status: current[tabId]?.status ?? false,
+          },
+        }))}
         onToggleSftpPanel={() => setSshSftpPanelVisible((current) => !current)}
-        onToggleStatusPanel={() => setSshStatusPanelVisible((current) => !current)}
+        onToggleStatusPanel={() => setTerminalPanelVisibilityByTab((current) => ({
+          ...current,
+          [tabId]: {
+            command: current[tabId]?.command ?? false,
+            status: !(current[tabId]?.status ?? false),
+          },
+        }))}
         onUpdateSavedCommand={savedSshCommands.updateCommand}
       >
         {terminalPane}
