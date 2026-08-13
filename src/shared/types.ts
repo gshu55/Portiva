@@ -392,8 +392,12 @@ export interface AppSettings {
   keymap: {
     commandPalette: string;
     newProfile: string;
+    openHostOverview: string;
     openLocalTerminal: string;
     openSerialTerminal: string;
+    openSettings: string;
+    increaseFontSize: string;
+    decreaseFontSize: string;
     closeTab: string;
   };
   security: {

@@ -70,10 +70,10 @@ function resolveWallpaperMetrics(background: AppBackgroundSettings) {
 }
 
 /**
- * Produces the complete wallpaper visual system from one user-facing strength.
- * Strength controls image visibility and one shared opacity curve for bodies,
- * headers and controls. Blur is independent and maps directly to the
- * user-facing 0–24 px value, including a truly sharp 0 px result.
+ * Produces stable wallpaper surface metrics from one user-facing strength.
+ * Enabling the background only changes the resolved image; the same opacity
+ * curve remains active for bodies, headers and controls in both states. Blur
+ * is independent and maps directly to the user-facing 0–24 px value.
  */
 export function resolveAppBackgroundCssVariables(
   background: AppBackgroundSettings,
@@ -97,7 +97,7 @@ export function resolveAppBackgroundTerminalColor(
   background: AppBackgroundSettings,
   terminalBackground: string,
 ): string {
-  if (!background.enabled || background.opacity <= 0) {
+  if (background.opacity <= 0) {
     return terminalBackground;
   }
 

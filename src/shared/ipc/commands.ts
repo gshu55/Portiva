@@ -98,6 +98,7 @@ export const commandNames = {
   serialTerminalReconfigure: "serial_terminal_reconfigure",
   settingsGet: "settings_get",
   settingsUpdate: "settings_update",
+  systemFontsList: "system_fonts_list",
   logClear: "log_clear",
   logList: "log_list",
   logRecordPlaceholder: "log_record_placeholder",
@@ -550,6 +551,10 @@ export function settingsGet() {
 
 export function settingsUpdate(settings: AppSettings) {
   return invoke<AppSettings>(commandNames.settingsUpdate, { settings });
+}
+
+export function systemFontsList() {
+  return invoke<string[]>(commandNames.systemFontsList);
 }
 
 export function networkProxyPasswordStatus() {

@@ -152,8 +152,8 @@ export function AppTitlebar({
         <button
           type="button"
           className={savedConnectionsOpen ? "active" : ""}
-          title="已保存连接"
-          aria-label="已保存连接"
+          title="主机概览"
+          aria-label="主机概览"
           onClick={onOpenSavedConnections}
         >
           <Icon name="server" />
@@ -179,8 +179,8 @@ export function AppTitlebar({
         <button
           type="button"
           className={httpConsoleActive ? "active" : ""}
-          title="HTTP/API 调试"
-          aria-label="HTTP/API 调试"
+          title="Post"
+          aria-label="Post"
           onClick={onOpenHttpConsole}
         >
           <Icon name="network" />

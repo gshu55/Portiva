@@ -14,6 +14,7 @@ import type {
 import { readClipboardText, writeClipboardHtml, writeClipboardText } from "../../shared/clipboard";
 import { Icon } from "../../shared/Icon";
 import { parseOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory";
+import { resolveTerminalFontFamily, resolveTerminalFontSize } from "../../shared/terminalFonts";
 
 interface TerminalPaneProps {
   autoScroll?: boolean;
@@ -23,6 +24,8 @@ interface TerminalPaneProps {
   terminal: TerminalSession | null;
   terminalConfirmMultilinePaste?: boolean;
   terminalCopyRichText?: boolean;
+  terminalFontFamily: string;
+  terminalFontSize: number;
   terminalRightClickBehavior?: TerminalRightClickBehavior;
   terminalTheme: TerminalColorPalette;
   terminalSnapshot: TerminalSnapshot | null;
@@ -223,6 +226,8 @@ export function TerminalPane({
   terminal,
   terminalConfirmMultilinePaste = true,
   terminalCopyRichText = false,
+  terminalFontFamily,
+  terminalFontSize,
   terminalRightClickBehavior = "context-menu",
   terminalTheme,
   terminalSnapshot,
@@ -287,6 +292,8 @@ export function TerminalPane({
   const emphasizeSearchSelection = isSearchOpen && searchStatus === "found";
   const pasteText = pasteDraft ?? "";
   const pasteLineCount = pasteDraft !== null ? pasteText.split(/\r\n|\r|\n/).length : 0;
+  const resolvedTerminalFontFamily = resolveTerminalFontFamily(terminalFontFamily);
+  const resolvedTerminalFontSize = resolveTerminalFontSize(terminalFontSize);
 
   useEffect(() => {
     resizeTerminalRef.current = onResizeTerminal;
@@ -570,11 +577,8 @@ export function TerminalPane({
       cursorStyle: "bar",
       cursorWidth: 2,
       disableStdin: false,
-      fontFamily: "var(--terminal-font-family), Cascadia Mono, Consolas, monospace",
-      fontSize: Number.parseInt(
-        getComputedStyle(container).getPropertyValue("--terminal-font-size"),
-        10,
-      ) || 13,
+      fontFamily: resolvedTerminalFontFamily,
+      fontSize: resolvedTerminalFontSize,
       scrollback: 5000,
       theme: createXtermTheme(terminalTheme),
     });
@@ -755,6 +759,51 @@ export function TerminalPane({
 
     xtermRef.current.options.theme = createXtermTheme(terminalTheme, emphasizeSearchSelection);
   }, [terminalTheme, emphasizeSearchSelection]);
+
+  useEffect(() => {
+    const instance = xtermRef.current;
+
+    if (!instance) {
+      return;
+    }
+
+    instance.options = {
+      fontFamily: resolvedTerminalFontFamily,
+      fontSize: resolvedTerminalFontSize,
+    };
+
+    let disposed = false;
+    let frameId = window.requestAnimationFrame(() => {
+      if (disposed || xtermRef.current !== instance) {
+        return;
+      }
+
+      instance.clearTextureAtlas();
+      instance.refresh(0, instance.rows - 1);
+      reportSizeRef.current?.();
+    });
+
+    void document.fonts
+      ?.load(`${resolvedTerminalFontSize}px ${resolvedTerminalFontFamily}`)
+      .then(() => {
+        if (disposed || xtermRef.current !== instance) {
+          return;
+        }
+
+        window.cancelAnimationFrame(frameId);
+        frameId = window.requestAnimationFrame(() => {
+          instance.clearTextureAtlas();
+          instance.refresh(0, instance.rows - 1);
+          reportSizeRef.current?.();
+        });
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [resolvedTerminalFontFamily, resolvedTerminalFontSize]);
 
   useEffect(() => {
     const instance = xtermRef.current;

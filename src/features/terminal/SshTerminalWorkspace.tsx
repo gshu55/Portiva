@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { formatBytes, formatUptime } from "../../shared/format";
+import { formatBytes, formatUptime, formatUptimeDays } from "../../shared/format";
 import { Icon } from "../../shared/Icon";
 import { sshCollectHostOverview, wslCollectHostOverview } from "../../shared/ipc/commands";
 import type { SshHostOverview, WslHostOverview } from "../../shared/types";
@@ -542,7 +542,12 @@ export function SshTerminalWorkspace({
           <SystemSummaryItem icon="server" label="内存" title={overview.data ? `${formatBytes(overview.data.memoryUsedBytes)} / ${formatBytes(overview.data.memoryTotalBytes)}` : "内存信息不可用"} value={memoryPercent === null ? "—" : `${memoryPercent}%`} />
           <SystemSummaryItem icon="hard-drive" label="磁盘" title={overview.data ? `${formatBytes(overview.data.diskUsedBytes)} / ${formatBytes(overview.data.diskTotalBytes)}` : "根分区信息不可用"} value={diskPercent === null ? "—" : `${diskPercent}%`} />
           <SystemSummaryItem icon="network" label="网络" title={networkDetail} value={networkValue} />
-          <SystemSummaryItem icon="activity" label="运行" title={overview.data?.kernelVersion ?? "运行时间不可用"} value={formatUptime(overview.data?.uptimeSeconds ?? null)} />
+          <SystemSummaryItem
+            icon="activity"
+            label="运行"
+            title={overview.data?.kernelVersion ?? "运行时间不可用"}
+            value={(sessionKind === "ssh" ? formatUptimeDays : formatUptime)(overview.data?.uptimeSeconds ?? null)}
+          />
             <IconButton aria-label="刷新系统信息" disabled={!terminalReady || overview.loading} icon="refresh-ccw" onClick={() => void overview.refresh()} size="sm" title="刷新系统信息" tone="muted" />
           </div>
         </Card>

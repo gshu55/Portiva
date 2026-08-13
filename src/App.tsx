@@ -22,6 +22,12 @@ import {
   resolveAppBackgroundTerminalColor,
 } from "./shared/appBackgrounds";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
+import {
+  applicationFontReferenceSizes,
+  resolveApplicationFontSize,
+  resolveTerminalFontFamily,
+  resolveTerminalFontSize,
+} from "./shared/terminalFonts";
 import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
 import { sshCollectHostOverview, wslCollectHostOverview } from "./shared/ipc/commands";
 
@@ -80,7 +86,7 @@ const httpConsoleSessionTab: WorkspaceSessionTab = {
     id: httpConsoleTabId,
     profileId: httpConsoleTabId,
     status: "ready",
-    title: "HTTP Console",
+    title: "Post",
   },
   terminal: null,
   terminalSnapshot: null,
@@ -289,6 +295,28 @@ function App() {
     setActiveShellTabId(null);
     void workspace.openSerialTerminalTab();
   }, [workspace]);
+  const openHostDashboardTab = useCallback(() => {
+    setSavedConnectionsOpen(true);
+    setActiveShellTabId(hostDashboardTabId);
+  }, []);
+  const openSettingsTab = useCallback(() => {
+    setSettingsTabOpen(true);
+    setActiveShellTabId(settingsTabId);
+  }, []);
+  const updateApplicationFontSize = useCallback(
+    (fontSize: number) => {
+      const terminalFontSize = Math.min(32, Math.max(8, fontSize));
+      if (terminalFontSize === workspace.settings.theme.terminalFontSize) {
+        return;
+      }
+
+      void workspace.saveSettings({
+        ...workspace.settings,
+        theme: { ...workspace.settings.theme, terminalFontSize },
+      });
+    },
+    [workspace],
+  );
   const appBackground = workspace.settings.theme.background ?? defaultAppBackground;
   const terminalPalette = useMemo(() => {
     const palette = resolveTerminalPalette(workspace.settings.theme);
@@ -298,16 +326,29 @@ function App() {
     };
   }, [appBackground, workspace.settings.theme]);
   const themeStyle = useMemo(
-    () =>
-      ({
-        "--terminal-font-family": workspace.settings.theme.terminalFontFamily,
-        "--terminal-font-size": `${workspace.settings.theme.terminalFontSize}px`,
+    () => {
+      const appFontFamily = resolveTerminalFontFamily(workspace.settings.theme.terminalFontFamily);
+      const appFontSize = resolveTerminalFontSize(workspace.settings.theme.terminalFontSize);
+      const applicationFontSizes = Object.fromEntries(
+        applicationFontReferenceSizes.map((referenceSize) => [
+          `--app-font-size-${referenceSize}`,
+          resolveApplicationFontSize(referenceSize, appFontSize),
+        ]),
+      );
+
+      return ({
+        "--app-font-family": appFontFamily,
+        "--app-font-size": `${appFontSize}px`,
+        ...applicationFontSizes,
+        "--terminal-font-family": appFontFamily,
+        "--terminal-font-size": `${appFontSize}px`,
         "--terminal-bg": terminalPalette.background,
         "--terminal-fg": terminalPalette.foreground,
         "--terminal-cursor": terminalPalette.cursor,
         "--terminal-selection-bg": terminalPalette.selectionBackground,
         ...resolveAppBackgroundCssVariables(appBackground),
-      }) as CSSProperties,
+      }) as CSSProperties;
+    },
     [
       appBackground,
       terminalPalette,
@@ -318,15 +359,25 @@ function App() {
   const shortcutHandlers = useMemo(
     () => ({
       onCloseTab: workspace.closeActiveConnection,
+      onDecreaseFontSize: () =>
+        updateApplicationFontSize(resolveTerminalFontSize(workspace.settings.theme.terminalFontSize) - 1),
+      onIncreaseFontSize: () =>
+        updateApplicationFontSize(resolveTerminalFontSize(workspace.settings.theme.terminalFontSize) + 1),
       onNewProfile: openCreateProfileDialog,
+      onOpenHostOverview: openHostDashboardTab,
       onOpenLocalTerminal: openLocalTerminalTab,
       onOpenSerialTerminal: openSerialTerminalTab,
+      onOpenSettings: openSettingsTab,
     }),
     [
       workspace.closeActiveConnection,
+      workspace.settings.theme.terminalFontSize,
       openCreateProfileDialog,
+      openHostDashboardTab,
       openLocalTerminalTab,
       openSerialTerminalTab,
+      openSettingsTab,
+      updateApplicationFontSize,
     ],
   );
 
@@ -1030,10 +1081,6 @@ function App() {
   const editSavedConnection = (profile: ConnectionProfile) => {
     setProfileDialog({ mode: "edit", profile });
   };
-  const openHostDashboardTab = () => {
-    setSavedConnectionsOpen(true);
-    setActiveShellTabId(hostDashboardTabId);
-  };
   const closeHostDashboardTab = () => {
     setSavedConnectionsOpen(false);
     setActiveShellTabId((current) => (current === hostDashboardTabId ? null : current));
@@ -1049,10 +1096,6 @@ function App() {
   const closeNetworkScannerTab = () => {
     setNetworkScannerOpen(false);
     setActiveShellTabId((current) => (current === networkScannerTabId ? null : current));
-  };
-  const openSettingsTab = () => {
-    setSettingsTabOpen(true);
-    setActiveShellTabId(settingsTabId);
   };
   const openHttpConsoleTab = () => {
     setHttpConsoleOpen(true);
@@ -1403,6 +1446,8 @@ function App() {
           sessionTabs={workspace.sessionTabs}
           terminalConfirmMultilinePaste={workspace.settings.terminal.confirmMultilinePaste}
           terminalCopyRichText={workspace.settings.terminal.copyRichText}
+          terminalFontFamily={workspace.settings.theme.terminalFontFamily}
+          terminalFontSize={workspace.settings.theme.terminalFontSize}
           terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
           suppressInsecureWarning={workspace.settings.security.allowInsecureWithoutWarning}
           terminalTheme={terminalPalette}
@@ -1529,6 +1574,8 @@ function App() {
             sessionTabs={appSessionTabs}
             terminalConfirmMultilinePaste={workspace.settings.terminal.confirmMultilinePaste}
             terminalCopyRichText={workspace.settings.terminal.copyRichText}
+            terminalFontFamily={workspace.settings.theme.terminalFontFamily}
+            terminalFontSize={workspace.settings.theme.terminalFontSize}
             terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
             suppressInsecureWarning={workspace.settings.security.allowInsecureWithoutWarning}
             terminalTheme={terminalPalette}

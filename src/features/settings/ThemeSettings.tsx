@@ -1,9 +1,9 @@
 import { useRef, useState, type CSSProperties, type ChangeEvent } from "react";
 import { appBackgroundPresets, defaultAppBackground } from "../../shared/appBackgrounds";
-import { formatImageBytes, prepareBackgroundImage } from "../../shared/backgroundImage";
+import { prepareBackgroundImage } from "../../shared/backgroundImage";
 import type { AppBackgroundPresetId, AppSettings } from "../../shared/types";
 import type { IconName } from "../../shared/Icon";
-import { SegmentedControl, Select, TextInput, Toggle } from "../../shared/ui";
+import { SegmentedControl, Toggle } from "../../shared/ui";
 import { SettingsSectionHeader } from "./SettingsSection";
 
 interface ThemeSettingsProps {
@@ -11,55 +11,10 @@ interface ThemeSettingsProps {
   onSaveSettings: (settings: AppSettings) => void;
 }
 
-const customFontValue = "__custom__";
-const terminalFontPresets = [
-  {
-    aliases: ["Cascadia Mono", "Cascadia Code"],
-    family: "\"Cascadia Mono\", \"Cascadia Code\", Consolas, monospace",
-    label: "Cascadia Mono",
-  },
-  {
-    aliases: ["JetBrains Mono"],
-    family: "\"JetBrains Mono\", \"Cascadia Mono\", Consolas, monospace",
-    label: "JetBrains Mono",
-  },
-  {
-    aliases: ["Fira Code"],
-    family: "\"Fira Code\", \"Cascadia Mono\", Consolas, monospace",
-    label: "Fira Code",
-  },
-  {
-    aliases: ["Iosevka"],
-    family: "\"Iosevka\", \"Cascadia Mono\", Consolas, monospace",
-    label: "Iosevka",
-  },
-  {
-    aliases: ["Source Code Pro"],
-    family: "\"Source Code Pro\", \"Cascadia Mono\", Consolas, monospace",
-    label: "Source Code Pro",
-  },
-  {
-    aliases: ["IBM Plex Mono"],
-    family: "\"IBM Plex Mono\", \"Cascadia Mono\", Consolas, monospace",
-    label: "IBM Plex Mono",
-  },
-  {
-    aliases: ["Roboto Mono"],
-    family: "\"Roboto Mono\", \"Cascadia Mono\", Consolas, monospace",
-    label: "Roboto Mono",
-  },
-  {
-    aliases: ["Hack"],
-    family: "\"Hack\", \"Cascadia Mono\", Consolas, monospace",
-    label: "Hack",
-  },
-];
-
 export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) {
   const backgroundFileInputRef = useRef<HTMLInputElement>(null);
   const [backgroundError, setBackgroundError] = useState("");
   const [backgroundLoading, setBackgroundLoading] = useState(false);
-  const [backgroundStatus, setBackgroundStatus] = useState("");
   const background = settings.theme.background ?? defaultAppBackground;
   const updateTheme = (theme: Partial<AppSettings["theme"]>) =>
     onSaveSettings({ ...settings, theme: { ...settings.theme, ...theme } });
@@ -68,7 +23,6 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
   const selectBackgroundPreset = (preset: AppBackgroundPresetId) => {
     if (preset === "custom") {
       setBackgroundError("");
-      setBackgroundStatus("");
       backgroundFileInputRef.current?.click();
       return;
     }
@@ -79,7 +33,6 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
     setBackgroundError("");
-    setBackgroundStatus("");
 
     if (!file) {
       return;
@@ -89,9 +42,6 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
     try {
       const prepared = await prepareBackgroundImage(file);
       updateBackground({ customImage: prepared.dataUrl, enabled: true, preset: "custom" });
-      setBackgroundStatus(
-        `已应用 ${prepared.width}×${prepared.height} 背景（${formatImageBytes(prepared.sourceBytes)} → ${formatImageBytes(prepared.storedBytes)}）。`,
-      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "图片处理失败";
       setBackgroundError(`${message}，请重新选择。`);
@@ -99,12 +49,6 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
       setBackgroundLoading(false);
     }
   };
-  const selectedFontPreset =
-    terminalFontPresets.find(
-      (preset) =>
-        preset.family === settings.theme.terminalFontFamily ||
-        preset.aliases.includes(settings.theme.terminalFontFamily),
-    ) ?? null;
   const modeLabels: Record<AppSettings["theme"]["mode"], string> = {
     dark: "深色",
     light: "浅色",
@@ -119,7 +63,7 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
   return (
     <>
       <section className="settings-block appearance-settings-block">
-        <SettingsSectionHeader title="主题与字体" />
+        <SettingsSectionHeader title="主题" />
         <SegmentedControl
           aria-label="主题模式"
           className={`segmented-control theme-mode-control mode-${settings.theme.mode}`}
@@ -133,49 +77,6 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
           value={settings.theme.mode}
           onChange={(mode) => updateTheme({ mode })}
         />
-        <div className="settings-field-grid">
-          <label className="settings-field">
-            <span>字体预设</span>
-            <Select
-              value={selectedFontPreset?.family ?? customFontValue}
-              options={[
-                ...terminalFontPresets.map((preset) => ({
-                  label: preset.label,
-                  value: preset.family,
-                })),
-                ...(!selectedFontPreset ? [{ label: "自定义", value: customFontValue }] : []),
-              ]}
-              onChange={(value) => {
-                if (value !== customFontValue) {
-                  updateTheme({ terminalFontFamily: value });
-                }
-              }}
-            />
-          </label>
-          <label className="settings-field compact">
-            <span>字号</span>
-            <TextInput
-              min="8"
-              max="32"
-              type="number"
-              value={settings.theme.terminalFontSize}
-              onChange={(event) => updateTheme({ terminalFontSize: Number(event.currentTarget.value) })}
-            />
-          </label>
-        </div>
-        <label className="settings-field">
-          <span>自定义字体栈</span>
-          <TextInput
-            mono
-            value={settings.theme.terminalFontFamily}
-            onChange={(event) => updateTheme({ terminalFontFamily: event.currentTarget.value })}
-          />
-        </label>
-        <div className="terminal-font-preview" style={{ fontFamily: settings.theme.terminalFontFamily }}>
-          <span>root@portiva:~$ pnpm build && ssh 192.168.1.1</span>
-          <span>ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789</span>
-          <span>这是一段测试文本</span>
-        </div>
       </section>
 
       <section className="settings-block background-settings-block">
@@ -272,11 +173,6 @@ export function ThemeSettings({ onSaveSettings, settings }: ThemeSettingsProps) 
           </div>
           {backgroundError ? (
             <p className="background-settings-error" role="alert">{backgroundError}</p>
-          ) : null}
-          {backgroundStatus ? (
-            <p aria-live="polite" className="background-settings-status" role="status">
-              {backgroundStatus}
-            </p>
           ) : null}
         </div>
       </section>

@@ -21,16 +21,23 @@ const portalThemeVariables = [
   "--accent",
   "--accent-bg",
   "--app-bg",
+  "--app-font-family",
+  "--app-font-size",
+  ...[8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 22].map((size) => `--app-font-size-${size}`),
   "--border-faint",
   "--border-panel",
   "--border-subtle",
   "--button-bg",
   "--button-muted-base-bg",
   "--button-muted-bg",
+  "--control-height",
+  "--control-height-lg",
+  "--control-height-sm",
   "--control-radius",
   "--danger",
   "--danger-bg",
   "--field-bg",
+  "--icon-button-size",
   "--panel-bg",
   "--panel-solid-base-bg",
   "--panel-solid-bg",
@@ -129,11 +136,20 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
   }
 
   return (
-    <span className="ui-field-shell">
+    <span className={cx("ui-field-shell", `ui-field-shell-${fieldSize}`)}>
       <Icon name={leadingIcon} />
       {input}
     </span>
   );
+});
+
+export interface ColorPickerProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "type"> {}
+
+export const ColorPicker = forwardRef<HTMLInputElement, ColorPickerProps>(function ColorPicker(
+  { className, ...props },
+  ref,
+) {
+  return <input className={cx("ui-color-picker", className)} ref={ref} type="color" {...props} />;
 });
 
 export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
@@ -201,18 +217,7 @@ export function Select<T extends string | number>({
       const spaceAbove = rect.top - viewportGap;
       const opensUp = spaceBelow < 120 && spaceAbove > spaceBelow;
       const maxHeight = Math.max(96, Math.min(preferredMaxHeight, opensUp ? spaceAbove - 4 : spaceBelow - 4));
-      const themeVars = [
-        "--accent",
-        "--app-bg",
-        "--border-subtle",
-        "--button-muted-base-bg",
-        "--button-muted-bg",
-        "--panel-solid-base-bg",
-        "--panel-solid-bg",
-        "--text-main",
-        "--text-muted",
-        "--text-strong",
-      ].reduce<Record<string, string>>((vars, name) => {
+      const themeVars = portalThemeVariables.reduce<Record<string, string>>((vars, name) => {
         vars[name] = rootStyle.getPropertyValue(name);
         return vars;
       }, {});

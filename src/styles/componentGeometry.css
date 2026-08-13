@@ -4,9 +4,193 @@
  * True circular affordances such as status dots, radios and progress tracks stay round.
  */
 .app-shell {
+  --control-height-sm: 26px;
+  --control-height: 32px;
+  --control-height-lg: 38px;
+  --choice-control-height: 38px;
   --control-radius: 6px;
+  --icon-button-size: var(--control-height);
   --surface-radius: 10px;
   --tag-radius: var(--control-radius);
+}
+
+/*
+ * Single-line control sizing contract.
+ *
+ * The default button is the sizing anchor. Inputs, selects and composed fields
+ * follow the same 32px rhythm; explicitly small and large controls keep their
+ * own density. Multi-line editors and compact row-level actions are excluded.
+ */
+.ui-button-sm,
+.app-shell .ui-field-sm:not(.ui-textarea),
+.app-shell .ui-field-shell-sm,
+.app-shell .ui-select-control-sm,
+.app-shell .ui-select-control-sm .ui-select-trigger {
+  height: var(--control-height-sm);
+  min-height: var(--control-height-sm);
+}
+
+.ui-button-md,
+.app-shell .ui-field-md:not(.ui-textarea),
+.app-shell .ui-field-shell-md,
+.app-shell .ui-select-control-md,
+.app-shell .ui-select-control-md .ui-select-trigger {
+  height: var(--control-height);
+  min-height: var(--control-height);
+}
+
+.ui-button-lg,
+.app-shell .ui-field-lg:not(.ui-textarea),
+.app-shell .ui-field-shell-lg,
+.app-shell .ui-select-control-lg,
+.app-shell .ui-select-control-lg .ui-select-trigger {
+  height: var(--control-height-lg);
+  min-height: var(--control-height-lg);
+}
+
+.app-shell .ui-field-shell .ui-field {
+  height: 100%;
+  min-height: 0;
+}
+
+.ui-select-option {
+  min-height: var(--control-height, 32px);
+}
+
+/* Raw single-line form elements use the default rhythm unless they are
+ * intrinsically compact controls or row-level inline editors. */
+.app-shell :is(input, select):not(:where(
+  [type="checkbox"],
+  [type="radio"],
+  [type="range"],
+  [type="file"],
+  [type="color"],
+  [type="hidden"],
+  .file-inline-name-input,
+  .simple-sftp-inline-name-input,
+  .http-tree-inline-input,
+  .serial-timed-send input
+)) {
+  height: var(--control-height);
+  min-height: var(--control-height);
+}
+
+/* Feature-owned default controls that previously carried local 23–38px
+ * overrides. These are all single-line actions or field composites. */
+.app-shell :is(
+  .primary-action,
+  .toolbar-actions button,
+  .panel-action,
+  .profile-dialog-heading button,
+  .profile-dialog-actions button,
+  .profile-dialog .secret-field-visibility,
+  .profile-trust-card button,
+  .host-trust-actions button,
+  .saved-create-button,
+  .saved-toolbar-icon-button,
+  .serial-port-config-control,
+  .serial-port-config-control .serial-port-select,
+  .serial-port-config-control .serial-port-select .ui-select-trigger,
+  .serial-port-config-control > .ui-icon-button,
+  .serial-config-check,
+  .serial-config-actions button,
+  .serial-send-input,
+  .serial-send-ending-select .ui-select-trigger,
+  .serial-send-submit,
+  .serial-send-delete,
+  .serial-add-send-slot,
+  .serial-timed-send,
+  .serial-monitor-actions button,
+  .serial-toggle-pill,
+  .terminal-context-menu button,
+  .terminal-paste-confirm footer button,
+  .terminal-search-bar input,
+  .terminal-search-bar button,
+  .file-copy-actions button,
+  .file-path-bar > button,
+  .simple-sftp-tools button,
+  .simple-sftp-path button,
+  .simple-sftp-path .ui-field,
+  .simple-sftp-transfer-actions button,
+  .simple-directory-picker header button,
+  .simple-directory-path button,
+  .simple-delete-confirm footer button,
+  .simple-directory-picker footer button,
+  .file-context-menu button,
+  .file-path-row input,
+  .file-path-row button,
+  .tunnel-actions button,
+  .file-actions button,
+  .protocol-form input:not(:where([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"])),
+  .protocol-form select,
+  .profile-actions button,
+  .serial-port-control button,
+  .http-workspace-switcher select,
+  .http-workspace-name-input,
+  .http-request-bar select,
+  .http-request-bar input,
+  .http-save-button,
+  .http-send-button,
+  .http-section-switcher button,
+  .http-response-body-toolbar button,
+  .http-sidebar-tool-row button,
+  .http-environment-tags > button,
+  .http-variable-scope-tabs button,
+  .http-environment-name-row input,
+  .http-environment-variable-row input:not(:where([type="checkbox"], [type="radio"])),
+  .http-share-tabs button,
+  .http-share-toolbar button,
+  .http-share-actions button,
+  .http-share-choice-row button,
+  .http-tree-search,
+  .http-method-select .ui-select-trigger,
+  .http-parameter-row input:not(:where([type="checkbox"], [type="radio"])),
+  .http-form-type-toggle,
+  .http-form-file-button,
+  .http-param-actions button,
+  .http-editor-toolbar-actions button,
+  .http-response-tabs button,
+  .http-response-tools button,
+  .http-context-menu button
+) {
+  height: var(--control-height);
+  min-height: var(--control-height);
+  max-height: var(--control-height);
+}
+
+/* Horizontal single-choice groups need a larger hit area than ordinary
+ * inline controls. The 38px value includes the group's outer border. */
+.app-shell .ui-segmented-horizontal,
+.app-shell .serial-send-mode {
+  height: var(--choice-control-height);
+  min-height: var(--choice-control-height);
+  max-height: var(--choice-control-height);
+}
+
+.app-shell .ui-segmented-horizontal > .ui-button,
+.app-shell .serial-send-mode > button {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+.app-shell .profile-dialog .secret-field-control {
+  grid-template-columns: minmax(0, 1fr) var(--control-height);
+}
+
+.app-shell .profile-dialog .secret-field-visibility.ui-icon-button {
+  --icon-button-size: var(--control-height);
+  width: var(--control-height);
+  min-width: var(--control-height);
+  max-width: var(--control-height);
+}
+
+/* The SSH command composer explicitly uses the small control size. */
+.app-shell .ssh-command-add .ui-icon-button.ui-button-sm {
+  width: var(--control-height-sm);
+  min-width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  min-height: var(--control-height-sm);
 }
 
 .ui-button,
@@ -20,6 +204,13 @@
 }
 
 .ui-card {
+  border-radius: var(--surface-radius, 10px);
+}
+
+/* Settings content is composed from independent bordered cards. Keep their
+ * outer geometry aligned with other content surfaces, including when the
+ * wallpaper layer supplies the card borders. */
+.app-shell .settings-content .settings-block {
   border-radius: var(--surface-radius, 10px);
 }
 

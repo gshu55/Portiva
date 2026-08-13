@@ -251,7 +251,6 @@ export function ConnectionProfileDialog({
         <div className="profile-dialog-heading">
           <div>
             <strong>{title}</strong>
-            <span>{mode === "create" ? "填写连接参数后保存" : "修改名称即可重命名"}</span>
           </div>
           <IconButton
             aria-label="关闭弹窗"

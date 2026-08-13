@@ -148,8 +148,13 @@ fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     let shortcuts = [
         &settings.keymap.command_palette,
         &settings.keymap.new_profile,
+        &settings.keymap.open_host_overview,
         &settings.keymap.open_local_terminal,
         &settings.keymap.open_serial_terminal,
+        &settings.keymap.open_settings,
+        &settings.keymap.increase_font_size,
+        &settings.keymap.decrease_font_size,
+        &settings.keymap.reset_font_size,
         &settings.keymap.close_tab,
     ];
 
@@ -329,6 +334,11 @@ mod tests {
         assert_eq!(settings.theme.terminal_font_family, "JetBrains Mono");
         assert_eq!(settings.keymap.open_local_terminal, "Ctrl+Alt+T");
         assert_eq!(settings.keymap.open_serial_terminal, "Ctrl+Alt+S");
+        assert_eq!(settings.keymap.open_host_overview, "Ctrl+Shift+H");
+        assert_eq!(settings.keymap.open_settings, "Ctrl+,");
+        assert_eq!(settings.keymap.increase_font_size, "Ctrl+=");
+        assert_eq!(settings.keymap.decrease_font_size, "Ctrl+-");
+        assert_eq!(settings.keymap.reset_font_size, "Ctrl+0");
         assert_eq!(settings.theme.terminal_colors.background, "#282C34");
         assert!(!settings.theme.background.enabled);
         assert_eq!(settings.theme.background.opacity, 30);

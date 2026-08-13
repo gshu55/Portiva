@@ -93,8 +93,13 @@ pub struct TerminalColorPalette {
 pub struct KeymapSettings {
     pub command_palette: String,
     pub new_profile: String,
+    pub open_host_overview: String,
     pub open_local_terminal: String,
     pub open_serial_terminal: String,
+    pub open_settings: String,
+    pub increase_font_size: String,
+    pub decrease_font_size: String,
+    pub reset_font_size: String,
     pub close_tab: String,
 }
 
@@ -159,7 +164,7 @@ impl Default for AppSettings {
             theme: ThemeSettings {
                 mode: ThemeMode::Dark,
                 background: BackgroundSettings::default(),
-                terminal_font_family: "Cascadia Mono".to_string(),
+                terminal_font_family: "Portiva JetBrains Mono".to_string(),
                 terminal_font_size: 13,
                 terminal_color_preset: TerminalColorPreset::Dark,
                 terminal_colors: TerminalColorPalette::default(),
@@ -167,8 +172,13 @@ impl Default for AppSettings {
             keymap: KeymapSettings {
                 command_palette: "Ctrl+Shift+P".to_string(),
                 new_profile: "Ctrl+N".to_string(),
+                open_host_overview: "Ctrl+Shift+H".to_string(),
                 open_local_terminal: "Ctrl+Alt+T".to_string(),
                 open_serial_terminal: "Ctrl+Alt+S".to_string(),
+                open_settings: "Ctrl+,".to_string(),
+                increase_font_size: "Ctrl+=".to_string(),
+                decrease_font_size: "Ctrl+-".to_string(),
+                reset_font_size: "Ctrl+0".to_string(),
                 close_tab: "Ctrl+W".to_string(),
             },
             security: SecuritySettings {
@@ -199,8 +209,13 @@ impl Default for KeymapSettings {
         Self {
             command_palette: "Ctrl+Shift+P".to_string(),
             new_profile: "Ctrl+N".to_string(),
+            open_host_overview: "Ctrl+Shift+H".to_string(),
             open_local_terminal: "Ctrl+Alt+T".to_string(),
             open_serial_terminal: "Ctrl+Alt+S".to_string(),
+            open_settings: "Ctrl+,".to_string(),
+            increase_font_size: "Ctrl+=".to_string(),
+            decrease_font_size: "Ctrl+-".to_string(),
+            reset_font_size: "Ctrl+0".to_string(),
             close_tab: "Ctrl+W".to_string(),
         }
     }

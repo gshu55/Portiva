@@ -216,16 +216,14 @@ fn collect_wsl_host_overview_for_platform(distribution: &str) -> Result<WslHostO
     })?;
 
     let stdout = decode_wsl_output(&output.stdout);
-    if !output.status.success() {
-        let stderr = decode_wsl_output(&output.stderr);
-        let detail = [stderr.trim(), stdout.trim()]
-            .into_iter()
-            .find(|value| !value.is_empty())
-            .unwrap_or("WSL 资源采集命令执行失败");
-        return Err(detail.to_string());
-    }
-
-    parse_wsl_host_overview(distribution, &stdout, started_at.elapsed())
+    let stderr = decode_wsl_output(&output.stderr);
+    resolve_wsl_host_overview_output(
+        distribution,
+        output.status.success(),
+        &stdout,
+        &stderr,
+        started_at.elapsed(),
+    )
 }
 
 #[cfg(not(windows))]
@@ -264,15 +262,12 @@ fn discover_wsl_for_platform() -> WslDiscovery {
     let stdout = decode_wsl_output(&output.stdout);
     if !output.status.success() {
         let stderr = decode_wsl_output(&output.stderr);
-        let detail = [stderr.trim(), stdout.trim()]
-            .into_iter()
-            .find(|value| !value.is_empty())
-            .unwrap_or("WSL 命令执行失败");
+        let detail = wsl_command_error_detail(&stderr, &stdout, "WSL 命令执行失败");
         return WslDiscovery {
             supported: true,
             available: false,
             distributions: Vec::new(),
-            message: Some(detail.to_string()),
+            message: Some(detail),
         };
     }
 
@@ -365,6 +360,52 @@ fn decode_wsl_output(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
         .trim_matches('\0')
         .to_string()
+}
+
+fn resolve_wsl_host_overview_output(
+    distribution: &str,
+    command_succeeded: bool,
+    stdout: &str,
+    stderr: &str,
+    elapsed: Duration,
+) -> Result<WslHostOverview, String> {
+    let overview = parse_wsl_host_overview(distribution, stdout, elapsed);
+    if command_succeeded || overview.is_ok() {
+        return overview;
+    }
+
+    Err(wsl_command_error_detail(
+        stderr,
+        stdout,
+        "WSL 资源采集命令执行失败",
+    ))
+}
+
+fn wsl_command_error_detail(stderr: &str, stdout: &str, fallback: &str) -> String {
+    [stderr, stdout]
+        .into_iter()
+        .map(|output| {
+            output
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !is_wsl_localhost_proxy_warning(line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .find(|detail| !detail.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn is_wsl_localhost_proxy_warning(line: &str) -> bool {
+    let normalized = line.to_lowercase();
+    let english_warning = normalized.contains("localhost proxy configuration was detected")
+        && normalized.contains("nat mode")
+        && normalized.contains("does not support localhost prox");
+    let chinese_warning = line.contains("检测到 localhost 代理配置")
+        && line.contains("NAT")
+        && line.contains("不支持 localhost 代理");
+
+    english_warning || chinese_warning
 }
 
 fn parse_wsl_distributions(output: &str) -> Vec<WslDistributionInfo> {
@@ -487,7 +528,8 @@ fn value_or_fallback(values: &HashMap<&str, &str>, key: &str, fallback: &str) ->
 mod tests {
     use super::{
         decode_wsl_output, ensure_distribution_is_running, parse_wsl_distributions,
-        parse_wsl_host_overview, WslDiscovery, WslDistributionInfo, WslDistributionState,
+        parse_wsl_host_overview, resolve_wsl_host_overview_output, wsl_command_error_detail,
+        WslDiscovery, WslDistributionInfo, WslDistributionState,
     };
     use std::time::Duration;
 
@@ -566,6 +608,39 @@ mod tests {
         assert_eq!(overview.network_transmitted_bytes, Some(2048));
         assert_eq!(overview.uptime_seconds, Some(3600));
         assert_eq!(overview.latency_ms, 240);
+    }
+
+    #[test]
+    fn accepts_valid_wsl_metrics_when_proxy_warning_accompanies_failed_status() {
+        let output = "portivaWslOverviewVersion\t1\n\
+                      hostname\tportiva-dev\n";
+        let warning = "wsl: 检测到 localhost 代理配置，但未镜像到 WSL。NAT 模式下的 WSL 不支持 localhost 代理。";
+
+        let overview = resolve_wsl_host_overview_output(
+            "Ubuntu",
+            false,
+            output,
+            warning,
+            Duration::from_millis(300),
+        )
+        .expect("valid metrics must win over the WSL process status");
+
+        assert_eq!(overview.hostname, "portiva-dev");
+    }
+
+    #[test]
+    fn removes_localhost_proxy_warning_without_hiding_actual_wsl_error() {
+        let warning = "wsl: A localhost proxy configuration was detected but not mirrored into WSL. WSL in NAT mode does not support localhost proxies.";
+        let stderr = format!("{warning}\n/bin/sh: awk: not found");
+
+        assert_eq!(
+            wsl_command_error_detail(&stderr, "", "WSL command failed"),
+            "/bin/sh: awk: not found"
+        );
+        assert_eq!(
+            wsl_command_error_detail(warning, "", "WSL command failed"),
+            "WSL command failed"
+        );
     }
 
     #[test]

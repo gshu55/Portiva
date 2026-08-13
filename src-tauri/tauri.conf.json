@@ -43,7 +43,8 @@
     "license": "Apache-2.0",
     "licenseFile": "../LICENSE",
     "resources": {
-      "../NOTICE": "NOTICE"
+      "../NOTICE": "NOTICE",
+      "../THIRD_PARTY_LICENSES/JetBrainsMono-OFL-1.1.txt": "licenses/JetBrainsMono-OFL-1.1.txt"
     },
     "icon": [
       "icons/32x32.png",

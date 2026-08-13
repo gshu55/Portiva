@@ -4193,12 +4193,12 @@ export function HttpConsolePanel() {
   const deleteConfirmContent = deleteConfirm ? getDeleteConfirmContent(deleteConfirm) : null;
 
   return (
-    <section className="http-console" aria-label="HTTP/API 调试">
+    <section className="http-console" aria-label="Post">
       {renderTreeDragPreview()}
-      <aside className="http-console-sidebar" aria-label="HTTP 工作区">
+      <aside className="http-console-sidebar" aria-label="Post 工作区">
         <div className="http-sidebar-card http-sidebar-control-card">
           <div className="http-sidebar-brand">
-            <strong>HTTP Console</strong>
+            <strong>Post</strong>
             <span>{activeEnvironment?.name ?? "无环境"}</span>
           </div>
           <div className="http-workspace-row">
@@ -4733,7 +4733,7 @@ export function HttpConsolePanel() {
             ) : !responseError ? (
               <div className="http-response-empty">
                 <Icon name="network" />
-                <strong>HTTP Console 已就绪</strong>
+                <strong>准备就绪</strong>
                 <span>发送请求后显示响应内容。</span>
               </div>
             ) : null}

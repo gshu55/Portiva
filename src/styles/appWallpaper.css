@@ -1,11 +1,12 @@
 /*
- * Wallpaper surface system
+ * Stable wallpaper surface system
  *
  * The image is the only blurred layer. Components never blur what is behind
  * them, so neighbouring regions cannot render the same wallpaper with
- * different sharpness. Pages stay structural, primary content uses one shared
- * surface, headers and controls follow the same opacity curve, and overlays use
- * the strongest one.
+ * different sharpness. These surfaces remain active whether the image is shown
+ * or hidden, so the setting controls only the image layer. Pages stay
+ * structural, headers and controls follow one opacity curve, and overlays use
+ * the strongest surface.
  */
 
 .app-shell::before {
@@ -40,7 +41,7 @@
   z-index: 1;
 }
 
-.app-shell[data-background="true"] {
+.app-shell[data-background] {
   --workspace-bg: color-mix(in srgb, var(--app-bg) var(--wallpaper-page-opacity), transparent);
   --sidebar-bg: color-mix(in srgb, var(--sidebar-base-bg) var(--wallpaper-panel-opacity), transparent);
   --toolbar-bg: color-mix(in srgb, var(--toolbar-base-bg) var(--wallpaper-header-opacity), transparent);
@@ -64,17 +65,17 @@
   --file-pane-bg: transparent;
 }
 
-.app-shell[data-background="true"]::after {
+.app-shell[data-background]::after {
   opacity: 1;
 }
 
 /* Never create a second blur plane inside the application. */
-.app-shell[data-background="true"] :where(*) {
+.app-shell[data-background] :where(*) {
   backdrop-filter: none !important;
 }
 
 /* Application chrome follows the same strength-driven opacity as content. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .app-titlebar,
   .saved-connections-topbar
 ) {
@@ -82,7 +83,7 @@
 }
 
 /* Structural page regions do not add an outer frame or another colour layer. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .terminal-workspace.home-empty,
   .terminal-workspace.fullscreen,
   .terminal-body,
@@ -105,7 +106,7 @@
   background: transparent;
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .terminal-body-app-content,
   .terminal-body-http-content,
   .terminal-body-serial-content,
@@ -123,7 +124,7 @@
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] .saved-connections-page {
+.app-shell[data-background] .saved-connections-page {
   background: radial-gradient(
     circle at 52% 14%,
     color-mix(in srgb, var(--accent) 7%, transparent),
@@ -132,14 +133,14 @@
 }
 
 /* Standalone feature headers own the same surface opacity as their body. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .serial-session-bar
 ) {
   background: var(--toolbar-bg);
 }
 
 /* Nested headers receive only a light tint so parent and header opacity do not stack. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .ui-card-header,
   .panel-heading,
   .saved-card-header,
@@ -169,7 +170,7 @@
 }
 
 /* Settings: the navigation and content wrappers are layout only. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .settings-menu,
   .settings-content > .settings-panel,
   .http-sidebar-card
@@ -180,36 +181,36 @@
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] .settings-menu {
+.app-shell[data-background] .settings-menu {
   gap: 8px;
   padding: 0;
 }
 
-.app-shell[data-background="true"] .settings-menu button {
+.app-shell[data-background] .settings-menu button {
   border: 1px solid var(--wallpaper-surface-border);
   border-radius: var(--wallpaper-control-radius);
   background: var(--wallpaper-surface-bg);
   box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
 }
 
-.app-shell[data-background="true"] .settings-content {
+.app-shell[data-background] .settings-content {
   overflow: hidden;
 }
 
-.app-shell[data-background="true"] .settings-content > .settings-panel {
+.app-shell[data-background] .settings-content > .settings-panel {
   display: grid;
   gap: 10px;
   align-content: start;
-  padding: 0 2px 2px 0;
+  padding: 0;
 }
 
-.app-shell[data-background="true"] .settings-block,
-.app-shell[data-background="true"] .settings-block:last-child {
+.app-shell[data-background] .settings-block,
+.app-shell[data-background] .settings-block:last-child {
   border: 1px solid var(--wallpaper-surface-border);
 }
 
 /* SFTP: the page and file panes own frames; queue wrappers stay structural. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .file-manager > .transfer-queue,
   .simple-sftp-transfers
 ) {
@@ -219,56 +220,56 @@
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .file-browser-list,
   .simple-sftp-list
 ) {
   overflow: auto;
 }
 
-.app-shell[data-background="true"] .file-browser-list {
+.app-shell[data-background] .file-browser-list {
   gap: 0;
 }
 
-.app-shell[data-background="true"] .file-browser-header {
+.app-shell[data-background] .file-browser-header {
   background: color-mix(in srgb, var(--toolbar-bg) 86%, transparent);
 }
 
-.app-shell[data-background="true"] .file-list .file-browser-row,
-.app-shell[data-background="true"] .simple-sftp-row {
+.app-shell[data-background] .file-list .file-browser-row,
+.app-shell[data-background] .simple-sftp-row {
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] .simple-sftp-row {
+.app-shell[data-background] .simple-sftp-row {
   border-bottom: 1px solid var(--border-faint);
 }
 
-.app-shell[data-background="true"] .file-list .file-browser-row:hover:not(:disabled),
-.app-shell[data-background="true"] .simple-sftp-row:hover:not(:disabled):not([aria-disabled="true"]) {
+.app-shell[data-background] .file-list .file-browser-row:hover:not(:disabled),
+.app-shell[data-background] .simple-sftp-row:hover:not(:disabled):not([aria-disabled="true"]) {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.app-shell[data-background="true"] .file-list .file-browser-row.active,
-.app-shell[data-background="true"] .simple-sftp-row.active {
+.app-shell[data-background] .file-list .file-browser-row.active,
+.app-shell[data-background] .simple-sftp-row.active {
   border-color: var(--border-faint);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   box-shadow: none;
 }
 
 /* Serial: left and right workbenches are the surfaces; their children are not. */
-.app-shell[data-background="true"] .serial-terminal-panel {
+.app-shell[data-background] .serial-terminal-panel {
   gap: 10px;
   padding: 10px;
 }
 
-.app-shell[data-background="true"] .serial-control-layout {
+.app-shell[data-background] .serial-control-layout {
   gap: 10px;
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .serial-traffic-panel,
   .serial-config-panel,
   .serial-command-strip,
@@ -280,31 +281,31 @@
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] .serial-control-main {
+.app-shell[data-background] .serial-control-main {
   border: 1px solid var(--wallpaper-surface-border);
 }
 
-.app-shell[data-background="true"] .serial-traffic-panel {
+.app-shell[data-background] .serial-traffic-panel {
   border: 0;
 }
 
 /* HTTP: each workbench uses the same surface; editors within it are flat. */
-.app-shell[data-background="true"] .http-console {
+.app-shell[data-background] .http-console {
   gap: 10px;
   padding: 0;
 }
 
-.app-shell[data-background="true"] .http-console-sidebar {
+.app-shell[data-background] .http-console-sidebar {
   gap: 10px;
   background: transparent;
 }
 
-.app-shell[data-background="true"] .http-console-main {
+.app-shell[data-background] .http-console-main {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .http-tree,
   .http-editor-panel,
   .http-response-body-panel,
@@ -317,16 +318,13 @@
 }
 
 /* Nested information is one quiet, non-glass level. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .saved-metric,
   .simple-sftp-transfer-item,
   .transfer-item,
   .security-row,
   .shortcut-row,
-  .application-policy-list span,
-  .terminal-font-preview,
   .terminal-palette-preview,
-  .redaction-preview pre,
   .launcher-grid button
 ) {
   border-radius: var(--wallpaper-control-radius);
@@ -334,7 +332,7 @@
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .saved-card-message,
   .log-panel,
   .status-strip
@@ -344,7 +342,7 @@
 }
 
 /* Controls are the most readable persistent layer. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .ui-button,
   .ui-field,
   .ui-select,
@@ -354,7 +352,7 @@
   border-radius: var(--wallpaper-control-radius);
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
   textarea,
   select
@@ -362,68 +360,71 @@
   border-radius: var(--wallpaper-control-radius);
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .ui-button,
   .ui-select-trigger
 ) {
   background: var(--button-bg);
 }
 
-.app-shell[data-background="true"] .ui-button.ui-button-primary {
+.app-shell[data-background] .ui-button.ui-button-primary {
   border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
   background: var(--accent);
   color: #fff;
 }
 
-.app-shell[data-background="true"] .segmented-control {
+.app-shell[data-background] .segmented-control {
   border-radius: var(--wallpaper-control-radius);
 }
 
-.app-shell[data-background="true"] .segmented-control:not(.profile-type-control) button {
+.app-shell[data-background] .segmented-control:not(.profile-type-control) button {
   border-radius: 0;
 }
 
-.app-shell[data-background="true"] .profile-type-control button {
+.app-shell[data-background] .profile-type-control button {
   border-radius: var(--wallpaper-control-radius);
 }
 
 /* Feature-owned buttons keep their semantic surface after generic controls. */
-.app-shell[data-background="true"] .settings-menu button {
+.app-shell[data-background] .settings-menu button {
   border: 1px solid var(--wallpaper-surface-border);
   border-radius: var(--wallpaper-control-radius);
   background: var(--wallpaper-surface-bg);
 }
 
-.app-shell[data-background="true"] .security-settings {
-  display: grid;
-  gap: 10px;
+.app-shell[data-background] .settings-menu button.active {
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--wallpaper-surface-border));
+  background: color-mix(in srgb, var(--accent) 20%, var(--wallpaper-surface-bg));
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-.app-shell[data-background="true"] .file-list .file-browser-row,
-.app-shell[data-background="true"] .simple-sftp-row {
+.app-shell[data-background] .file-list .file-browser-row,
+.app-shell[data-background] .simple-sftp-row {
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] .simple-sftp-row {
+.app-shell[data-background] .simple-sftp-row {
   border-bottom: 1px solid var(--border-faint);
 }
 
 /* The xterm canvas stays transparent; the terminal pane owns the one surface. */
-.app-shell[data-background="true"] .terminal-body-terminal-content {
+.app-shell[data-background] .terminal-body-terminal-content {
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.app-shell[data-background="true"] .terminal-pane {
+.app-shell[data-background] .terminal-pane {
   background: var(--terminal-bg) !important;
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .xterm,
   .xterm-screen,
   .xterm-viewport
@@ -432,7 +433,7 @@
   background-color: transparent !important;
 }
 
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .xterm .xterm-scrollable-element .scrollbar .slider
 ) {
   transform: translate3d(6px, 0px, 0px) !important;
@@ -442,7 +443,7 @@
 }
 
 /* Overlays use one strong surface without introducing local blur. */
-.app-shell[data-background="true"] :is(
+.app-shell[data-background] :is(
   .modal-card,
   .profile-dialog,
   .simple-delete-confirm,

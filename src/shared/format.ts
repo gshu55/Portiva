@@ -33,3 +33,12 @@ export function formatUptime(value: number | null) {
   }
   return `${minutes}分钟`;
 }
+
+export function formatUptimeDays(value: number | null) {
+  if (value === null || !Number.isFinite(value) || value < 0) {
+    return "—";
+  }
+
+  const days = Math.floor(value / 86_400);
+  return days > 0 ? `${days}天` : formatUptime(value);
+}

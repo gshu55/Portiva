@@ -50,7 +50,6 @@ import {
   serialTerminalClose,
   serialTerminalOpen,
   serialTerminalReconfigure,
-  securityRedactPreview,
   settingsGet,
   settingsUpdate,
   sshAuthenticateAgent,
@@ -161,7 +160,7 @@ const defaultSettings: AppSettings = {
   theme: {
     mode: "dark",
     background: defaultAppBackground,
-    terminalFontFamily: "Cascadia Mono",
+    terminalFontFamily: "Portiva JetBrains Mono",
     terminalFontSize: 13,
     terminalColorPreset: "dark",
     terminalColors: defaultTerminalColors,
@@ -169,8 +168,12 @@ const defaultSettings: AppSettings = {
   keymap: {
     commandPalette: "Ctrl+Shift+P",
     newProfile: "Ctrl+N",
+    openHostOverview: "Ctrl+Shift+H",
     openLocalTerminal: "Ctrl+Alt+T",
     openSerialTerminal: "Ctrl+Alt+S",
+    openSettings: "Ctrl+,",
+    increaseFontSize: "Ctrl+=",
+    decreaseFontSize: "Ctrl+-",
     closeTab: "Ctrl+W",
   },
   security: {
@@ -347,8 +350,6 @@ export function usePortivaWorkspace() {
   const [logs, setLogs] = useState<LogEntry[]>(sampleLogs);
   const [secrets, setSecrets] = useState<SecretMetadata[]>(sampleSecrets);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const [redactionInput, setRedactionInput] = useState("host=prod\npassword=hunter2\nuser=deploy");
-  const [redactionPreview, setRedactionPreview] = useState("");
   const [pendingKnownHost, setPendingKnownHost] = useState<{
     fingerprint: string;
     host: string;
@@ -1027,16 +1028,6 @@ export function usePortivaWorkspace() {
       }
     }
   }, [dataSource]);
-
-  const previewRedaction = useCallback(async () => {
-    try {
-      const preview = await securityRedactPreview(redactionInput);
-      setRedactionPreview(preview);
-      setWorkspaceMessage("脱敏预览已刷新。");
-    } catch (error) {
-      setWorkspaceMessage(`脱敏预览失败：${String(error)}`);
-    }
-  }, [redactionInput]);
 
   const deleteSecretMetadata = useCallback(
     async (secretId: string) => {
@@ -3508,8 +3499,6 @@ export function usePortivaWorkspace() {
     recentConnections,
     remoteEntries,
     remotePath,
-    redactionInput,
-    redactionPreview,
     selectedLocalEntry,
     selectedRemoteEntry,
     sessionTabs,
@@ -3547,7 +3536,6 @@ export function usePortivaWorkspace() {
     openSerialTerminalTab,
     openSerialTerminal,
     openProfileConnection,
-    previewRedaction,
     revealProfilePassword,
     downloadSelectedRemoteEntry,
     downloadRemoteEntry,
@@ -3581,7 +3569,6 @@ export function usePortivaWorkspace() {
     setLocalPath: changeLocalPath,
     setSelectedLocalEntry,
     setRemotePath: changeRemotePath,
-    setRedactionInput,
     setSelectedRemoteEntry,
     setSshPassword,
     setTerminalSearchQuery,

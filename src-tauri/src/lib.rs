@@ -135,6 +135,7 @@ pub fn run() {
             commands::serial::serial_terminal_reconfigure,
             commands::settings::settings_get,
             commands::settings::settings_update,
+            commands::fonts::system_fonts_list,
             commands::logs::log_clear,
             commands::logs::log_list,
             commands::logs::log_record_placeholder,

@@ -2,7 +2,6 @@ import type { AppSettings, TerminalColorPalette, TerminalColorPresetId } from ".
 
 export interface TerminalThemePreset {
   colors: TerminalColorPalette;
-  description: string;
   id: Exclude<TerminalColorPresetId, "custom">;
   label: string;
 }
@@ -11,7 +10,6 @@ export const terminalColorPresets: Record<Exclude<TerminalColorPresetId, "custom
   dark: {
     id: "dark",
     label: "深色",
-    description: "One Dark 常用 ANSI 配色",
     colors: {
       background: "#282C34",
       foreground: "#ABB2BF",
@@ -38,7 +36,6 @@ export const terminalColorPresets: Record<Exclude<TerminalColorPresetId, "custom
   light: {
     id: "light",
     label: "浅色",
-    description: "匹配当前浅色主题",
     colors: {
       background: "#F7FAFB",
       foreground: "#26333A",

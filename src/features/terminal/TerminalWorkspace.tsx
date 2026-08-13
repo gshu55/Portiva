@@ -44,6 +44,8 @@ interface TerminalWorkspaceProps {
   keymap?: AppSettings["keymap"];
   terminalConfirmMultilinePaste?: boolean;
   terminalCopyRichText?: boolean;
+  terminalFontFamily: string;
+  terminalFontSize: number;
   terminalRightClickBehavior?: TerminalRightClickBehavior;
   suppressInsecureWarning?: boolean;
   terminalTheme: TerminalColorPalette;
@@ -154,6 +156,8 @@ export function TerminalWorkspace({
   sessionTabs,
   terminalConfirmMultilinePaste = true,
   terminalCopyRichText = false,
+  terminalFontFamily,
+  terminalFontSize,
   terminalRightClickBehavior = "context-menu",
   suppressInsecureWarning = false,
   terminalTheme,
@@ -546,6 +550,8 @@ export function TerminalWorkspace({
         terminal={tab.terminal}
         terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
         terminalCopyRichText={terminalCopyRichText}
+        terminalFontFamily={terminalFontFamily}
+        terminalFontSize={terminalFontSize}
         terminalRightClickBehavior={terminalRightClickBehavior}
         terminalTheme={terminalTheme}
         terminalSnapshot={tab.terminalSnapshot}

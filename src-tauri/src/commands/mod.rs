@@ -1,6 +1,7 @@
 pub mod clipboard;
 pub mod connection;
 pub mod file_transfer;
+pub mod fonts;
 pub mod http;
 pub mod http_workspace;
 pub mod logs;

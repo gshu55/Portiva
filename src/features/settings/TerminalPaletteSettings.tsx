@@ -1,10 +1,21 @@
-import type { AppSettings } from "../../shared/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { AppSettings, TerminalColorPresetId } from "../../shared/types";
+import type { IconName } from "../../shared/Icon";
+import { systemFontsList } from "../../shared/ipc/commands";
 import {
   resolveTerminalPalette,
   terminalColorPresets,
   type TerminalColorKey,
 } from "../../shared/terminalThemes";
-import { Button, TextInput } from "../../shared/ui";
+import {
+  bundledTerminalFontFamily,
+  isSystemTerminalFontAvailable,
+  registerAvailableSystemTerminalFonts,
+  resolveTerminalFontFamily,
+  resolveTerminalFontSize,
+  systemTerminalFontPresets,
+} from "../../shared/terminalFonts";
+import { ColorPicker, SegmentedControl, Select, TextInput } from "../../shared/ui";
 import { SettingsSectionHeader } from "./SettingsSection";
 
 interface TerminalPaletteSettingsProps {
@@ -12,7 +23,15 @@ interface TerminalPaletteSettingsProps {
   onSaveSettings: (settings: AppSettings) => void;
 }
 
-const terminalColorPresetOptions = [terminalColorPresets.dark, terminalColorPresets.light];
+const terminalPaletteModeOptions: Array<{
+  icon: IconName;
+  label: string;
+  value: TerminalColorPresetId;
+}> = [
+  { icon: "moon", label: "深色", value: "dark" },
+  { icon: "sun", label: "浅色", value: "light" },
+  { icon: "palette", label: "自定义", value: "custom" },
+];
 const terminalColorFieldGroups: Array<{
   fields: Array<{ key: TerminalColorKey; label: string }>;
   title: string;
@@ -82,14 +101,66 @@ function isHexColor(value: string) {
 }
 
 export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPaletteSettingsProps) {
+  const [systemFontFamilies, setSystemFontFamilies] = useState<string[]>(() =>
+    systemTerminalFontPresets
+      .filter((preset) => isSystemTerminalFontAvailable(preset.family))
+      .map((preset) => preset.family),
+  );
+  const refreshSystemFonts = useCallback(async () => {
+    try {
+      const fontFamilies = await systemFontsList();
+      if (fontFamilies.length > 0) {
+        registerAvailableSystemTerminalFonts(fontFamilies);
+        setSystemFontFamilies(fontFamilies);
+      }
+    } catch {
+      // Browser preview mode has no native font enumeration command.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSystemFonts();
+    window.addEventListener("focus", refreshSystemFonts);
+    return () => window.removeEventListener("focus", refreshSystemFonts);
+  }, [refreshSystemFonts]);
+
   const updateTheme = (theme: Partial<AppSettings["theme"]>) =>
     onSaveSettings({ ...settings, theme: { ...settings.theme, ...theme } });
   const terminalPalette = resolveTerminalPalette(settings.theme);
+  const terminalFontPresets = useMemo(
+    () => [
+      { family: bundledTerminalFontFamily, label: "JetBrains Mono" },
+      ...systemFontFamilies
+        .filter(
+          (family) =>
+            family.toLocaleLowerCase() !== "jetbrains mono" &&
+            family.toLocaleLowerCase() !== bundledTerminalFontFamily.toLocaleLowerCase(),
+        )
+        .map((family) => ({ family, label: family })),
+    ],
+    [systemFontFamilies],
+  );
+  const selectedFontPreset =
+    terminalFontPresets.find((preset) => preset.family === settings.theme.terminalFontFamily) ??
+    terminalFontPresets[0];
+  const terminalFontFamily = resolveTerminalFontFamily(settings.theme.terminalFontFamily);
+  const terminalFontSize = resolveTerminalFontSize(settings.theme.terminalFontSize);
   const updateTerminalPreset = (presetId: "dark" | "light") => {
     updateTheme({
       terminalColorPreset: presetId,
       terminalColors: terminalColorPresets[presetId].colors,
     });
+  };
+  const updateTerminalPaletteMode = (presetId: TerminalColorPresetId) => {
+    if (presetId === "custom") {
+      updateTheme({
+        terminalColorPreset: "custom",
+        terminalColors: terminalPalette,
+      });
+      return;
+    }
+
+    updateTerminalPreset(presetId);
   };
   const updateTerminalColor = (key: TerminalColorKey, value: string) => {
     if (!isHexColor(value)) {
@@ -107,66 +178,60 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
 
   return (
     <section className="settings-block appearance-settings-block terminal-palette-settings">
-      <SettingsSectionHeader title="终端配色" />
-      <div className="terminal-palette-presets" aria-label="终端配色预设">
-        {terminalColorPresetOptions.map((preset) => (
-          <Button
-            active={settings.theme.terminalColorPreset === preset.id}
-            key={preset.id}
-            onClick={() => updateTerminalPreset(preset.id)}
-            title={`套用${preset.label}终端配色`}
-            tone="muted"
-          >
-            <span
-              className="terminal-preset-swatch"
-              style={{
-                background: preset.colors.background,
-                borderColor: preset.colors.cursor,
-                color: preset.colors.foreground,
-              }}
-            >
-              <i style={{ background: preset.colors.red }} />
-              <i style={{ background: preset.colors.green }} />
-              <i style={{ background: preset.colors.blue }} />
-            </span>
-            <strong>{preset.label}</strong>
-            <small>{preset.description}</small>
-          </Button>
-        ))}
-        <Button
-          active={settings.theme.terminalColorPreset === "custom"}
-          onClick={() =>
-            updateTheme({
-              terminalColorPreset: "custom",
-              terminalColors: terminalPalette,
-            })
-          }
-          title="编辑自定义终端配色"
-          tone="muted"
-        >
-          <span
-            className="terminal-preset-swatch"
-            style={{
-              background: terminalPalette.background,
-              borderColor: terminalPalette.cursor,
-              color: terminalPalette.foreground,
-            }}
-          >
-            <i style={{ background: terminalPalette.red }} />
-            <i style={{ background: terminalPalette.yellow }} />
-            <i style={{ background: terminalPalette.cyan }} />
-          </span>
-          <strong>自定义</strong>
-          <small>修改任意颜色后自动启用</small>
-        </Button>
+      <SettingsSectionHeader title="字体与配色" />
+      <div className="settings-field-grid">
+        <label className="settings-field">
+          <span>字体</span>
+          <Select
+            value={selectedFontPreset.family}
+            options={terminalFontPresets.map((preset) => ({
+              label: (
+                <span
+                  className="terminal-font-option-preview"
+                  style={{ fontFamily: resolveTerminalFontFamily(preset.family) }}
+                >
+                  {preset.label}
+                </span>
+              ),
+              value: preset.family,
+            }))}
+            onFocus={() => void refreshSystemFonts()}
+            onChange={(terminalFontFamily) => updateTheme({ terminalFontFamily })}
+          />
+        </label>
+        <label className="settings-field compact">
+          <span>字号</span>
+          <TextInput
+            min="8"
+            max="32"
+            type="number"
+            value={settings.theme.terminalFontSize}
+            onChange={(event) => updateTheme({ terminalFontSize: Number(event.currentTarget.value) })}
+          />
+        </label>
       </div>
+      <SegmentedControl<TerminalColorPresetId>
+        aria-label="终端配色预设"
+        className={`segmented-control theme-mode-control terminal-palette-mode-control mode-${settings.theme.terminalColorPreset}`}
+        options={terminalPaletteModeOptions.map((option) => ({
+          ariaLabel: option.label,
+          icon: option.icon,
+          label: option.label,
+          title: option.label,
+          value: option.value,
+        }))}
+        value={settings.theme.terminalColorPreset}
+        onChange={updateTerminalPaletteMode}
+      />
       <div
         className="terminal-palette-preview"
+        key={`${terminalFontFamily}:${terminalFontSize}`}
         style={{
           background: terminalPalette.background,
           borderColor: terminalPalette.selectionBackground,
           color: terminalPalette.foreground,
-          fontFamily: settings.theme.terminalFontFamily,
+          fontFamily: terminalFontFamily,
+          fontSize: `${terminalFontSize}px`,
         }}
       >
         <span>
@@ -176,7 +241,10 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
           <span style={{ color: terminalPalette.foreground }}>:~$ ssh root@10.0.0.8</span>
         </span>
         <span style={{ color: terminalPalette.yellow }}>warning: config changed, reload pending</span>
-        <span style={{ color: terminalPalette.cyan }}>200 OK</span>
+        <span>
+          <b style={{ color: terminalPalette.cyan }}>200 OK</b>
+          <span style={{ color: terminalPalette.foreground }}> · 0 O o · 1 I l | · Aa Gg Qq Mm Ww · 中文</span>
+        </span>
         <div className="terminal-ansi-strip" aria-label="ANSI 颜色预览">
           {terminalPaletteSampleKeys.map((key) => (
             <i key={key} style={{ background: terminalPalette[key] }} title={key} />
@@ -192,24 +260,15 @@ export function TerminalPaletteSettings({ onSaveSettings, settings }: TerminalPa
                 const value = terminalPalette[field.key];
 
                 return (
-                  <label className="terminal-color-field" key={field.key}>
+                  <div className="terminal-color-field" key={field.key}>
                     <span>{field.label}</span>
-                    <Button
+                    <ColorPicker
                       aria-label={`${field.label}颜色选择器`}
-                      className="terminal-color-swatch-button"
-                      style={{ background: value }}
-                      title={`${field.label}：${value}`}
-                      tone="muted"
-                    />
-                    <TextInput
-                      mono
-                      maxLength={7}
-                      pattern="#[0-9a-fA-F]{6}"
-                      type="text"
+                      title={`选择${field.label}颜色`}
                       value={value}
                       onChange={(event) => updateTerminalColor(field.key, event.currentTarget.value)}
                     />
-                  </label>
+                  </div>
                 );
               })}
             </div>

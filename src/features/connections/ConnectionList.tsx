@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { profileTarget } from "../../shared/profile";
 import { protocolLabel } from "../../shared/labels";
 import { Icon, type IconName } from "../../shared/Icon";
-import { formatBytes, formatUptime } from "../../shared/format";
+import { formatBytes, formatUptimeDays } from "../../shared/format";
 import type {
   ConnectionProfile,
   SshHostOverview,
@@ -467,6 +467,8 @@ export function ConnectionList({
                       openingBlocked={Boolean(openingWslDistribution) || connectionPending}
                       onOpen={openWslDistribution}
                       onOpenFiles={onOpenWslFiles}
+                      onRefresh={() => distribution.state === "running" ? refreshWslOverview(distribution) : refreshWsl()}
+                      refreshing={wslRefreshing}
                     />
                   ))}
                 </div>
@@ -504,6 +506,25 @@ export function ConnectionList({
                 const isSshProfile = profile.type === "ssh" || profile.type === "sftp";
                 const supportsFileTransfer = isSshProfile || Boolean(session?.connection.capabilities.fileTransfer);
                 const canOpenFileTransfer = supportsFileTransfer && (isSessionConnected || Boolean(overviewState?.data));
+                const overviewStatus = isConnecting || overviewState?.loading
+                  ? "connecting"
+                  : isReachable
+                    ? "online"
+                    : overviewState?.error
+                      ? "error"
+                      : "idle";
+                const overviewStatusLabel = overviewStatus === "connecting"
+                  ? "检测中"
+                  : overviewStatus === "online"
+                    ? `可达${overviewState?.data ? ` · ${overviewState.data.latencyMs} ms` : ""}`
+                    : overviewStatus === "error"
+                      ? "不可达"
+                      : "未检测";
+                const overviewStatusIcon: IconName = overviewStatus === "error"
+                    ? "plug"
+                    : overviewStatus === "connecting"
+                      ? "activity"
+                      : "minus";
 
                 return (
                   <article
@@ -521,30 +542,32 @@ export function ConnectionList({
                       <span className="saved-card-server-icon"><Icon name={profileIcons[profile.type]} /></span>
                       <div className="saved-card-identity">
                         <strong title={profile.name || profileTarget(profile)}>{profile.name || profileTarget(profile)}</strong>
-                        <span title={profileTarget(profile)}>{profileTarget(profile)}</span>
+                        <span title={profileTarget(profile)}>{profileCardSubtitle(profile)}</span>
                       </div>
                       <button
-                        aria-label={`刷新 ${profile.name || profileTarget(profile)} 的主机概览`}
-                        className="saved-card-refresh"
+                        aria-label={`${overviewStatusLabel}，刷新 ${profile.name || profileTarget(profile)} 的主机概览`}
+                        className={["saved-card-status-button", overviewStatus].join(" ")}
                         disabled={!isSshProfile || overviewState?.loading}
                         onClick={(event) => {
                           event.stopPropagation();
                           void refreshOverview(profile);
                         }}
-                        title={isSshProfile ? "通过 SSH 刷新主机概览" : "该协议不支持 SSH 主机概览"}
+                        title={isSshProfile ? `${overviewStatusLabel} · 点击刷新` : "该协议不支持 SSH 主机概览"}
                         type="button"
                       >
-                        <Icon className={overviewState?.loading ? "is-spinning" : ""} name="refresh-ccw" />
+                        <span className="saved-card-status-content">
+                          {overviewStatus === "online" ? (
+                            <span className="saved-card-status-latency">
+                              {overviewState?.data ? formatLatencyBadge(overviewState.data.latencyMs) : "—"}
+                            </span>
+                          ) : (
+                            <Icon name={overviewStatusIcon} />
+                          )}
+                        </span>
                       </button>
                     </div>
 
                     <HostOverviewPanel profile={profile} state={overviewState} />
-
-                    <div className="saved-card-status-row">
-                      <span className={["saved-status-dot", isConnecting ? "connecting" : isReachable ? "online" : overviewState?.error ? "error" : "idle"].join(" ")} />
-                      <strong>{isConnecting ? "正在连接" : isSessionConnected ? "会话已连接" : overviewState?.data ? "SSH 可达" : overviewState?.error ? "暂不可用" : "等待检测"}</strong>
-                      <span>{overviewState?.data ? `${overviewState.data.latencyMs} ms` : protocolLabel(profile.type)}</span>
-                    </div>
 
                     <div className="saved-card-footer">
                       <button
@@ -655,25 +678,54 @@ function WslDistributionCard({
   index,
   onOpen,
   onOpenFiles,
+  onRefresh,
   overview,
   opening,
   openingBlocked,
+  refreshing,
 }: {
   activeSessions: number;
   distribution: WslDistributionInfo;
   index: number;
   onOpen: (distribution: string) => Promise<void>;
   onOpenFiles: (distribution: string) => void;
+  onRefresh: () => Promise<unknown>;
   overview: WslOverviewState | undefined;
   opening: boolean;
   openingBlocked: boolean;
+  refreshing: boolean;
 }) {
-  const stateLabel = distribution.state === "running"
-    ? "运行中"
-    : distribution.state === "stopped"
-      ? "已停止"
-      : "状态未知";
   const versionLabel = distribution.version ? `WSL ${distribution.version}` : "WSL";
+  const overviewStatus = overview?.loading || refreshing
+    ? "connecting"
+    : distribution.state === "running" && overview?.data
+      ? "online"
+      : distribution.state === "running" && overview?.error
+        ? "error"
+        : distribution.state === "stopped"
+          ? "offline"
+          : distribution.state === "running"
+            ? "connecting"
+            : "idle";
+  const overviewStatusLabel = overviewStatus === "online"
+    ? `运行中 · ${overview?.data?.latencyMs ?? 0} ms`
+    : overviewStatus === "connecting"
+      ? "检测中"
+      : overviewStatus === "error"
+        ? "资源获取失败"
+        : overviewStatus === "offline"
+          ? "已停止"
+          : "状态未知";
+  const overviewStatusIcon: IconName = overviewStatus === "error" || overviewStatus === "offline"
+    ? "plug"
+    : overviewStatus === "connecting"
+      ? "activity"
+      : "minus";
+  const subtitle = [
+    versionLabel,
+    distribution.isDefault ? "默认" : null,
+    activeSessions > 0 ? `${activeSessions} 会话` : null,
+  ].filter(Boolean).join(" · ");
 
   return (
     <article
@@ -685,17 +737,29 @@ function WslDistributionCard({
         <span className="wsl-card-glyph"><Icon name="terminal" /></span>
         <div className="wsl-card-identity">
           <strong title={distribution.name}>{distribution.name}</strong>
-          <span>{versionLabel}{distribution.isDefault ? " · 默认发行版" : ""}</span>
+          <span>{subtitle}</span>
         </div>
-        <span className={["wsl-state-chip", distribution.state].join(" ")}>{stateLabel}</span>
+        <button
+          aria-label={`${overviewStatusLabel}，刷新 ${distribution.name} 状态`}
+          className={["saved-card-status-button", "wsl-card-status-button", overviewStatus].join(" ")}
+          disabled={overview?.loading || refreshing}
+          onClick={() => void onRefresh()}
+          title={`${overviewStatusLabel} · 点击刷新`}
+          type="button"
+        >
+          <span className="saved-card-status-content">
+            {overviewStatus === "online" ? (
+              <span className="saved-card-status-latency">
+                {overview?.data ? formatLatencyBadge(overview.data.latencyMs) : "—"}
+              </span>
+            ) : (
+              <Icon name={overviewStatusIcon} />
+            )}
+          </span>
+        </button>
       </div>
 
       <WslOverviewPanel distribution={distribution} state={overview} />
-
-      <div className="wsl-card-meta">
-        <span><i className={["saved-status-dot", distribution.state === "running" ? "online" : "idle"].join(" ")} />{stateLabel}</span>
-        <span>{activeSessions > 0 ? `${activeSessions} 个终端会话` : "尚未打开终端"}</span>
-      </div>
 
       <div className="wsl-card-actions">
         <button
@@ -730,11 +794,12 @@ function WslOverviewPanel({
 }) {
   if (distribution.state !== "running") {
     return (
-      <div className="saved-card-message wsl-not-running">
-        <Icon name="activity" />
-        <div>
-          <strong>资源采集已暂停</strong>
-          <span>发行版未运行，不会读取占用信息或启动 WSL。</span>
+      <div className="saved-card-overview wsl-card-overview">
+        <div className="saved-card-metrics">
+          <Metric label="CPU" value="—" />
+          <Metric label="内存" value="—" />
+          <Metric label="磁盘" value="—" />
+          <Metric label="运行" value="—" />
         </div>
       </div>
     );
@@ -749,23 +814,24 @@ function WslOverviewPanel({
     return (
       <div className="saved-card-overview wsl-card-overview">
         <div className="saved-card-metrics">
-          <Metric label="CPU" value={cpuPercent === null ? "—" : `${cpuPercent}%`} detail={overview.cpuCount ? `${overview.cpuCount} 核` : "不可用"} progress={cpuPercent} />
+          <Metric label="CPU" value={cpuPercent === null ? "—" : `${cpuPercent}%`} detail={overview.cpuCount ? `${overview.cpuCount} 核` : undefined} progress={cpuPercent} />
           <Metric
             label="内存"
-            value={memoryPercent === null ? "—" : `${memoryPercent}%`}
-            detail={formatUsage(overview.memoryUsedBytes, overview.memoryTotalBytes)}
+            value={formatBytes(overview.memoryUsedBytes)}
+            detail={formatCapacityTotal(overview.memoryTotalBytes)}
             progress={memoryPercent}
           />
           <Metric
             label="磁盘"
-            value={diskPercent === null ? "—" : `${diskPercent}%`}
-            detail={formatUsage(overview.diskUsedBytes, overview.diskTotalBytes)}
+            value={formatBytes(overview.diskUsedBytes)}
+            detail={formatCapacityTotal(overview.diskTotalBytes)}
             progress={diskPercent}
           />
+          <Metric label="运行" value={formatUptimeDays(overview.uptimeSeconds)} detail={state.loading ? "刷新中" : undefined} />
         </div>
         <div className={["saved-card-system", state.error ? "error" : ""].filter(Boolean).join(" ")} title={state.error ?? `${overview.operatingSystem} · ${overview.kernelVersion}`}>
           <Icon name="activity" />
-          <span>{overview.operatingSystem} · 已运行 {formatUptime(overview.uptimeSeconds)}{state.error ? " · 更新失败" : state.loading ? " · 刷新中" : ""}</span>
+          <span>{overview.operatingSystem}</span>
         </div>
       </div>
     );
@@ -805,22 +871,29 @@ function HostOverviewPanel({
     const memoryPercent = overview.memoryUsedBytes !== null && overview.memoryTotalBytes
       ? Math.min(100, Math.round((overview.memoryUsedBytes / overview.memoryTotalBytes) * 100))
       : null;
+    const diskPercent = usagePercent(overview.diskUsedBytes, overview.diskTotalBytes);
 
     return (
       <div className="saved-card-overview">
         <div className="saved-card-metrics">
-          <Metric label="平均负载" value={overview.cpuLoad1 === null ? "—" : overview.cpuLoad1.toFixed(2)} detail={overview.cpuCount ? `${overview.cpuCount} 核 CPU` : "CPU"} />
+          <Metric label="负载" value={overview.cpuLoad1 === null ? "—" : overview.cpuLoad1.toFixed(2)} detail={overview.cpuCount ? `${overview.cpuCount} 核` : undefined} />
           <Metric
             label="内存"
-            value={memoryPercent === null ? "—" : `${memoryPercent}%`}
-            detail={overview.memoryUsedBytes !== null && overview.memoryTotalBytes !== null ? `${formatBytes(overview.memoryUsedBytes)} / ${formatBytes(overview.memoryTotalBytes)}` : "不可用"}
+            value={formatBytes(overview.memoryUsedBytes)}
+            detail={formatCapacityTotal(overview.memoryTotalBytes)}
             progress={memoryPercent}
           />
-          <Metric label="运行时间" value={formatUptime(overview.uptimeSeconds)} detail={state.loading ? "正在刷新…" : refreshedAtLabel(state.refreshedAt)} />
+          <Metric
+            label="磁盘"
+            value={formatBytes(overview.diskUsedBytes)}
+            detail={formatCapacityTotal(overview.diskTotalBytes)}
+            progress={diskPercent}
+          />
+          <Metric label="运行" value={formatUptimeDays(overview.uptimeSeconds)} detail={state.loading ? "刷新中" : undefined} />
         </div>
         <div className="saved-card-system" title={`${overview.operatingSystem} · ${overview.kernelVersion}`}>
           <Icon name="activity" />
-          <span>{overview.operatingSystem} · {overview.kernelVersion}</span>
+          <span>{overview.operatingSystem}</span>
         </div>
       </div>
     );
@@ -861,13 +934,13 @@ function Metric({
   progress,
   value,
 }: {
-  detail: string;
+  detail?: string;
   label: string;
   progress?: number | null;
   value: string;
 }) {
   return (
-    <div className="saved-metric">
+    <div className="saved-metric" title={`${label}：${value}${detail ? ` ${detail}` : ""}`}>
       <span>{label}</span>
       <strong>{value}</strong>
       {typeof progress === "number" ? (
@@ -875,7 +948,7 @@ function Metric({
           <i style={{ width: `${progress}%` }} />
         </span>
       ) : null}
-      <small>{detail}</small>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
@@ -886,15 +959,25 @@ function usagePercent(used: number | null, total: number | null) {
     : null;
 }
 
-function formatUsage(used: number | null, total: number | null) {
-  return used !== null && total !== null ? `${formatBytes(used)} / ${formatBytes(total)}` : "不可用";
+function formatCapacityTotal(total: number | null) {
+  return total === null ? undefined : `/ ${formatBytes(total)}`;
 }
 
-function refreshedAtLabel(value: number | null) {
-  if (!value) {
-    return "刚刚更新";
+function formatLatencyBadge(value: number) {
+  if (value < 1_000) {
+    return `${Math.round(value)}ms`;
   }
-  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(value);
+
+  const seconds = value / 1_000;
+  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+}
+
+function profileCardSubtitle(profile: ConnectionProfile) {
+  if ((profile.type === "ssh" || profile.type === "sftp") && profile.name.trim() === profile.host.trim()) {
+    return [profile.username.trim(), String(profile.port)].filter(Boolean).join(" · ");
+  }
+
+  return profileTarget(profile);
 }
 
 function hostOverviewErrorMessage(error: unknown) {

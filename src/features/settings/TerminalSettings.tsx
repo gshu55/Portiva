@@ -1,6 +1,7 @@
 import type { AppSettings, TerminalRightClickBehavior } from "../../shared/types";
 import { Button, Toggle } from "../../shared/ui";
 import { SettingsSectionHeader } from "./SettingsSection";
+import { TerminalPaletteSettings } from "./TerminalPaletteSettings";
 
 interface TerminalSettingsProps {
   settings: AppSettings;
@@ -29,8 +30,8 @@ const rightClickOptions: Array<{
   },
   {
     value: "copy-or-paste",
-    label: "智能复制/粘贴",
-    description: "选中文本时复制，未选择内容时粘贴。",
+    label: "智能粘贴",
+    description: "选中文本复制，未选择时粘贴。",
   },
 ];
 
@@ -40,6 +41,8 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
 
   return (
     <>
+      <TerminalPaletteSettings settings={settings} onSaveSettings={onSaveSettings} />
+
       <section className="settings-block terminal-behavior-settings-block">
         <SettingsSectionHeader
           title="鼠标"
@@ -85,6 +88,7 @@ export function TerminalSettings({ onSaveSettings, settings }: TerminalSettingsP
           />
         </div>
       </section>
+
     </>
   );
 }
