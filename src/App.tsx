@@ -28,14 +28,22 @@ import {
   resolveTerminalFontFamily,
   resolveTerminalFontSize,
 } from "./shared/terminalFonts";
-import type { ConnectionCapabilities, ConnectionProfile, WorkspaceSessionTab } from "./shared/types";
+import type {
+  ConnectionCapabilities,
+  ConnectionProfile,
+  TerminalSplitLayout,
+  WorkspaceSessionTab,
+} from "./shared/types";
+import { isTerminalSplitLayout } from "./shared/terminalSplits";
 import { sshCollectHostOverview, wslCollectHostOverview } from "./shared/ipc/commands";
 
 const detachedReattachRequestEvent = "portiva://detached-reattach-request";
 const detachedReattachCompleteEvent = "portiva://detached-reattach-complete";
 const detachedReattachDragStartEvent = "portiva://detached-reattach-drag-start";
 const detachedReattachDragEndEvent = "portiva://detached-reattach-drag-end";
+const detachedToolReattachEvent = "portiva://detached-tool-reattach";
 const detachedWindowLabelPrefix = "portiva-tab-";
+const detachedPostWindowLabel = `${detachedWindowLabelPrefix}tool-post`;
 const legacyDetachedTerminalWindowLabelPrefix = "portiva-terminal-";
 const mainWindowMinWidth = 900;
 const mainWindowMinHeight = 640;
@@ -180,6 +188,7 @@ function moveTabIdBefore(currentOrder: string[], sourceTabId: string, targetTabI
 type DetachedSessionTargetPayload = Omit<DetachedSessionReattachRequest, "sourceWindowLabel">;
 
 interface DetachedSessionReattachRequest {
+  additionalTerminalIds?: string[];
   connectionId: string;
   fileTransferSessionId?: string;
   kind?: "terminal" | "file-transfer";
@@ -187,6 +196,7 @@ interface DetachedSessionReattachRequest {
   remotePath?: string;
   sourceWindowLabel: string;
   tabId: string;
+  terminalLayout?: TerminalSplitLayout;
   terminalId?: string;
 }
 
@@ -199,6 +209,10 @@ interface DetachedSessionReattachComplete {
 interface DetachedSessionDragPayload {
   sourceWindowLabel: string;
   tabId: string;
+}
+
+interface DetachedToolReattachRequest {
+  tool: "post";
 }
 
 interface HostTrustRequest {
@@ -249,6 +263,17 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     const tabId = params.get("detachedSession");
     const fileTransferSessionId = params.get("fileTransferSessionId") ?? undefined;
+    const additionalTerminalIds = params.getAll("additionalTerminalId").slice(0, 3);
+    const terminalLayoutValue = params.get("terminalLayout");
+    let terminalLayout: TerminalSplitLayout | undefined;
+    if (terminalLayoutValue) {
+      try {
+        const parsed: unknown = JSON.parse(terminalLayoutValue);
+        terminalLayout = isTerminalSplitLayout(parsed) ? parsed : undefined;
+      } catch {
+        terminalLayout = undefined;
+      }
+    }
     const kind: DetachedSessionReattachRequest["kind"] =
       params.get("tabKind") === "file-transfer" || fileTransferSessionId
         ? "file-transfer"
@@ -259,14 +284,20 @@ function App() {
     }
 
     return {
+      additionalTerminalIds,
       connectionId: params.get("connectionId") ?? tabId,
       fileTransferSessionId,
       kind,
       parentConnectionId: params.get("parentConnectionId") ?? undefined,
       remotePath: params.get("remotePath") ?? undefined,
       tabId,
+      terminalLayout,
       terminalId: params.get("terminalId") ?? undefined,
     };
+  }, []);
+  const detachedToolPage = useMemo(() => {
+    const toolPage = new URLSearchParams(window.location.search).get("toolPage");
+    return toolPage === "post" ? toolPage : null;
   }, []);
   const detachedSessionId = detachedTarget?.tabId ?? null;
   const [terminalFullscreen, setTerminalFullscreen] = useState(Boolean(detachedSessionId));
@@ -403,7 +434,7 @@ function App() {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         await getCurrentWindow().setSizeConstraints(
-          detachedSessionId
+          detachedSessionId || detachedToolPage
             ? {
                 minHeight: detachedWindowMinHeight,
                 minWidth: detachedWindowMinWidth,
@@ -417,7 +448,51 @@ function App() {
         // Browser preview and mocked mode do not have native window constraints.
       }
     })();
-  }, [detachedSessionId, workspace.dataSource]);
+  }, [detachedSessionId, detachedToolPage, workspace.dataSource]);
+
+  useEffect(() => {
+    if (workspace.dataSource !== "tauri" || detachedSessionId || detachedToolPage) {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    void (async () => {
+      try {
+        const [{ listen }, { getCurrentWindow }] = await Promise.all([
+          import("@tauri-apps/api/event"),
+          import("@tauri-apps/api/window"),
+        ]);
+        const disposeListener = await listen<DetachedToolReattachRequest>(
+          detachedToolReattachEvent,
+          (event) => {
+            if (event.payload.tool !== "post") {
+              return;
+            }
+
+            setHttpConsoleOpen(true);
+            setActiveShellTabId(httpConsoleTabId);
+            const currentWindow = getCurrentWindow();
+            void currentWindow.show().then(() => currentWindow.setFocus());
+          },
+        );
+
+        if (disposed) {
+          disposeListener();
+          return;
+        }
+        unlisten = disposeListener;
+      } catch {
+        // Browser preview and mocked mode do not have the native event bridge.
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [detachedSessionId, detachedToolPage, workspace.dataSource]);
 
   useEffect(() => {
     if (
@@ -597,6 +672,12 @@ function App() {
     if (terminal) {
       params.set("terminalId", terminal.id);
     }
+    for (const pane of tab.additionalTerminals ?? []) {
+      params.append("additionalTerminalId", pane.terminal.id);
+    }
+    if (tab.terminalLayout) {
+      params.set("terminalLayout", JSON.stringify(tab.terminalLayout));
+    }
     if (fileTransferSession) {
       params.set("fileTransferSessionId", fileTransferSession.id);
     }
@@ -608,12 +689,14 @@ function App() {
     }
 
     return {
+      additionalTerminalIds: params.getAll("additionalTerminalId"),
       connectionId: params.get("connectionId") ?? backendConnectionId,
       fileTransferSessionId: params.get("fileTransferSessionId") ?? undefined,
       kind: tabKind,
       parentConnectionId: params.get("parentConnectionId") ?? undefined,
       remotePath: params.get("remotePath") ?? undefined,
       tabId,
+      terminalLayout: tab.terminalLayout ?? undefined,
       terminalId: params.get("terminalId") ?? undefined,
     };
   };
@@ -627,6 +710,12 @@ function App() {
 
     if (target.terminalId) {
       params.set("terminalId", target.terminalId);
+    }
+    for (const terminalId of target.additionalTerminalIds ?? []) {
+      params.append("additionalTerminalId", terminalId);
+    }
+    if (target.terminalLayout) {
+      params.set("terminalLayout", JSON.stringify(target.terminalLayout));
     }
     if (target.fileTransferSessionId) {
       params.set("fileTransferSessionId", target.fileTransferSessionId);
@@ -1250,8 +1339,72 @@ function App() {
 
     void workspace.closeConnection(tabId);
   };
+  const openDetachedPostWindow = () => {
+    void (async () => {
+      try {
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const existingWindow = await WebviewWindow.getByLabel(detachedPostWindowLabel);
+
+        if (existingWindow) {
+          await existingWindow.show();
+          await existingWindow.setFocus();
+        } else {
+          const webview = new WebviewWindow(detachedPostWindowLabel, {
+            decorations: true,
+            height: 760,
+            minHeight: detachedWindowMinHeight,
+            minWidth: detachedWindowMinWidth,
+            resizable: true,
+            title: "Post",
+            url: `${window.location.pathname}?toolPage=post`,
+            width: 1120,
+          });
+
+          await new Promise<void>((resolve, reject) => {
+            void webview.once("tauri://created", () => resolve());
+            void webview.once("tauri://error", (event) => reject(event.payload));
+          });
+        }
+
+        setHttpConsoleOpen(false);
+        setActiveShellTabId((current) => current === httpConsoleTabId ? null : current);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        workspace.reportWorkspaceMessage(`Post 单独窗口打开失败：${message}`);
+      }
+    })();
+  };
+  const mergeDetachedPostWindow = () => {
+    void (async () => {
+      try {
+        const [{ emitTo }, { getCurrentWindow }] = await Promise.all([
+          import("@tauri-apps/api/event"),
+          import("@tauri-apps/api/window"),
+        ]);
+        const currentWindow = getCurrentWindow();
+        await emitTo<DetachedToolReattachRequest>("main", detachedToolReattachEvent, { tool: "post" });
+        await currentWindow.destroy();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        workspace.reportWorkspaceMessage(`Post 窗口合并失败：${message}`);
+      }
+    })();
+  };
+  const closeDetachedPostWindow = () => {
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().destroy())
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        workspace.reportWorkspaceMessage(`Post 窗口关闭失败：${message}`);
+      });
+  };
   const openAppSessionWindow = (tabId: string) => {
-    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === httpConsoleTabId || tabId === networkScannerTabId || isWslFilesTabId(tabId)) {
+    if (tabId === httpConsoleTabId) {
+      openDetachedPostWindow();
+      return;
+    }
+
+    if (tabId === hostDashboardTabId || tabId === settingsTabId || tabId === networkScannerTabId || isWslFilesTabId(tabId)) {
       return;
     }
 
@@ -1423,6 +1576,60 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [hostTrustBusy, pendingHostTrust]);
 
+  if (detachedToolPage === "post") {
+    return (
+      <main
+        className="app-shell detached-shell"
+        data-background={appBackground.enabled ? "true" : "false"}
+        data-theme={workspace.settings.theme.mode}
+        style={themeStyle}
+      >
+        <TerminalWorkspace
+          activeTabId={httpConsoleTabId}
+          capabilities={inactiveCapabilities}
+          connection={null}
+          customTabPanels={{
+            [httpConsoleTabId]: (
+              <Suspense fallback={null}>
+                <HttpConsolePanel />
+              </Suspense>
+            ),
+          }}
+          isDetachedWindow
+          isFullscreen={false}
+          profiles={workspace.profiles}
+          serialPorts={workspace.serialPorts}
+          sessionTabs={[httpConsoleSessionTab]}
+          terminalConfirmMultilinePaste={workspace.settings.terminal.confirmMultilinePaste}
+          terminalCopyRichText={workspace.settings.terminal.copyRichText}
+          terminalFontFamily={workspace.settings.theme.terminalFontFamily}
+          terminalFontSize={workspace.settings.theme.terminalFontSize}
+          terminalRightClickBehavior={workspace.settings.terminal.rightClickBehavior}
+          suppressInsecureWarning={workspace.settings.security.allowInsecureWithoutWarning}
+          terminalTheme={terminalPalette}
+          onCloseSerialTerminal={workspace.closeSerialTerminal}
+          onCloseSessionTab={closeDetachedPostWindow}
+          onCloseSshTerminalPane={workspace.closeSshTerminalPane}
+          onDetachSessionTab={mergeDetachedPostWindow}
+          onOpenSerialTerminal={workspace.openSerialTerminal}
+          onOpenSessionWindow={mergeDetachedPostWindow}
+          onReconfigureSerialTerminal={workspace.reconfigureSerialTerminal}
+          onReconnectSessionTab={() => undefined}
+          onRefreshSerialPorts={workspace.refreshSerialPorts}
+          onReorderSessionTabs={() => undefined}
+          onResizeSshTerminalSplit={workspace.resizeSshTerminalSplit}
+          onResizeTerminal={workspace.resizeActiveTerminal}
+          onSelectSessionTab={() => undefined}
+          onSendTerminalBytes={workspace.sendTerminalBytes}
+          onSendTerminalData={workspace.sendTerminalData}
+          onSplitSshTerminal={workspace.splitSshTerminal}
+          onToggleFullscreen={() => undefined}
+        />
+        <GlobalNotice message={workspace.workspaceMessage} />
+      </main>
+    );
+  }
+
   if (detachedSessionId) {
     return (
       <main
@@ -1438,6 +1645,7 @@ function App() {
           emptyStateNotice={workspace.workspaceMessage}
           fileTransferPanel={fileTransferPanel}
           sftpSidePanel={renderInlineFilePanel}
+          isDetachedWindow
           isFullscreen={terminalFullscreen}
           keymap={workspace.settings.keymap}
           reattachHintActive={detachedReattachHint}
@@ -1453,6 +1661,7 @@ function App() {
           terminalTheme={terminalPalette}
           onCloseSessionTab={workspace.closeConnection}
           onCloseSerialTerminal={workspace.closeSerialTerminal}
+          onCloseSshTerminalPane={workspace.closeSshTerminalPane}
           onDetachSessionTab={moveDetachedSessionToWindow}
           onSessionDragStateChange={notifyDetachedDragState}
           onOpenFileTransferTab={workspace.openFileTransferTab}
@@ -1466,7 +1675,9 @@ function App() {
           onSendTerminalData={workspace.sendTerminalData}
           onTerminalWorkingDirectoryChange={workspace.reportTerminalWorkingDirectory}
           onResizeTerminal={workspace.resizeActiveTerminal}
+          onResizeSshTerminalSplit={workspace.resizeSshTerminalSplit}
           onSelectSessionTab={workspace.switchSessionTab}
+          onSplitSshTerminal={workspace.splitSshTerminal}
           onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
 	        />
 	        <GlobalNotice message={workspace.workspaceMessage} />
@@ -1582,6 +1793,7 @@ function App() {
             tabBarPortalTarget={titlebarTabSlot}
             onCloseSessionTab={closeAppSessionTab}
             onCloseSerialTerminal={workspace.closeSerialTerminal}
+            onCloseSshTerminalPane={workspace.closeSshTerminalPane}
             onDetachSessionTab={openAppSessionWindow}
             onOpenFileTransferTab={workspace.openFileTransferTab}
             onOpenSessionWindow={openAppSessionWindow}
@@ -1594,7 +1806,9 @@ function App() {
             onSendTerminalData={workspace.sendTerminalData}
             onTerminalWorkingDirectoryChange={workspace.reportTerminalWorkingDirectory}
             onResizeTerminal={workspace.resizeActiveTerminal}
+            onResizeSshTerminalSplit={workspace.resizeSshTerminalSplit}
             onSelectSessionTab={selectAppSessionTab}
+            onSplitSshTerminal={workspace.splitSshTerminal}
             onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
 	          />
 	        </div>

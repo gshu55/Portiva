@@ -5,10 +5,47 @@ mod security;
 mod services;
 mod utils;
 
-use tauri::Manager;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager,
+};
 
 const DETACHED_TAB_WINDOW_PREFIX: &str = "portiva-tab-";
 const DETACHED_TERMINAL_WINDOW_PREFIX: &str = "portiva-terminal-";
+const TRAY_SHOW_MENU_ID: &str = "portiva-tray-show";
+const TRAY_QUIT_MENU_ID: &str = "portiva-tray-quit";
+
+fn is_portiva_window(label: &str) -> bool {
+    label == "main"
+        || label.starts_with(DETACHED_TAB_WINDOW_PREFIX)
+        || label.starts_with(DETACHED_TERMINAL_WINDOW_PREFIX)
+}
+
+fn hide_portiva_windows<R: tauri::Runtime, M: tauri::Manager<R>>(manager: &M) {
+    for (label, window) in manager.webview_windows() {
+        if is_portiva_window(&label) {
+            let _ = window.hide();
+        }
+    }
+}
+
+fn show_portiva_windows<R: tauri::Runtime, M: tauri::Manager<R>>(manager: &M) {
+    for (label, window) in manager.webview_windows() {
+        if is_portiva_window(&label) {
+            let _ = window.show();
+        }
+    }
+
+    if let Some(main_window) = manager.get_webview_window("main") {
+        let _ = main_window.unminimize();
+        let _ = main_window.set_focus();
+    }
+}
 
 fn destroy_detached_terminal_windows<R: tauri::Runtime, M: tauri::Manager<R>>(manager: &M) {
     for (label, window) in manager.webview_windows() {
@@ -20,8 +57,49 @@ fn destroy_detached_terminal_windows<R: tauri::Runtime, M: tauri::Manager<R>>(ma
     }
 }
 
+fn setup_system_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, TRAY_SHOW_MENU_ID, "显示 Portiva", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit_item = MenuItem::with_id(app, TRAY_QUIT_MENU_ID, "退出 Portiva", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
+    let mut tray_builder = TrayIconBuilder::new()
+        .tooltip("Portiva")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app_handle, event| match event.id().as_ref() {
+            TRAY_SHOW_MENU_ID => show_portiva_windows(app_handle),
+            TRAY_QUIT_MENU_ID => app_handle.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                }
+            ) {
+                show_portiva_windows(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon() {
+        tray_builder = tray_builder.icon(icon.clone());
+    }
+
+    tray_builder.build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let tray_available = Arc::new(AtomicBool::new(false));
+    let tray_available_for_setup = Arc::clone(&tray_available);
+    let tray_available_for_window = Arc::clone(&tray_available);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -45,6 +123,13 @@ pub fn run() {
         .manage(services::protocol_registry::ProtocolRegistry)
         .manage(services::tunnel_service::TunnelService::default())
         .manage(services::serial_service::SerialService::default())
+        .setup(move |app| {
+            match setup_system_tray(app) {
+                Ok(()) => tray_available_for_setup.store(true, Ordering::Release),
+                Err(error) => eprintln!("failed to create Portiva system tray: {error}"),
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::profiles::profile_list,
             commands::profiles::profile_groups,
@@ -148,11 +233,16 @@ pub fn run() {
             commands::updater::app_update_check,
             commands::updater::app_update_download_and_install,
         ])
-        .on_window_event(|window, event| {
-            if window.label() == "main"
-                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
-            {
-                destroy_detached_terminal_windows(window.app_handle());
+        .on_window_event(move |window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if tray_available_for_window.load(Ordering::Acquire) {
+                        api.prevent_close();
+                        hide_portiva_windows(window.app_handle());
+                    } else {
+                        destroy_detached_terminal_windows(window.app_handle());
+                    }
+                }
             }
         })
         .build(tauri::generate_context!())

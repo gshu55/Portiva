@@ -137,7 +137,7 @@ export function AppTitlebar({
   const nonMacWindowControls = [
     { action: "minimize" as const, className: "minimize", icon: "minus" as const, label: "最小化", title: "最小化" },
     { action: "toggle-maximize" as const, className: "maximize", icon: maximizeIcon, label: maximizeLabel, title: maximizeLabel },
-    { action: "close" as const, className: "close", icon: "x" as const, label: "关闭", title: "关闭" },
+    { action: "close" as const, className: "close", icon: "x" as const, label: "后台运行", title: "关闭到系统托盘" },
   ];
 
   return (
@@ -148,6 +148,7 @@ export function AppTitlebar({
     >
       {isMacWindow ? <div className="native-window-spacer" aria-hidden="true" /> : null}
       <div className="app-titlebar-tab-slot" ref={tabSlotRef} />
+      <div className="app-titlebar-drag-handle" aria-hidden="true" />
       <nav className="app-titlebar-actions" aria-label="主页工具栏">
         <button
           type="button"

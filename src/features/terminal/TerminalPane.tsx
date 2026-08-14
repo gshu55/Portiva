@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IDecoration, type IMarker } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import type {
   TerminalColorPalette,
@@ -37,19 +37,210 @@ interface TerminalPaneProps {
   onWorkingDirectoryChange?: (terminalId: string, path: string) => void;
 }
 
-function isDarkColor(color: string) {
+type RgbColor = [number, number, number];
+type MainstreamCli =
+  | "aider"
+  | "claude"
+  | "codex"
+  | "copilot"
+  | "cursor"
+  | "gemini"
+  | "opencode"
+  | "qwen";
+
+interface CliInputDecorationState {
+  decoration: IDecoration;
+  key: string;
+  marker: IMarker;
+}
+
+const cliExecutableNames: Record<string, MainstreamCli> = {
+  "@anthropic-ai/claude-code": "claude",
+  "@google/gemini-cli": "gemini",
+  "@openai/codex": "codex",
+  "@qwen-code/qwen-code": "qwen",
+  aider: "aider",
+  "aider-chat": "aider",
+  claude: "claude",
+  codex: "codex",
+  copilot: "copilot",
+  "cursor-agent": "cursor",
+  gemini: "gemini",
+  opencode: "opencode",
+  "opencode-ai": "opencode",
+  qwen: "qwen",
+  "qwen-code": "qwen",
+};
+
+const cliTitleMatchers: Array<[MainstreamCli, RegExp]> = [
+  ["claude", /(?:^|[\s|\-—])claude(?:\s+code)?(?:$|[\s|\-—])/i],
+  ["codex", /(?:^|[\s|\-—])codex(?:$|[\s|\-—])/i],
+  ["gemini", /(?:^|[\s|\-—])gemini(?:$|[\s|\-—])/i],
+  ["aider", /(?:^|[\s|\-—])aider(?:$|[\s|\-—])/i],
+  ["opencode", /(?:^|[\s|\-—])opencode(?:$|[\s|\-—])/i],
+  ["qwen", /(?:^|[\s|\-—])qwen(?:\s+code)?(?:$|[\s|\-—])/i],
+  ["copilot", /(?:^|[\s|\-—])copilot(?:$|[\s|\-—])/i],
+  ["cursor", /(?:^|[\s|\-—])cursor(?:\s+agent)?(?:$|[\s|\-—])/i],
+];
+
+function tokenizeCommand(command: string) {
+  return (
+    command
+      .match(/"[^"]*"|'[^']*'|\S+/g)
+      ?.map((token) => token.replace(/^["']|["']$/g, "")) ?? []
+  );
+}
+
+function commandName(token: string) {
+  return token
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.toLowerCase()
+    .replace(/\.(?:cmd|exe|ps1)$/i, "") ?? "";
+}
+
+function detectMainstreamCliCommand(command: string): MainstreamCli | null {
+  const tokens = tokenizeCommand(command.trim());
+  let index = 0;
+
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index] ?? "")) {
+    index += 1;
+  }
+
+  const wrapper = commandName(tokens[index] ?? "");
+  if (wrapper === "sudo" || wrapper === "env") {
+    index += 1;
+    while (
+      (tokens[index] ?? "").startsWith("-") ||
+      /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index] ?? "")
+    ) {
+      index += 1;
+    }
+  }
+
+  const packageRunner = commandName(tokens[index] ?? "");
+  if (["bunx", "npx", "uvx"].includes(packageRunner)) {
+    index += 1;
+    while ((tokens[index] ?? "").startsWith("-")) {
+      index += 1;
+    }
+  } else if (
+    ["pnpm", "yarn"].includes(packageRunner) &&
+    ["dlx", "exec"].includes((tokens[index + 1] ?? "").toLowerCase())
+  ) {
+    index += 2;
+  } else if (packageRunner === "pipx" && (tokens[index + 1] ?? "").toLowerCase() === "run") {
+    index += 2;
+  }
+
+  const executable = commandName(tokens[index] ?? "");
+  if (["python", "python3", "py"].includes(executable) && (tokens[index + 1] ?? "").toLowerCase() === "-m") {
+    return cliExecutableNames[commandName(tokens[index + 2] ?? "")] ?? null;
+  }
+
+  return cliExecutableNames[executable] ?? cliExecutableNames[(tokens[index] ?? "").toLowerCase()] ?? null;
+}
+
+function detectMainstreamCliTitle(title: string): MainstreamCli | null {
+  return cliTitleMatchers.find(([, matcher]) => matcher.test(title.trim()))?.[0] ?? null;
+}
+
+function isShellTerminalTitle(title: string) {
+  return /(?:^|[\\/\s])(?:bash|cmd|fish|nu|powershell|pwsh|zsh)(?:\.exe)?(?:$|[\s:|\-—])/i.test(title.trim());
+}
+
+function parseTerminalColor(color: string): RgbColor | null {
   const hexMatch = /^#([0-9a-fA-F]{6})$/.exec(color);
+  if (hexMatch) {
+    return [
+      Number.parseInt(hexMatch[1].slice(0, 2), 16),
+      Number.parseInt(hexMatch[1].slice(2, 4), 16),
+      Number.parseInt(hexMatch[1].slice(4, 6), 16),
+    ];
+  }
+
   const rgbMatch = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
-  const [red, green, blue] = hexMatch
-    ? [
-        Number.parseInt(hexMatch[1].slice(0, 2), 16),
-        Number.parseInt(hexMatch[1].slice(2, 4), 16),
-        Number.parseInt(hexMatch[1].slice(4, 6), 16),
-      ]
-    : rgbMatch
-      ? rgbMatch.slice(1, 4).map(Number)
-      : [0, 0, 0];
+  return rgbMatch ? (rgbMatch.slice(1, 4).map(Number) as RgbColor) : null;
+}
+
+function isDarkColor(color: string) {
+  const [red, green, blue] = parseTerminalColor(color) ?? [0, 0, 0];
   return red * 0.299 + green * 0.587 + blue * 0.114 < 150;
+}
+
+function mixTerminalColor(base: RgbColor, accent: RgbColor, accentRatio: number): RgbColor {
+  return base.map((channel, index) =>
+    Math.round(channel * (1 - accentRatio) + accent[index] * accentRatio),
+  ) as RgbColor;
+}
+
+function resolveTuiReportedBackground(theme: TerminalColorPalette): RgbColor {
+  const background = parseTerminalColor(theme.background) ?? [40, 44, 52];
+  const accent = parseTerminalColor(theme.cyan) ?? background;
+  const accentRatio = isDarkColor(theme.background) ? 0.14 : 0.06;
+  return mixTerminalColor(background, accent, accentRatio);
+}
+
+function formatOscRgb(color: RgbColor) {
+  const channels = color.map((channel) => {
+    const hex = Math.max(0, Math.min(255, channel)).toString(16).padStart(2, "0");
+    return `${hex}${hex}`;
+  });
+  return `rgb:${channels.join("/")}`;
+}
+
+function formatHexRgb(color: RgbColor) {
+  return `#${color
+    .map((channel) => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function disposeCliInputDecoration(state: CliInputDecorationState | null) {
+  state?.decoration.dispose();
+  state?.marker.dispose();
+}
+
+function terminalLineText(instance: Terminal, absoluteLine: number) {
+  return instance.buffer.active.getLine(absoluteLine)?.translateToString(true) ?? "";
+}
+
+function resolveCliInputRegion(instance: Terminal) {
+  const buffer = instance.buffer.active;
+  if (buffer.type !== "normal") {
+    return null;
+  }
+
+  const cursorLine = buffer.baseY + buffer.cursorY;
+  const topBorderPattern = /(?:[╭┌╔┏╒╓].*[─━═-]{2,}|[─━═]{8,})/;
+  const bottomBorderPattern = /(?:[╰└╚┗╘╙].*[─━═-]{2,}|[─━═]{8,})/;
+  let topBorder = -1;
+  let bottomBorder = -1;
+
+  for (let offset = 1; offset <= Math.min(6, buffer.cursorY); offset += 1) {
+    const line = cursorLine - offset;
+    if (topBorderPattern.test(terminalLineText(instance, line))) {
+      topBorder = line;
+      break;
+    }
+  }
+
+  for (let offset = 1; offset <= 6; offset += 1) {
+    const line = cursorLine + offset;
+    if (bottomBorderPattern.test(terminalLineText(instance, line))) {
+      bottomBorder = line;
+      break;
+    }
+  }
+
+  if (topBorder >= 0 && bottomBorder > cursorLine && bottomBorder - topBorder <= 8) {
+    return { height: bottomBorder - topBorder + 1, startLine: topBorder };
+  }
+
+  // Aider and some Claude/OpenCode versions render a borderless prompt. Keep
+  // that fallback deliberately narrow so status bars and ordinary output are
+  // not recolored with the input row.
+  return { height: 1, startLine: cursorLine };
 }
 
 function createSearchSelectionTheme(theme: TerminalColorPalette) {
@@ -106,6 +297,47 @@ function createXtermTheme(theme: TerminalColorPalette, emphasizeSelection = fals
 type SearchStatus = "idle" | "found" | "empty" | "error";
 
 const wordSeparators = " ~!@#$%^&*()+`-=[]{}|\\;:\"',./<>?\r\n\t";
+const alternateBufferWheelScrollSpeed = 3;
+
+interface AlternateBufferWheelState {
+  partialRows: number;
+}
+
+function consumeAlternateBufferWheel(
+  event: WheelEvent,
+  terminalRows: number,
+  terminalHeight: number,
+  state: AlternateBufferWheelState,
+) {
+  if (event.deltaY === 0 || event.shiftKey) {
+    return 0;
+  }
+
+  let amount = event.deltaY;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
+    const cellHeight = Math.max(terminalHeight / Math.max(terminalRows, 1), 1);
+    amount /= cellHeight;
+
+    // Precision touchpads emit many small pixel deltas. Accumulate them instead
+    // of turning every event into a keypress, which would make scrolling erratic.
+    if (Math.abs(event.deltaY) < 50) {
+      amount *= 0.3;
+    }
+
+    state.partialRows += amount;
+    amount = Math.floor(Math.abs(state.partialRows)) * Math.sign(state.partialRows);
+    state.partialRows %= 1;
+  } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    amount *= Math.max(terminalRows, 1);
+  }
+
+  return amount;
+}
+
+function alternateBufferArrowSequence(instance: Terminal, direction: number) {
+  const prefix = instance.modes.applicationCursorKeysMode ? "\x1bO" : "\x1b[";
+  return `${prefix}${direction < 0 ? "A" : "B"}`;
+}
 
 function isTerminalSearchShortcut(event: KeyboardEvent) {
   if (event.key.toLowerCase() !== "f" || event.altKey) {
@@ -262,6 +494,10 @@ export function TerminalPane({
   const reportSizeWhenVisibleRef = useRef(reportSizeWhenVisible);
   const reportSizeRef = useRef<(() => void) | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
+  const tuiReportedBackgroundRef = useRef(resolveTuiReportedBackground(terminalTheme));
+  const activeMainstreamCliRef = useRef<MainstreamCli | null>(null);
+  const cliInputDecorationRef = useRef<CliInputDecorationState | null>(null);
+  const refreshCliInputDecorationRef = useRef<() => void>(() => undefined);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -294,10 +530,19 @@ export function TerminalPane({
   const pasteLineCount = pasteDraft !== null ? pasteText.split(/\r\n|\r|\n/).length : 0;
   const resolvedTerminalFontFamily = resolveTerminalFontFamily(terminalFontFamily);
   const resolvedTerminalFontSize = resolveTerminalFontSize(terminalFontSize);
+  const resolvedScrollbackLines = Math.min(
+    100_000,
+    Math.max(1000, Math.round(terminal?.renderPolicy.scrollbackLines ?? 10_000)),
+  );
 
   useEffect(() => {
     resizeTerminalRef.current = onResizeTerminal;
   }, [onResizeTerminal]);
+
+  useEffect(() => {
+    tuiReportedBackgroundRef.current = resolveTuiReportedBackground(terminalTheme);
+    refreshCliInputDecorationRef.current();
+  }, [terminalTheme]);
 
   useEffect(() => {
     sendDataRef.current = onSendData;
@@ -557,6 +802,9 @@ export function TerminalPane({
     const container = containerRef.current;
 
     commandDraftRef.current = "";
+    activeMainstreamCliRef.current = null;
+    disposeCliInputDecoration(cliInputDecorationRef.current);
+    cliInputDecorationRef.current = null;
 
     if (!terminal || !container) {
       xtermRef.current?.dispose();
@@ -571,7 +819,7 @@ export function TerminalPane({
 
     container.replaceChildren();
     const instance = new Terminal({
-      allowProposedApi: false,
+      allowProposedApi: true,
       allowTransparency: true,
       cursorBlink: true,
       cursorStyle: "bar",
@@ -579,7 +827,7 @@ export function TerminalPane({
       disableStdin: false,
       fontFamily: resolvedTerminalFontFamily,
       fontSize: resolvedTerminalFontSize,
-      scrollback: 5000,
+      scrollback: resolvedScrollbackLines,
       theme: createXtermTheme(terminalTheme),
     });
     const fitAddon = new FitAddon();
@@ -598,6 +846,85 @@ export function TerminalPane({
 
       return true;
     });
+    const backgroundQueryHandler = instance.parser.registerOscHandler(11, (data) => {
+      if (data.trim() !== "?") {
+        return false;
+      }
+
+      // Adaptive TUIs such as Codex derive their composer fill from OSC 11.
+      // Report a subtle accent-tinted color while keeping Portiva's real canvas
+      // background unchanged.
+      instance.input(
+        `\x1b]11;${formatOscRgb(tuiReportedBackgroundRef.current)}\x1b\\`,
+        false,
+      );
+      return true;
+    });
+    let cliDecorationFrame: number | null = null;
+    const refreshCliInputDecoration = () => {
+      cliDecorationFrame = null;
+      const activeCli = activeMainstreamCliRef.current;
+      const color = formatHexRgb(tuiReportedBackgroundRef.current);
+      const region = activeCli ? resolveCliInputRegion(instance) : null;
+
+      if (!region) {
+        disposeCliInputDecoration(cliInputDecorationRef.current);
+        cliInputDecorationRef.current = null;
+        return;
+      }
+
+      const key = `${activeCli}:${region.startLine}:${region.height}:${instance.cols}:${color}`;
+      if (cliInputDecorationRef.current?.key === key) {
+        return;
+      }
+
+      disposeCliInputDecoration(cliInputDecorationRef.current);
+      cliInputDecorationRef.current = null;
+
+      const cursorLine = instance.buffer.active.baseY + instance.buffer.active.cursorY;
+      const marker = instance.registerMarker(region.startLine - cursorLine);
+      const decoration = instance.registerDecoration({
+        backgroundColor: color,
+        height: region.height,
+        layer: "bottom",
+        marker,
+        width: instance.cols,
+        x: 0,
+      });
+
+      if (!decoration) {
+        marker.dispose();
+        return;
+      }
+
+      cliInputDecorationRef.current = { decoration, key, marker };
+    };
+    const scheduleCliInputDecorationRefresh = () => {
+      if (cliDecorationFrame !== null) {
+        return;
+      }
+      cliDecorationFrame = window.requestAnimationFrame(refreshCliInputDecoration);
+    };
+    const setActiveMainstreamCli = (cli: MainstreamCli | null) => {
+      if (activeMainstreamCliRef.current === cli) {
+        scheduleCliInputDecorationRefresh();
+        return;
+      }
+      activeMainstreamCliRef.current = cli;
+      scheduleCliInputDecorationRefresh();
+    };
+    refreshCliInputDecorationRef.current = scheduleCliInputDecorationRefresh;
+    const titleChangeHandler = instance.onTitleChange((title) => {
+      const detectedCli = detectMainstreamCliTitle(title);
+      if (detectedCli) {
+        setActiveMainstreamCli(detectedCli);
+      } else if (activeMainstreamCliRef.current && isShellTerminalTitle(title)) {
+        setActiveMainstreamCli(null);
+      }
+    });
+    const cursorMoveHandler = instance.onCursorMove(scheduleCliInputDecorationRefresh);
+    const resizeHandler = instance.onResize(scheduleCliInputDecorationRefresh);
+    const writeParsedHandler = instance.onWriteParsed(scheduleCliInputDecorationRefresh);
     instance.attachCustomKeyEventHandler((event) => {
       if (event.type === "keydown" && isTerminalSearchShortcut(event)) {
         event.preventDefault();
@@ -641,9 +968,43 @@ export function TerminalPane({
       } else {
         const capture = captureSubmittedCommands(data, commandDraftRef.current);
         commandDraftRef.current = capture.draft;
-        capture.commands.forEach((command) => commandSubmittedRef.current?.(command));
+        capture.commands.forEach((command) => {
+          if (!activeMainstreamCliRef.current) {
+            const detectedCli = detectMainstreamCliCommand(command);
+            if (detectedCli) {
+              setActiveMainstreamCli(detectedCli);
+            }
+          }
+          commandSubmittedRef.current?.(command);
+        });
       }
       void enqueueInput(data, terminal.id);
+    });
+    const alternateWheelState: AlternateBufferWheelState = { partialRows: 0 };
+    instance.attachCustomWheelEventHandler((event) => {
+      if (
+        instance.buffer.active.type !== "alternate" ||
+        instance.modes.mouseTrackingMode !== "none"
+      ) {
+        alternateWheelState.partialRows = 0;
+        return true;
+      }
+
+      const direction = consumeAlternateBufferWheel(
+        event,
+        instance.rows,
+        container.clientHeight,
+        alternateWheelState,
+      );
+      if (direction === 0) {
+        event.preventDefault();
+        return false;
+      }
+
+      const sequence = alternateBufferArrowSequence(instance, direction);
+      instance.input(sequence.repeat(alternateBufferWheelScrollSpeed), true);
+      event.preventDefault();
+      return false;
     });
     xtermRef.current = instance;
     fitAddonRef.current = fitAddon;
@@ -710,6 +1071,19 @@ export function TerminalPane({
     return () => {
       resizeObserver.disconnect();
       workingDirectoryHandler.dispose();
+      backgroundQueryHandler.dispose();
+      titleChangeHandler.dispose();
+      cursorMoveHandler.dispose();
+      resizeHandler.dispose();
+      writeParsedHandler.dispose();
+      if (cliDecorationFrame !== null) {
+        window.cancelAnimationFrame(cliDecorationFrame);
+        cliDecorationFrame = null;
+      }
+      disposeCliInputDecoration(cliInputDecorationRef.current);
+      cliInputDecorationRef.current = null;
+      activeMainstreamCliRef.current = null;
+      refreshCliInputDecorationRef.current = () => undefined;
       if (resizeTimerRef.current) {
         window.clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;
@@ -759,6 +1133,14 @@ export function TerminalPane({
 
     xtermRef.current.options.theme = createXtermTheme(terminalTheme, emphasizeSearchSelection);
   }, [terminalTheme, emphasizeSearchSelection]);
+
+  useEffect(() => {
+    if (!xtermRef.current || xtermRef.current.options.scrollback === resolvedScrollbackLines) {
+      return;
+    }
+
+    xtermRef.current.options.scrollback = resolvedScrollbackLines;
+  }, [resolvedScrollbackLines]);
 
   useEffect(() => {
     const instance = xtermRef.current;

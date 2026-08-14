@@ -18,6 +18,7 @@ interface SshTerminalWorkspaceProps {
   connectionId: string;
   distribution?: string;
   isActive: boolean;
+  pageLevelPanels?: boolean;
   profileId: string;
   savedCommands: SavedSshCommand[];
   sessionKind?: "ssh" | "wsl";
@@ -303,6 +304,7 @@ export function SshTerminalWorkspace({
   connectionId,
   distribution = "",
   isActive,
+  pageLevelPanels = false,
   profileId,
   savedCommands,
   sessionKind = "ssh",
@@ -378,6 +380,7 @@ export function SshTerminalWorkspace({
       className={[
         "ssh-session-workspace",
         sessionKind === "wsl" ? "wsl-session-workspace" : "",
+        pageLevelPanels ? "page-level-panels" : "",
         compact ? "compact" : "",
         commandPanelVisible ? "commands-expanded" : "commands-hidden",
         statusPanelVisible ? "status-visible" : "status-hidden",

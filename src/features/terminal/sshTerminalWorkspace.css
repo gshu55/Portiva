@@ -78,6 +78,29 @@
   height: 100%;
 }
 
+.ssh-session-workspace.page-level-panels .ssh-terminal-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 30px minmax(0, 1fr);
+}
+
+.ssh-session-workspace.page-level-panels .ssh-terminal-panel-controls {
+  position: static;
+  grid-column: 1;
+  grid-row: 1;
+  justify-content: flex-end;
+  width: 100%;
+  height: 30px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-faint);
+  background: color-mix(in srgb, var(--panel-solid-bg) 82%, var(--terminal-bg));
+}
+
+.ssh-session-workspace.page-level-panels .ssh-terminal-stage > .ssh-terminal-grid {
+  grid-column: 1;
+  grid-row: 2;
+}
+
 .ssh-command-panel.ui-card {
   display: grid;
   grid-column: 2;

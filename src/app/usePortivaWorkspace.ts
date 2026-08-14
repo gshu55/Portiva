@@ -83,6 +83,15 @@ import {
 } from "../shared/mockData";
 import { defaultTerminalColors } from "../shared/terminalThemes";
 import { defaultAppBackground } from "../shared/appBackgrounds";
+import {
+  findTerminalPane,
+  maximumSshTerminalPanes,
+  removeTerminalFromLayout,
+  resolveTerminalSplitLayout,
+  splitTerminalLayout,
+  terminalPanesForTab,
+  updateTerminalSplitRatio,
+} from "../shared/terminalSplits";
 import type {
   ConnectionSummary,
   FileTransferSession,
@@ -97,12 +106,15 @@ import type {
   SerialProfile,
   AppSettings,
   TerminalSession,
+  TerminalSplitLayout,
+  TerminalSplitOrientation,
   TerminalSize,
   TerminalSnapshot,
   TunnelRule,
   TransferTask,
   ConnectionProfile,
   WorkspaceSessionTab,
+  WorkspaceTerminalPane,
   WslDiscovery,
 } from "../shared/types";
 
@@ -131,6 +143,8 @@ interface DetachedSessionTarget {
   parentConnectionId?: string;
   remotePath?: string;
   tabId: string;
+  additionalTerminalIds?: string[];
+  terminalLayout?: TerminalSplitLayout;
   terminalId?: string;
 }
 interface DetachedSessionTabResult {
@@ -428,7 +442,7 @@ export function usePortivaWorkspace() {
     );
     const affectedConnectionIds = new Set(affectedTabs.map((tab) => tab.connection.id));
     const affectedTerminalIds = new Set(
-      affectedTabs.flatMap((tab) => (tab.terminal ? [tab.terminal.id] : [])),
+      affectedTabs.flatMap((tab) => terminalPanesForTab(tab).map((pane) => pane.terminal.id)),
     );
     const activeWasAffected = Boolean(activeConnection && affectedConnectionIds.has(activeConnection.id));
 
@@ -438,8 +452,10 @@ export function usePortivaWorkspace() {
           ? {
               ...tab,
               connection: disconnectedConnection(tab.connection),
+              additionalTerminals: [],
               fileTransferSession: null,
               terminal: null,
+              terminalLayout: null,
               terminalSnapshot: null,
               terminalWorkingDirectory: null,
             }
@@ -635,21 +651,35 @@ export function usePortivaWorkspace() {
       throw new Error("缺少终端会话 ID");
     }
 
-    const [connection, terminal] = await Promise.all([
+    const terminalIds = [target.terminalId, ...(target.additionalTerminalIds ?? [])]
+      .filter((terminalId, index, values) => values.indexOf(terminalId) === index)
+      .slice(0, maximumSshTerminalPanes);
+    const [connection, terminals] = await Promise.all([
       connectionGet(target.connectionId),
-      terminalSession(target.terminalId),
+      Promise.all(terminalIds.map((terminalId) => terminalSession(terminalId))),
     ]);
 
-    if (terminal.connectionId !== connection.id) {
-      throw new Error(`终端 ${terminal.id} 不属于连接 ${connection.id}`);
+    for (const terminal of terminals) {
+      if (terminal.connectionId !== connection.id) {
+        throw new Error(`终端 ${terminal.id} 不属于连接 ${connection.id}`);
+      }
     }
 
-    let snapshot: TerminalSnapshot | null = null;
-    try {
-      snapshot = await terminalSnapshot(terminal.id);
-    } catch {
-      snapshot = null;
-    }
+    const snapshots = await Promise.all(
+      terminals.map(async (terminal) => {
+        try {
+          return await terminalSnapshot(terminal.id);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const terminal = terminals[0];
+    const snapshot = snapshots[0] ?? null;
+    const additionalTerminals: WorkspaceTerminalPane[] = terminals.slice(1).map((additionalTerminal, index) => ({
+      terminal: additionalTerminal,
+      terminalSnapshot: snapshots[index + 1] ?? null,
+    }));
 
     const restoredTab: WorkspaceSessionTab = {
       id: target.tabId || connection.id,
@@ -657,6 +687,8 @@ export function usePortivaWorkspace() {
       connection,
       restored: true,
       terminal,
+      additionalTerminals,
+      terminalLayout: target.terminalLayout ?? null,
       terminalSnapshot: snapshot,
     };
 
@@ -918,21 +950,43 @@ export function usePortivaWorkspace() {
       setSessionTabs((current) =>
         current.map((tab) => {
           const incomingSnapshot = tab.terminal ? snapshots.get(tab.terminal.id) : null;
-          if (!incomingSnapshot || !tab.terminal) {
-            return tab;
+          let changed = false;
+          let terminal = tab.terminal;
+          let terminalSnapshotValue = tab.terminalSnapshot;
+
+          if (incomingSnapshot && terminal) {
+            terminalSnapshotValue = mergeTerminalSnapshot(tab.terminalSnapshot, incomingSnapshot);
+            terminal = terminal.status !== terminalSnapshotValue.status
+              ? { ...terminal, status: terminalSnapshotValue.status }
+              : terminal;
+            changed = true;
           }
 
-          const snapshot = mergeTerminalSnapshot(tab.terminalSnapshot, incomingSnapshot);
-          return {
-            ...tab,
-            terminal: tab.terminal.status !== snapshot.status
-              ? {
-                  ...tab.terminal,
-                  status: snapshot.status,
-                }
-              : tab.terminal,
-            terminalSnapshot: snapshot,
-          };
+          const additionalTerminals = tab.additionalTerminals?.map((pane) => {
+            const paneSnapshot = snapshots.get(pane.terminal.id);
+            if (!paneSnapshot) {
+              return pane;
+            }
+
+            const mergedSnapshot = mergeTerminalSnapshot(pane.terminalSnapshot, paneSnapshot);
+            changed = true;
+            return {
+              ...pane,
+              terminal: pane.terminal.status !== mergedSnapshot.status
+                ? { ...pane.terminal, status: mergedSnapshot.status }
+                : pane.terminal,
+              terminalSnapshot: mergedSnapshot,
+            };
+          });
+
+          return changed
+            ? {
+                ...tab,
+                terminal,
+                terminalSnapshot: terminalSnapshotValue,
+                additionalTerminals,
+              }
+            : tab;
         }),
       );
 
@@ -1549,9 +1603,9 @@ export function usePortivaWorkspace() {
       }
 
       try {
-        if (reconnectTab.terminal) {
-          await terminalClose(reconnectTab.terminal.id).catch(() => undefined);
-        }
+        await Promise.all(
+          terminalPanesForTab(reconnectTab).map((pane) => terminalClose(pane.terminal.id).catch(() => undefined)),
+        );
 
         await connectionClose(reconnectTab.connection.id).catch(() => undefined);
         markConnectionTabsDisconnected(reconnectTab.connection.id);
@@ -1613,9 +1667,9 @@ export function usePortivaWorkspace() {
     let openedConnectionId: string | null = null;
 
     try {
-      if (reconnectTab.terminal) {
-        await terminalClose(reconnectTab.terminal.id).catch(() => undefined);
-      }
+      await Promise.all(
+        terminalPanesForTab(reconnectTab).map((pane) => terminalClose(pane.terminal.id).catch(() => undefined)),
+      );
 
       await connectionClose(reconnectTab.connection.id).catch(() => undefined);
       markConnectionTabsDisconnected(reconnectTab.connection.id);
@@ -2025,15 +2079,13 @@ export function usePortivaWorkspace() {
       return;
     }
 
+    const closingTerminalIds = terminalPanesForTab(closingTab).map((pane) => pane.terminal.id);
     try {
-      const closingTerminalId = closingTab.terminal?.id ?? null;
-      if (closingTerminalId) {
-        closingTerminalIdsRef.current.add(closingTerminalId);
+      for (const terminalId of closingTerminalIds) {
+        closingTerminalIdsRef.current.add(terminalId);
       }
 
-      if (closingTab.terminal) {
-        await terminalClose(closingTab.terminal.id);
-      }
+      await Promise.all(closingTerminalIds.map((terminalId) => terminalClose(terminalId)));
 
       await connectionClose(closingTab.connection.id);
 	      const remainingTabs = sessionTabs.filter(
@@ -2070,8 +2122,7 @@ export function usePortivaWorkspace() {
     } catch (error) {
       setWorkspaceMessage(`断开连接失败：${String(error)}`);
     } finally {
-      if (closingTab.terminal) {
-        const terminalId = closingTab.terminal.id;
+      for (const terminalId of closingTerminalIds) {
         window.setTimeout(() => {
           closingTerminalIdsRef.current.delete(terminalId);
         }, 5000);
@@ -2099,7 +2150,7 @@ export function usePortivaWorkspace() {
       const targetTerminal = terminalId
         ? activeTerminal?.id === terminalId
           ? activeTerminal
-          : sessionTabs.find((tab) => tab.terminal?.id === terminalId)?.terminal ?? null
+          : findTerminalPane(sessionTabs, terminalId)?.terminal ?? null
         : activeTerminal;
 
       if (!targetTerminal) {
@@ -2132,7 +2183,7 @@ export function usePortivaWorkspace() {
       const targetTerminal = terminalId
         ? activeTerminal?.id === terminalId
           ? activeTerminal
-          : sessionTabs.find((tab) => tab.terminal?.id === terminalId)?.terminal ?? null
+          : findTerminalPane(sessionTabs, terminalId)?.terminal ?? null
         : activeTerminal;
 
       if (!targetTerminal) {
@@ -2269,7 +2320,7 @@ export function usePortivaWorkspace() {
     const targetTerminal = terminalId
       ? activeTerminal?.id === terminalId
         ? activeTerminal
-        : sessionTabs.find((tab) => tab.terminal?.id === terminalId)?.terminal ?? null
+        : findTerminalPane(sessionTabs, terminalId)?.terminal ?? null
       : activeTerminal;
 
     if (!targetTerminal) {
@@ -2302,14 +2353,22 @@ export function usePortivaWorkspace() {
       const resizedTerminal = { ...targetTerminal, size: nextSize };
       await terminalResize(targetTerminal.id, nextSize);
       setSessionTabs((current) =>
-        current.map((tab) =>
-          tab.terminal?.id === targetTerminal.id
-            ? {
-                ...tab,
-                terminal: resizedTerminal,
-              }
-            : tab,
-        ),
+        current.map((tab) => {
+          if (tab.terminal?.id === targetTerminal.id) {
+            return { ...tab, terminal: resizedTerminal };
+          }
+
+          let changed = false;
+          const additionalTerminals = tab.additionalTerminals?.map((pane) => {
+            if (pane.terminal.id !== targetTerminal.id) {
+              return pane;
+            }
+
+            changed = true;
+            return { ...pane, terminal: resizedTerminal };
+          });
+          return changed ? { ...tab, additionalTerminals } : tab;
+        }),
       );
 
       if (activeTerminal?.id === targetTerminal.id) {
@@ -2323,6 +2382,161 @@ export function usePortivaWorkspace() {
       setWorkspaceMessage(`终端尺寸调整失败：${String(error)}`);
     }
   }, [activeTerminal, sessionTabs]);
+
+  const splitSshTerminal = useCallback(async (
+    tabId: string,
+    targetTerminalId: string,
+    orientation: TerminalSplitOrientation,
+  ) => {
+    const tab = sessionTabsRef.current.find((item) => (item.id ?? item.connection.id) === tabId);
+    if (!tab || tab.connection.transport?.kind !== "ssh" || !tab.terminal) {
+      setWorkspaceMessage("只有已连接的 SSH 终端支持页面内分屏。");
+      return;
+    }
+
+    const panes = terminalPanesForTab(tab);
+    if (panes.length >= maximumSshTerminalPanes) {
+      setWorkspaceMessage(`单个 SSH 页面最多显示 ${maximumSshTerminalPanes} 个终端。`);
+      return;
+    }
+    if (!panes.some((pane) => pane.terminal.id === targetTerminalId)) {
+      setWorkspaceMessage("未找到要拆分的 SSH 终端。");
+      return;
+    }
+
+    try {
+      const attached = await attachTerminalWithSnapshot(tab.connection.id);
+      const latestTab = sessionTabsRef.current.find((item) => (item.id ?? item.connection.id) === tabId);
+      if (!latestTab || !terminalPanesForTab(latestTab).some((pane) => pane.terminal.id === targetTerminalId)) {
+        await terminalClose(attached.terminal.id).catch(() => undefined);
+        return;
+      }
+
+      setSessionTabs((current) =>
+        current.map((item) => {
+          if ((item.id ?? item.connection.id) !== tabId) {
+            return item;
+          }
+
+          const layout = resolveTerminalSplitLayout(item);
+          if (!layout || terminalPanesForTab(item).length >= maximumSshTerminalPanes) {
+            return item;
+          }
+
+          return {
+            ...item,
+            additionalTerminals: [
+              ...(item.additionalTerminals ?? []),
+              {
+                terminal: attached.terminal,
+                terminalSnapshot: attached.snapshot,
+              },
+            ],
+            terminalLayout: splitTerminalLayout(
+              layout,
+              targetTerminalId,
+              attached.terminal.id,
+              orientation,
+            ),
+          };
+        }),
+      );
+      setWorkspaceMessage(
+        orientation === "columns" ? "已向右拆分 SSH 终端。" : "已向下拆分 SSH 终端。",
+      );
+    } catch (error) {
+      setWorkspaceMessage(`创建 SSH 分屏终端失败：${String(error)}`);
+      throw error;
+    }
+  }, [attachTerminalWithSnapshot]);
+
+  const closeSshTerminalPane = useCallback(async (tabId: string, terminalId: string) => {
+    const tab = sessionTabsRef.current.find((item) => (item.id ?? item.connection.id) === tabId);
+    if (!tab || tab.connection.transport?.kind !== "ssh") {
+      return;
+    }
+
+    const panes = terminalPanesForTab(tab);
+    if (panes.length <= 1) {
+      setWorkspaceMessage("SSH 页面至少保留一个终端；如需断开，请关闭标签。");
+      return;
+    }
+
+    const closingPane = panes.find((pane) => pane.terminal.id === terminalId);
+    if (!closingPane) {
+      return;
+    }
+
+    const closingPrimary = tab.terminal?.id === terminalId;
+    const promotedPane = closingPrimary ? tab.additionalTerminals?.[0] ?? null : null;
+    closingTerminalIdsRef.current.add(terminalId);
+    try {
+      await terminalClose(terminalId).catch((error) => {
+        if (!String(error).includes(`terminal not found: ${terminalId}`)) {
+          throw error;
+        }
+      });
+
+      setSessionTabs((current) =>
+        current.map((item) => {
+          if ((item.id ?? item.connection.id) !== tabId) {
+            return item;
+          }
+
+          const layout = resolveTerminalSplitLayout(item);
+          const terminalLayout = layout ? removeTerminalFromLayout(layout, terminalId) : null;
+          if (item.terminal?.id === terminalId && promotedPane) {
+            return {
+              ...item,
+              terminal: promotedPane.terminal,
+              terminalSnapshot: promotedPane.terminalSnapshot,
+              terminalWorkingDirectory: promotedPane.terminalWorkingDirectory,
+              additionalTerminals: (item.additionalTerminals ?? []).filter(
+                (pane) => pane.terminal.id !== promotedPane.terminal.id,
+              ),
+              terminalLayout,
+            };
+          }
+
+          return {
+            ...item,
+            additionalTerminals: (item.additionalTerminals ?? []).filter(
+              (pane) => pane.terminal.id !== terminalId,
+            ),
+            terminalLayout,
+          };
+        }),
+      );
+
+      if (closingPrimary && promotedPane && activeSessionTabId === tabId) {
+        setActiveTerminal(promotedPane.terminal);
+        setTerminalSnapshotState(promotedPane.terminalSnapshot);
+      }
+      setWorkspaceMessage("已关闭当前 SSH 分屏终端。");
+    } catch (error) {
+      setWorkspaceMessage(`关闭 SSH 分屏终端失败：${String(error)}`);
+      throw error;
+    } finally {
+      window.setTimeout(() => closingTerminalIdsRef.current.delete(terminalId), 5000);
+    }
+  }, [activeSessionTabId]);
+
+  const resizeSshTerminalSplit = useCallback((tabId: string, path: number[], ratio: number) => {
+    setSessionTabs((current) =>
+      current.map((tab) => {
+        if ((tab.id ?? tab.connection.id) !== tabId) {
+          return tab;
+        }
+
+        const layout = resolveTerminalSplitLayout(tab);
+        if (!layout) {
+          return tab;
+        }
+
+        return { ...tab, terminalLayout: updateTerminalSplitRatio(layout, path, ratio) };
+      }),
+    );
+  }, []);
 
   const refreshTerminalSnapshot = useCallback(async () => {
     if (!activeTerminal) {
@@ -3423,15 +3637,33 @@ export function usePortivaWorkspace() {
     setSessionTabs((current) => {
       let changed = false;
       const next = current.map((tab) => {
-        if (tab.terminal?.id !== terminalId || tab.terminalWorkingDirectory === normalizedPath) {
+        if (tab.terminal?.id === terminalId) {
+          if (tab.terminalWorkingDirectory === normalizedPath) {
+            return tab;
+          }
+
+          changed = true;
+          return {
+            ...tab,
+            terminalWorkingDirectory: normalizedPath,
+          };
+        }
+
+        let paneChanged = false;
+        const additionalTerminals = tab.additionalTerminals?.map((pane) => {
+          if (pane.terminal.id !== terminalId || pane.terminalWorkingDirectory === normalizedPath) {
+            return pane;
+          }
+
+          paneChanged = true;
+          return { ...pane, terminalWorkingDirectory: normalizedPath };
+        });
+        if (!paneChanged) {
           return tab;
         }
 
         changed = true;
-        return {
-          ...tab,
-          terminalWorkingDirectory: normalizedPath,
-        };
+        return { ...tab, additionalTerminals };
       });
 
       return changed ? next : current;
@@ -3518,6 +3750,7 @@ export function usePortivaWorkspace() {
     attachDetachedSessionTab,
     authenticateActiveSshPassword,
     closeSerialTerminal,
+    closeSshTerminalPane,
     closeActiveConnection,
     closeConnection,
     clearPendingKnownHost,
@@ -3561,10 +3794,12 @@ export function usePortivaWorkspace() {
     resolveTransferConflict,
     restoreDetachedSessionTab,
     resizeActiveTerminal,
+    resizeSshTerminalSplit,
     saveProfile,
     saveSettings,
     sendTerminalBytes,
     sendTerminalData,
+    splitSshTerminal,
     setActiveProfileId: selectActiveProfile,
     setLocalPath: changeLocalPath,
     setSelectedLocalEntry,

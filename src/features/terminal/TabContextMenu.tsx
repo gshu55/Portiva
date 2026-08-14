@@ -1,50 +1,56 @@
-import { connectionStatusLabel } from "../../shared/labels";
 import { Icon } from "../../shared/Icon";
 import type { WorkspaceSessionTab } from "../../shared/types";
 
 interface TabContextMenuProps {
+  isDetachedWindow?: boolean;
   position: {
     x: number;
     y: number;
   };
   tab: WorkspaceSessionTab;
   tabId: string;
-  canSplitRight?: boolean;
   onClose: () => void;
   onCloseTab: (tabId: string) => void;
   onOpenFileTransfer?: (connectionId: string, options?: { forceNew?: boolean }) => void;
   onOpenWindow: (tabId: string) => void;
   onReconnect: (tabId: string) => void;
-  onSplitRight?: (tabId: string) => void;
 }
 
 export function TabContextMenu({
-  canSplitRight = false,
+  isDetachedWindow = false,
   onClose,
   onCloseTab,
   onOpenFileTransfer,
   onOpenWindow,
   onReconnect,
-  onSplitRight,
   position,
   tab,
   tabId,
 }: TabContextMenuProps) {
-  const isFileTransferTab = (tab.kind ?? "terminal") === "file-transfer";
-  const isCustomPageTab = ["settings", "http-console", "host-dashboard", "network-scan"].includes(tab.kind ?? "terminal");
-  const status = isCustomPageTab
-    ? "页面"
-    : isFileTransferTab
-    ? "文件管理"
-    : tab.restored
-      ? "已恢复"
-      : connectionStatusLabel(tab.connection.status);
+  const tabKind = tab.kind ?? "terminal";
+  const isTerminalTab = tabKind === "terminal";
+  const isFileTransferTab = tabKind === "file-transfer";
+  const isCustomPageTab = [
+    "settings",
+    "http-console",
+    "host-dashboard",
+    "network-scan",
+    "wsl-files",
+  ].includes(tabKind);
+  const isSshTerminalTab = isTerminalTab && tab.connection.transport?.kind === "ssh";
+  const isSerialTerminalTab = isTerminalTab && tab.connection.transport?.kind === "serial";
   const reconnectTargetId = isCustomPageTab ? undefined : isFileTransferTab ? tab.parentConnectionId : tabId;
+  const canReconnect =
+    !isSshTerminalTab &&
+    !isSerialTerminalTab &&
+    Boolean(reconnectTargetId) &&
+    tab.connection.capabilities.reconnect;
   const canOpenFileTransfer =
-    !isCustomPageTab &&
-    !isFileTransferTab &&
+    isTerminalTab &&
     tab.connection.capabilities.sftp &&
-    tab.connection.capabilities.fileTransfer;
+    tab.connection.capabilities.fileTransfer &&
+    Boolean(onOpenFileTransfer);
+  const canMoveWindow = !isCustomPageTab || tabKind === "http-console";
 
   const runAction = (action: () => void) => {
     action();
@@ -58,51 +64,40 @@ export function TabContextMenu({
       role="menu"
       style={{ left: position.x, top: position.y }}
     >
-      <div className="tab-context-summary">
-        <strong>{tab.connection.title}</strong>
-        <span>{status}</span>
-      </div>
       <div className="tab-context-actions">
-        <button
-          disabled={!reconnectTargetId}
-          onClick={() => runAction(() => reconnectTargetId ? onReconnect(reconnectTargetId) : undefined)}
-          role="menuitem"
-          title="重连"
-          type="button"
-        >
-          <Icon name="rotate-ccw" />
-          <span>重连</span>
-        </button>
-        <button
-          disabled={!canOpenFileTransfer || !onOpenFileTransfer}
-          onClick={() => runAction(() => onOpenFileTransfer?.(tab.connection.id, { forceNew: true }))}
-          role="menuitem"
-          title={canOpenFileTransfer ? "打开 SFTP 文件管理" : "当前标签不支持 SFTP"}
-          type="button"
-        >
-          <Icon name="folder-open" />
-          <span>打开 SFTP</span>
-        </button>
-        <button
-          disabled={isCustomPageTab || !canSplitRight}
-          onClick={() => runAction(() => onSplitRight?.(tabId))}
-          role="menuitem"
-          title={!isCustomPageTab && canSplitRight ? "右侧分屏" : "当前标签不支持分屏"}
-          type="button"
-        >
-          <Icon name="columns-2" />
-          <span>右侧分屏</span>
-        </button>
-        <button
-          disabled={isCustomPageTab}
-          onClick={() => runAction(() => onOpenWindow(tabId))}
-          role="menuitem"
-          title={isCustomPageTab ? "应用页面标签不支持单独窗口" : "单独窗口"}
-          type="button"
-        >
-          <Icon name="external-link" />
-          <span>单独窗口</span>
-        </button>
+        {canReconnect ? (
+          <button
+            onClick={() => runAction(() => reconnectTargetId ? onReconnect(reconnectTargetId) : undefined)}
+            role="menuitem"
+            title={isFileTransferTab ? "重连所属 SSH" : "重连"}
+            type="button"
+          >
+            <Icon name="rotate-ccw" />
+            <span>{isFileTransferTab ? "重连 SSH" : "重连"}</span>
+          </button>
+        ) : null}
+        {canOpenFileTransfer ? (
+          <button
+            onClick={() => runAction(() => onOpenFileTransfer?.(tab.connection.id, { forceNew: true }))}
+            role="menuitem"
+            title="打开 SFTP 文件管理"
+            type="button"
+          >
+            <Icon name="folder-open" />
+            <span>打开 SFTP</span>
+          </button>
+        ) : null}
+        {canMoveWindow ? (
+          <button
+            onClick={() => runAction(() => onOpenWindow(tabId))}
+            role="menuitem"
+            title={isDetachedWindow ? "合并窗口" : "单独窗口"}
+            type="button"
+          >
+            <Icon name={isDetachedWindow ? "restore" : "external-link"} />
+            <span>{isDetachedWindow ? "合并窗口" : "单独窗口"}</span>
+          </button>
+        ) : null}
         <button
           className="danger-action"
           onClick={() => runAction(() => onCloseTab(tabId))}

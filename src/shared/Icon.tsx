@@ -42,6 +42,7 @@ export type IconName =
   | "plus"
   | "refresh-ccw"
   | "restore"
+  | "rows-2"
   | "rotate-ccw"
   | "save"
   | "search"
@@ -98,6 +99,7 @@ const iconPaths: Record<IconName, string[]> = {
   plus: ["M5 12h14", "M12 5v14"],
   "refresh-ccw": ["M3 2v6h6", "M21 12a9 9 0 0 0-15-6.7L3 8", "M21 22v-6h-6", "M3 12a9 9 0 0 0 15 6.7l3-2.7"],
   restore: ["M5 8h11v11H5z", "M8 8V5h11v11h-3"],
+  "rows-2": ["M4 4h16v16H4z", "M4 12h16"],
   "rotate-ccw": ["M3 12a9 9 0 1 0 3-6.7L3 8", "M3 3v5h5"],
   save: ["M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z", "M17 21v-8H7v8", "M7 3v5h8"],
   search: ["M21 21l-4.35-4.35", "M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"],

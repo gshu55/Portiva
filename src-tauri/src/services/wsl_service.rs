@@ -199,7 +199,7 @@ fn collect_wsl_host_overview_for_platform(distribution: &str) -> Result<WslHostO
             distribution,
             "--exec",
             "sh",
-            "-lc",
+            "-c",
             WSL_HOST_OVERVIEW_COMMAND,
         ],
         WSL_HOST_OVERVIEW_TIMEOUT,
@@ -338,28 +338,70 @@ fn discover_wsl_for_platform() -> WslDiscovery {
 }
 
 fn decode_wsl_output(bytes: &[u8]) -> String {
-    let looks_like_utf16_le = bytes.starts_with(&[0xff, 0xfe])
-        || bytes
-            .iter()
-            .skip(1)
-            .step_by(2)
-            .take(32)
-            .any(|byte| *byte == 0);
+    if let Ok(output) = std::str::from_utf8(bytes) {
+        if !output.contains('\0') {
+            return output.trim_start_matches('\u{feff}').to_string();
+        }
+    }
 
-    if !looks_like_utf16_le {
+    if !looks_like_utf16_le(bytes) {
         return String::from_utf8_lossy(bytes)
             .trim_start_matches('\u{feff}')
             .to_string();
     }
 
-    let units = bytes
+    if let Some(boundary) = find_utf16_le_to_utf8_boundary(bytes) {
+        let mut output = decode_utf16_le(&bytes[..boundary]);
+        output.push_str(&String::from_utf8_lossy(&bytes[boundary..]));
+        return output.trim_matches('\0').to_string();
+    }
+
+    decode_utf16_le(bytes).trim_matches('\0').to_string()
+}
+
+fn looks_like_utf16_le(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xff, 0xfe])
+        || bytes
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .take(32)
+            .any(|byte| *byte == 0)
+}
+
+fn find_utf16_le_to_utf8_boundary(bytes: &[u8]) -> Option<usize> {
+    (2..bytes.len()).step_by(2).find(|boundary| {
+        let prefix = &bytes[..*boundary];
+        let suffix = &bytes[*boundary..];
+        prefix.ends_with(&[b'\n', 0])
+            && !suffix.is_empty()
+            && !suffix.contains(&0)
+            && std::str::from_utf8(suffix)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+            && decode_utf16_le_strict(prefix).is_some()
+    })
+}
+
+fn decode_utf16_le(bytes: &[u8]) -> String {
+    let units = utf16_le_units(bytes);
+    String::from_utf16_lossy(&units)
+        .trim_start_matches('\u{feff}')
+        .to_string()
+}
+
+fn decode_utf16_le_strict(bytes: &[u8]) -> Option<String> {
+    String::from_utf16(&utf16_le_units(bytes))
+        .ok()
+        .map(|value| value.trim_start_matches('\u{feff}').to_string())
+}
+
+fn utf16_le_units(bytes: &[u8]) -> Vec<u16> {
+    bytes
         .chunks_exact(2)
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
         .skip_while(|unit| *unit == 0xfeff)
-        .collect::<Vec<_>>();
-    String::from_utf16_lossy(&units)
-        .trim_matches('\0')
-        .to_string()
+        .collect()
 }
 
 fn resolve_wsl_host_overview_output(
@@ -388,12 +430,16 @@ fn wsl_command_error_detail(stderr: &str, stdout: &str, fallback: &str) -> Strin
             output
                 .lines()
                 .map(str::trim)
-                .filter(|line| !line.is_empty() && !is_wsl_localhost_proxy_warning(line))
+                .filter(|line| !line.is_empty() && !is_ignorable_wsl_warning(line))
                 .collect::<Vec<_>>()
                 .join("\n")
         })
         .find(|detail| !detail.is_empty())
         .unwrap_or_else(|| fallback.to_string())
+}
+
+fn is_ignorable_wsl_warning(line: &str) -> bool {
+    is_wsl_localhost_proxy_warning(line) || is_non_interactive_mesg_warning(line)
 }
 
 fn is_wsl_localhost_proxy_warning(line: &str) -> bool {
@@ -406,6 +452,12 @@ fn is_wsl_localhost_proxy_warning(line: &str) -> bool {
         && line.contains("不支持 localhost 代理");
 
     english_warning || chinese_warning
+}
+
+fn is_non_interactive_mesg_warning(line: &str) -> bool {
+    let normalized = line.trim().to_lowercase();
+    normalized == "mesg: ttyname failed: inappropriate ioctl for device"
+        || normalized.starts_with("mesg: cannot open /dev/tty")
 }
 
 fn parse_wsl_distributions(output: &str) -> Vec<WslDistributionInfo> {
@@ -573,6 +625,22 @@ mod tests {
     }
 
     #[test]
+    fn decodes_utf16_le_wsl_warning_followed_by_utf8_linux_output() {
+        let warning = "wsl: 检测到 localhost 代理配置，但未镜像到 WSL。NAT 模式下的 WSL 不支持 localhost 代理。\r\n";
+        let linux_warning = "mesg: ttyname failed: Inappropriate ioctl for device\n";
+        let mut bytes = warning
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        bytes.extend_from_slice(linux_warning.as_bytes());
+
+        assert_eq!(
+            decode_wsl_output(&bytes),
+            format!("{warning}{linux_warning}")
+        );
+    }
+
+    #[test]
     fn recognizes_localized_states() {
         let distributions = parse_wsl_distributions("* Ubuntu  正在运行  2\r\n  Debian  已停止  2");
 
@@ -631,14 +699,19 @@ mod tests {
     #[test]
     fn removes_localhost_proxy_warning_without_hiding_actual_wsl_error() {
         let warning = "wsl: A localhost proxy configuration was detected but not mirrored into WSL. WSL in NAT mode does not support localhost proxies.";
-        let stderr = format!("{warning}\n/bin/sh: awk: not found");
+        let mesg_warning = "mesg: ttyname failed: Inappropriate ioctl for device";
+        let stderr = format!("{warning}\n{mesg_warning}\n/bin/sh: awk: not found");
 
         assert_eq!(
             wsl_command_error_detail(&stderr, "", "WSL command failed"),
             "/bin/sh: awk: not found"
         );
         assert_eq!(
-            wsl_command_error_detail(warning, "", "WSL command failed"),
+            wsl_command_error_detail(
+                &format!("{warning}\n{mesg_warning}"),
+                "",
+                "WSL command failed"
+            ),
             "WSL command failed"
         );
     }

@@ -244,7 +244,11 @@ export function ConnectionProfileDialog({
       <section
         aria-label={title}
         aria-modal="true"
-        className={["profile-dialog", mode === "edit" ? "edit-mode" : ""].filter(Boolean).join(" ")}
+        className={[
+          "profile-dialog",
+          mode === "edit" ? "edit-mode" : "create-mode",
+          draft.type === "ssh" || draft.type === "sftp" ? "ssh-family-dialog" : "",
+        ].filter(Boolean).join(" ")}
         role="dialog"
         onMouseDown={(event) => event.stopPropagation()}
       >

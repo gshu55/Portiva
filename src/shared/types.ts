@@ -276,6 +276,27 @@ export interface TerminalSnapshot {
   outputChunk?: string;
 }
 
+export type TerminalSplitOrientation = "columns" | "rows";
+
+export type TerminalSplitLayout =
+  | {
+      type: "terminal";
+      terminalId: string;
+    }
+  | {
+      type: "split";
+      orientation: TerminalSplitOrientation;
+      ratio: number;
+      first: TerminalSplitLayout;
+      second: TerminalSplitLayout;
+    };
+
+export interface WorkspaceTerminalPane {
+  terminal: TerminalSession;
+  terminalSnapshot: TerminalSnapshot | null;
+  terminalWorkingDirectory?: string | null;
+}
+
 export interface SerialRxEvent {
   terminalId: string;
   seq: number;
@@ -333,6 +354,8 @@ export interface WorkspaceSessionTab {
   parentConnectionId?: string;
   restored?: boolean;
   terminal: TerminalSession | null;
+  additionalTerminals?: WorkspaceTerminalPane[];
+  terminalLayout?: TerminalSplitLayout | null;
   terminalSnapshot: TerminalSnapshot | null;
   terminalWorkingDirectory?: string | null;
 }
