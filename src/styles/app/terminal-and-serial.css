@@ -1,0 +1,1598 @@
+.terminal-pane {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-2, 8px) var(--space-2-5, 10px);
+  border: 0;
+  background: var(--terminal-bg);
+}
+
+.serial-terminal-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--workspace-bg);
+}
+
+.serial-control-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.serial-control-main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--border-faint) 82%, transparent);
+  background: color-mix(in srgb, var(--workspace-bg) 88%, var(--panel-solid-bg));
+}
+
+.serial-main-pane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.serial-session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2-5, 10px);
+  min-width: 0;
+  min-height: 36px;
+  padding: var(--space-1-5, 6px) var(--space-2, 8px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-faint) 72%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 42%),
+    color-mix(in srgb, var(--app-bg) 88%, var(--panel-solid-bg));
+}
+
+.serial-link-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.serial-port-mark {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 46%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  border-radius: var(--tag-radius);
+}
+
+.serial-link-identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--app-font-size-13, 13px);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serial-link-identity span:not(.serial-port-mark),
+.serial-chip-row span {
+  color: var(--text-muted);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  letter-spacing: 0;
+}
+
+.serial-chip-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.serial-chip-row span {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  background: color-mix(in srgb, var(--panel-solid-bg) 58%, transparent);
+  white-space: nowrap;
+}
+
+.serial-chip-row .serial-status-chip {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent);
+}
+
+.serial-command-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+  height: 276px;
+  max-height: 276px;
+  overflow: hidden;
+  padding: var(--space-2, 8px);
+  border-top: 1px solid color-mix(in srgb, var(--border-faint) 82%, transparent);
+  background: color-mix(in srgb, var(--toolbar-bg) 74%, var(--workspace-bg));
+}
+
+.serial-send-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+}
+
+.serial-send-toolbar > span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serial-send-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px 88px 112px 150px 78px 30px;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  width: 100%;
+  min-width: 618px;
+}
+
+.serial-config-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: min-content;
+  align-items: stretch;
+  align-content: start;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+  overflow: auto;
+  padding: var(--space-2, 8px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-faint) 82%, transparent);
+  background: color-mix(in srgb, var(--panel-solid-bg) 46%, var(--workspace-bg));
+}
+
+.serial-config-panel label {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.serial-config-panel .serial-port-config-field {
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+.serial-config-panel label > span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-10, 10px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serial-config-panel .serial-port-config-field > span:first-child {
+  width: 56px;
+  min-width: 56px;
+  height: auto;
+  line-height: 1.2;
+}
+
+.serial-config-panel input,
+.serial-config-panel select {
+  width: 100%;
+  height: 26px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--field-bg) 82%, var(--workspace-bg));
+  color: var(--text-strong);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.serial-config-panel input {
+  padding: 0 var(--space-1-5, 6px);
+}
+
+.serial-config-panel select {
+  padding: 0 5px;
+}
+
+.serial-port-config-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: stretch;
+  gap: var(--space-1-5, 6px);
+  width: 100%;
+  height: 28px;
+  min-width: 0;
+  overflow: visible;
+  color: inherit;
+  font-size: inherit;
+  white-space: normal;
+}
+
+.serial-port-config-control .serial-port-select {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+}
+
+.serial-port-config-control .serial-port-select .ui-select-trigger {
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  border-color: color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--field-bg) 82%, var(--workspace-bg));
+  color: var(--text-strong);
+  padding: 0 7px;
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  font-weight: 500;
+}
+
+.serial-port-config-control .serial-port-select .ui-select-menu {
+  right: auto;
+  width: max(100%, 190px);
+  max-height: 180px;
+}
+
+.serial-port-config-control .serial-port-select .ui-select-option {
+  min-height: 28px;
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.serial-port-config-control select {
+  height: 26px;
+  max-height: 26px;
+}
+
+.app-shell .serial-port-config-control > .ui-icon-button {
+  --icon-button-size: 28px;
+  display: grid;
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--button-bg) 82%, var(--workspace-bg));
+  color: var(--text-main);
+  padding: 0;
+  line-height: 0;
+  cursor: pointer;
+}
+
+.app-shell .serial-port-config-control > .ui-icon-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.serial-config-check {
+  display: inline-flex !important;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px !important;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--button-muted-bg) 72%, var(--workspace-bg));
+}
+
+.serial-config-check input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.serial-config-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.serial-config-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 52px;
+  height: 26px;
+  min-width: 52px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--button-bg) 82%, var(--workspace-bg));
+  color: var(--text-main);
+  padding: 0 var(--space-2, 8px);
+  cursor: pointer;
+}
+
+.serial-config-actions button {
+  width: 100%;
+  height: 34px;
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 18%, var(--button-bg));
+  color: var(--text-strong);
+  font-weight: 700;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.serial-config-actions .serial-open-action {
+  background: color-mix(in srgb, var(--accent) 24%, var(--button-bg));
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-strong));
+}
+
+.serial-config-actions .serial-close-action {
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--border-subtle));
+  background: color-mix(in srgb, var(--danger) 16%, var(--button-bg));
+  color: color-mix(in srgb, var(--danger) 78%, var(--text-strong));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.app-shell .serial-config-actions button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 30%, var(--button-bg));
+  color: var(--text-strong);
+}
+
+.app-shell .serial-config-actions .serial-close-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 72%, var(--border-subtle));
+  background: color-mix(in srgb, var(--danger) 24%, var(--button-bg));
+}
+
+.serial-send-mode {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 88px;
+  height: 30px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  border-radius: var(--control-radius, 6px);
+  background: color-mix(in srgb, var(--button-muted-bg) 76%, var(--workspace-bg));
+}
+
+.serial-send-mode::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  width: 50%;
+  border-radius: var(--control-radius) 0 0 var(--control-radius);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
+  content: "";
+  transition: transform 0.16s ease, border-radius 0.16s ease;
+}
+
+.serial-send-mode.mode-hex::before {
+  border-radius: 0 var(--control-radius) var(--control-radius) 0;
+  transform: translateX(100%);
+}
+
+.serial-send-input {
+  width: 100%;
+  height: 30px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--field-bg) 82%, var(--workspace-bg));
+  color: var(--text-strong);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-12, 12px);
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.serial-send-ending-select .ui-select-trigger {
+  width: 112px;
+  height: 30px;
+  min-height: 30px;
+  max-height: 30px;
+  padding: 0 7px;
+  border-color: color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--field-bg) 82%, var(--workspace-bg));
+  color: var(--text-strong);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.serial-send-slots {
+  display: grid;
+  grid-auto-rows: min-content;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding-right: var(--space-0-5, 2px);
+}
+
+.serial-send-input {
+  padding: 0 9px;
+  line-height: 30px;
+}
+
+.serial-send-index {
+  display: grid;
+  width: 28px;
+  min-width: 28px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  border-radius: var(--control-radius, 6px);
+  background: color-mix(in srgb, var(--button-muted-bg) 70%, var(--workspace-bg));
+  color: var(--text-muted);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.serial-send-submit,
+.serial-send-delete,
+.serial-monitor-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1-5, 6px);
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--button-bg) 82%, var(--workspace-bg));
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.serial-send-mode button {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0 var(--space-2, 8px);
+  border: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.serial-send-mode button:first-child {
+  border-radius: var(--control-radius) 0 0 var(--control-radius);
+}
+
+.serial-send-mode button:last-child {
+  border-right: 0;
+  border-radius: 0 var(--control-radius) var(--control-radius) 0;
+}
+
+.serial-send-mode button.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.app-shell .serial-send-mode button:hover:not(:disabled) {
+  border-color: transparent;
+  background-color: transparent;
+  color: var(--text-strong);
+}
+
+.app-shell .serial-send-mode button.active:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.serial-send-ending-select,
+.serial-send-ending-select .ui-select-trigger {
+  width: 112px;
+  min-width: 112px;
+  max-width: 112px;
+  box-sizing: border-box;
+}
+
+.serial-send-submit {
+  width: 78px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
+.serial-send-delete {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+
+.app-shell .serial-port-config-control button:has(> .icon:only-child) {
+  --icon-button-size: 26px;
+}
+
+.serial-add-send-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1-5, 6px);
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--button-bg) 82%, var(--workspace-bg));
+  color: var(--accent);
+  padding: 0 var(--space-2-5, 10px);
+  cursor: pointer;
+}
+
+.serial-timed-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-1, 4px);
+  width: 150px;
+  height: 30px;
+  min-width: 0;
+  padding: 0 var(--space-1-5, 6px);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  border-radius: var(--control-radius, 6px);
+  background: color-mix(in srgb, var(--button-muted-bg) 76%, var(--workspace-bg));
+  color: var(--text-main);
+  font-size: var(--app-font-size-12, 12px);
+  white-space: nowrap;
+}
+
+.serial-timed-send.active {
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: var(--accent-bg);
+  color: var(--text-strong);
+}
+
+.serial-timed-send input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.serial-timed-send input[type="number"] {
+  width: 66px;
+  height: 22px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  border-radius: var(--radius-sm, 4px);
+  background: color-mix(in srgb, var(--field-bg) 82%, var(--workspace-bg));
+  color: var(--text-strong);
+  padding: 0 5px;
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.serial-send-error {
+  grid-column: auto;
+  min-width: 0;
+  color: var(--danger);
+  font-size: var(--app-font-size-11, 11px);
+  line-height: 1.35;
+}
+
+.serial-monitor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+}
+
+.serial-monitor-actions button {
+  width: 30px;
+  padding: 0;
+}
+
+.serial-monitor-actions button.active {
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.serial-toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--button-muted-bg) 76%, var(--workspace-bg));
+  color: var(--text-main);
+  font-size: var(--app-font-size-12, 12px);
+  white-space: nowrap;
+}
+
+.serial-toggle-pill input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.serial-send-history {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-items: stretch;
+  align-content: stretch;
+  gap: var(--space-2, 8px);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-2, 8px);
+  border-top: 1px solid color-mix(in srgb, var(--border-faint) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-solid-bg) 54%, transparent), transparent 180px),
+    color-mix(in srgb, var(--app-bg) 88%, var(--panel-solid-bg));
+}
+
+.serial-send-history-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 26px;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  max-width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  overflow: hidden;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.app-shell .serial-send-history-header button {
+  --icon-button-size: 26px;
+  display: grid;
+  width: 26px;
+  min-width: 26px;
+  max-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  max-height: 26px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 76%, transparent);
+  background: color-mix(in srgb, var(--button-bg) 72%, var(--workspace-bg));
+  color: var(--text-muted);
+  padding: 0;
+  cursor: pointer;
+}
+
+.app-shell .serial-send-history-header button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
+  background: var(--danger-bg);
+  color: var(--text-strong);
+}
+
+.app-shell .serial-send-history-header button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.serial-send-history-header strong {
+  color: var(--text-main);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 700;
+}
+
+.serial-send-history-list {
+  display: grid;
+  grid-auto-rows: min-content;
+  align-content: start;
+  gap: var(--space-1-5, 6px);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.serial-send-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.serial-history-restore {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  min-height: 30px;
+  padding: var(--space-1, 4px) 7px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  background: color-mix(in srgb, var(--button-muted-bg) 68%, var(--workspace-bg));
+  color: var(--text-main);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .serial-send-history-header button:has(> .icon:only-child) {
+  --icon-button-size: 26px;
+}
+
+.serial-history-delete {
+  display: grid;
+  box-sizing: border-box;
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  background: color-mix(in srgb, var(--button-muted-bg) 68%, var(--workspace-bg));
+  color: var(--text-muted);
+  padding: 0;
+  cursor: pointer;
+}
+
+.serial-history-delete:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 48%, transparent);
+  background: var(--danger-bg);
+  color: var(--text-strong);
+}
+
+.serial-history-delete .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.serial-history-mode,
+.serial-history-count {
+  color: var(--text-muted);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-10, 10px);
+  white-space: nowrap;
+}
+
+.serial-history-mode {
+  color: var(--accent);
+}
+
+.serial-history-content {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serial-traffic-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--border-faint) 82%, transparent);
+  background: var(--workspace-bg);
+}
+
+.serial-traffic-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+  min-height: 40px;
+  padding: 5px var(--space-2, 8px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-faint) 82%, transparent);
+  background: color-mix(in srgb, var(--toolbar-bg) 76%, var(--workspace-bg));
+}
+
+.serial-traffic-toolbar strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: var(--app-font-size-12, 12px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serial-traffic-log {
+  position: relative;
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2, 8px);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-solid-bg) 18%, transparent), transparent 140px),
+    var(--app-bg);
+}
+
+.serial-traffic-virtual {
+  position: relative;
+  min-width: 0;
+}
+
+.serial-traffic-window {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: grid;
+  align-content: start;
+  grid-auto-rows: min-content;
+  min-width: 0;
+  will-change: transform;
+}
+
+.serial-traffic-row {
+  display: grid;
+  grid-template-columns: 94px 46px 40px 46px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 5px;
+  row-gap: 3px;
+  min-width: 0;
+  padding: 5px var(--space-1-5, 6px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-faint) 72%, transparent);
+  color: var(--text-main);
+  contain: layout paint;
+}
+
+.serial-traffic-row.tx {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.serial-traffic-row.rx {
+  background: color-mix(in srgb, var(--field-bg) 20%, transparent);
+}
+
+.serial-traffic-time,
+.serial-traffic-direction,
+.serial-traffic-mode,
+.serial-traffic-size {
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.serial-traffic-time {
+  color: var(--text-muted);
+}
+
+.serial-traffic-direction {
+  justify-self: start;
+  min-width: 38px;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 68%, transparent);
+  padding: 0 5px;
+  text-align: center;
+}
+
+.serial-traffic-row.tx .serial-traffic-direction {
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.serial-traffic-row.rx .serial-traffic-direction {
+  color: color-mix(in srgb, var(--text-strong) 82%, var(--text-muted));
+}
+
+.serial-traffic-mode,
+.serial-traffic-size {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.serial-traffic-mode {
+  text-align: center;
+}
+
+.serial-traffic-size {
+  justify-self: start;
+  text-align: left;
+}
+
+.serial-traffic-row pre {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  contain: content;
+  color: var(--text-strong);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-12, 12px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.serial-traffic-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+  pointer-events: none;
+}
+
+@media (max-width: 980px) {
+  .serial-control-layout {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+
+@media (max-width: 760px) {
+  .serial-session-bar,
+  .serial-command-strip {
+    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .serial-session-bar {
+    flex-direction: column;
+  }
+
+  .serial-control-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(240px, auto);
+  }
+
+  .serial-control-main {
+    border-top: 1px solid color-mix(in srgb, var(--border-faint) 82%, transparent);
+    border-left: 0;
+  }
+
+  .serial-traffic-panel {
+    border-right: 0;
+  }
+
+  .serial-config-panel {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .serial-config-actions {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .serial-chip-row {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .serial-monitor-actions {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .serial-send-form {
+    align-items: center;
+  }
+
+  .serial-send-history-list {
+    display: grid;
+    align-items: stretch;
+    padding-bottom: 1px;
+    overflow-x: hidden;
+  }
+
+  .serial-send-history-item {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .serial-traffic-row {
+    grid-template-columns: 94px 46px minmax(0, 1fr);
+  }
+
+  .serial-traffic-row pre {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .serial-config-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .serial-send-form {
+    align-items: center;
+  }
+
+  .serial-send-error {
+    grid-column: auto;
+  }
+
+}
+
+.terminal-context-menu {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  width: 210px;
+  min-width: 210px;
+  max-width: 210px;
+  box-sizing: border-box;
+  gap: var(--space-1, 4px);
+  padding: var(--space-1-5, 6px);
+  border: 1px solid var(--border-subtle);
+  background: var(--panel-bg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.36);
+}
+
+.terminal-context-menu button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  justify-self: stretch;
+  gap: var(--space-2, 8px);
+  width: 100%;
+  max-width: 100%;
+  height: 30px;
+  min-height: 30px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-main);
+  padding: 0 var(--space-2, 8px);
+  overflow: hidden;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.terminal-context-menu button .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.terminal-context-menu button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-context-menu button:hover {
+  border-color: var(--border-subtle);
+  background: var(--accent-bg);
+  color: var(--text-strong);
+}
+
+.terminal-paste-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 32;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.terminal-paste-confirm {
+  display: grid;
+  grid-template-rows: auto minmax(180px, 34vh) auto;
+  gap: var(--space-2-5, 10px);
+  width: min(680px, 100%);
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--panel-bg) 96%, var(--terminal-bg));
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+  padding: var(--space-3, 12px);
+}
+
+.terminal-paste-confirm header,
+.terminal-paste-confirm footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2-5, 10px);
+  min-width: 0;
+}
+
+.terminal-paste-confirm header div {
+  display: grid;
+  gap: var(--space-0-5, 2px);
+  min-width: 0;
+}
+
+.terminal-paste-confirm strong {
+  color: var(--text-strong);
+  font-size: var(--app-font-size-13, 13px);
+}
+
+.terminal-paste-confirm span {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.terminal-paste-confirm textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  resize: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--control-radius, 6px);
+  background: color-mix(in srgb, var(--terminal-bg) 92%, #000);
+  color: var(--text-strong);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-12, 12px);
+  line-height: 1.5;
+  outline: none;
+  padding: var(--space-2-5, 10px);
+  white-space: pre;
+}
+
+.terminal-paste-confirm textarea:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.terminal-paste-confirm footer {
+  justify-content: end;
+}
+
+.terminal-paste-confirm footer button {
+  min-width: 82px;
+  height: 30px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--control-radius, 6px);
+  background: var(--button-bg);
+  color: var(--text-main);
+  padding: 0 var(--space-2-5, 10px);
+  cursor: pointer;
+}
+
+.terminal-paste-confirm footer button:last-child {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border-subtle));
+  background: var(--accent-bg);
+  color: var(--text-strong);
+}
+
+.terminal-paste-confirm footer button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.terminal-search-bar {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 28;
+  display: grid;
+  grid-template-columns: minmax(150px, 240px) 32px 32px 64px 28px 28px 28px;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  max-width: min(620px, calc(100% - 28px));
+  height: 38px;
+  padding: var(--space-1, 4px);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 88%, transparent);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--panel-bg) 94%, var(--terminal-bg));
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.36);
+}
+
+.terminal-search-bar input {
+  width: 100%;
+  height: 28px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  border-radius: var(--control-radius, 6px);
+  background: color-mix(in srgb, var(--terminal-bg) 88%, #000);
+  color: var(--text-strong);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-12, 12px);
+  outline: none;
+  padding: 0 var(--space-2, 8px);
+}
+
+.terminal-search-bar input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.terminal-search-count {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-search-bar button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius, 6px);
+  background: transparent;
+  color: var(--text-main);
+  padding: 0;
+  cursor: pointer;
+}
+
+.terminal-search-bar button .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.terminal-search-bar .terminal-search-option {
+  width: 32px;
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.terminal-search-bar .terminal-search-option.is-active {
+  border-color: color-mix(in srgb, var(--accent) 76%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-bg) 74%, var(--panel-bg));
+  color: var(--text-strong);
+}
+
+.terminal-search-bar button:hover:not(:disabled) {
+  border-color: var(--border-subtle);
+  background: var(--accent-bg);
+  color: var(--text-strong);
+}
+
+.terminal-search-bar button:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  outline: none;
+}
+
+.terminal-search-bar button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.terminal-tui-scrollback-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 27;
+  display: flex;
+  align-items: center;
+  width: min(660px, calc(100% - 28px));
+  min-width: 0;
+  min-height: 38px;
+  gap: 9px;
+  padding: 5px 5px 5px var(--space-2-5, 10px);
+  border: 1px solid color-mix(in srgb, var(--warning) 42%, var(--border-subtle));
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--panel-bg) 94%, #332313);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.34);
+  color: var(--text-main);
+  transform: translateX(-50%);
+}
+
+.terminal-tui-scrollback-hint-indicator {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.terminal-tui-scrollback-hint-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: var(--space-2, 8px);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.terminal-tui-scrollback-hint-copy strong {
+  flex: 0 0 auto;
+  color: var(--text-strong);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 700;
+}
+
+.terminal-tui-scrollback-hint-copy span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+  text-overflow: ellipsis;
+}
+
+.terminal-tui-scrollback-hint button {
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius, 6px);
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.terminal-tui-scrollback-hint button:hover,
+.terminal-tui-scrollback-hint button:focus-visible {
+  border-color: color-mix(in srgb, var(--warning) 44%, var(--border-subtle));
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--text-strong);
+  outline: none;
+}
+
+.terminal-tui-scrollback-hint-action {
+  padding: 0 9px;
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.terminal-tui-scrollback-hint-close {
+  display: grid;
+  width: 28px;
+  place-items: center;
+  padding: 0;
+}
+
+.terminal-tui-scrollback-hint-close .icon {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 560px) {
+  .terminal-tui-scrollback-hint {
+    left: 10px;
+    right: 10px;
+    width: auto;
+    transform: none;
+  }
+
+  .terminal-tui-scrollback-hint-copy strong {
+    display: none;
+  }
+
+  .terminal-search-bar {
+    left: 10px;
+    right: 10px;
+    grid-template-columns: minmax(0, 1fr) 30px 30px 50px 28px 28px 28px;
+    max-width: none;
+  }
+
+  .terminal-search-count {
+    font-size: var(--app-font-size-10, 10px);
+  }
+
+  .terminal-search-bar .terminal-search-option {
+    width: 30px;
+  }
+}
+
+.terminal-pane pre {
+  display: grid;
+  align-content: start;
+  gap: 0;
+  margin: 0;
+  padding: var(--space-4, 16px);
+  overflow: auto;
+  color: var(--terminal-fg);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-13, 13px);
+  white-space: pre-wrap;
+  outline: none;
+  cursor: text;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.xterm-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.xterm-host .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.xterm-host .xterm-viewport,
+.xterm-host .xterm-screen {
+  width: 100% !important;
+}
+
+.xterm-host .xterm-viewport {
+  overflow-x: hidden !important;
+  background-color: var(--terminal-bg) !important;
+}
+
+.terminal-pane pre:focus {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.terminal-pane pre span {
+  min-height: 1.45em;
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  min-height: 1.2em;
+  background: var(--terminal-fg);
+  animation: terminal-cursor-blink 1s steps(2, start) infinite;
+}
+
+@keyframes terminal-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.terminal-pane mark {
+  background: color-mix(in srgb, var(--accent-strong) 62%, transparent);
+  color: #101317;
+  padding: 0 1px;
+}
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 16px);
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding-right: var(--space-1, 4px);
+}
+
+.inspector .panel {
+  flex: 0 0 auto;
+}
+
+.capability-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  padding: var(--space-3-5, 14px);
+}
+
+.capability-list span {
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  padding: 5px var(--space-2, 8px);
+  color: var(--accent);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.protocol-matrix {
+  display: grid;
+}
+
+.protocol-grid {
+  display: grid;
+  gap: var(--space-2-5, 10px);
+  padding: var(--space-3-5, 14px);
+}
+
+.protocol-card {
+  display: grid;
+  gap: var(--space-2, 8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--panel-solid-bg);
+  padding: var(--space-2-5, 10px);
+}
+
+.protocol-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2-5, 10px);
+}
+
+.protocol-card-title strong {
+  color: var(--text-strong);
+}
+
+.protocol-card-title span {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+  text-transform: uppercase;
+}
+
+.protocol-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1-5, 6px);
+}
+
+.protocol-caps small {
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  padding: 3px var(--space-1-5, 6px);
+}
+
+.file-list {
+  display: grid;
+  gap: 9px;
+  max-height: 190px;
+  overflow: auto;
+  padding: var(--space-3-5, 14px);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.file-list button {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--panel-solid-bg);
+  color: var(--text-soft);
+  padding: var(--space-2, 8px) var(--space-2-5, 10px);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.file-list button.active {
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--button-muted-bg));
+  color: var(--text-strong);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.file-list button:disabled {
+  cursor: not-allowed;
+}
+

@@ -294,6 +294,7 @@ export type TerminalSplitLayout =
 export interface WorkspaceTerminalPane {
   terminal: TerminalSession;
   terminalSnapshot: TerminalSnapshot | null;
+  terminalTitle?: string | null;
   terminalWorkingDirectory?: string | null;
 }
 
@@ -357,6 +358,7 @@ export interface WorkspaceSessionTab {
   additionalTerminals?: WorkspaceTerminalPane[];
   terminalLayout?: TerminalSplitLayout | null;
   terminalSnapshot: TerminalSnapshot | null;
+  terminalTitle?: string | null;
   terminalWorkingDirectory?: string | null;
 }
 

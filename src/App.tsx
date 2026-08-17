@@ -1,6 +1,4 @@
 import "./App.css";
-import "./styles/appWallpaper.css";
-import "./styles/componentGeometry.css";
 import { type CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActiveFileTransferPanel } from "./app/ActiveFileTransferPanel";
 import { AppTitlebar } from "./app/AppTitlebar";
@@ -1673,6 +1671,7 @@ function App() {
           onReorderSessionTabs={workspace.reorderSessionTabs}
           onSendTerminalBytes={workspace.sendTerminalBytes}
           onSendTerminalData={workspace.sendTerminalData}
+          onTerminalTitleChange={workspace.reportTerminalTitle}
           onTerminalWorkingDirectoryChange={workspace.reportTerminalWorkingDirectory}
           onResizeTerminal={workspace.resizeActiveTerminal}
           onResizeSshTerminalSplit={workspace.resizeSshTerminalSplit}
@@ -1804,6 +1803,7 @@ function App() {
             onReorderSessionTabs={reorderAppSessionTabs}
             onSendTerminalBytes={workspace.sendTerminalBytes}
             onSendTerminalData={workspace.sendTerminalData}
+            onTerminalTitleChange={workspace.reportTerminalTitle}
             onTerminalWorkingDirectoryChange={workspace.reportTerminalWorkingDirectory}
             onResizeTerminal={workspace.resizeActiveTerminal}
             onResizeSshTerminalSplit={workspace.resizeSshTerminalSplit}

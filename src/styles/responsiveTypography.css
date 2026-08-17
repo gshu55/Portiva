@@ -1,0 +1,172 @@
+/*
+ * Font-responsive density layer
+ *
+ * App typography scales with the configured terminal font size. Component
+ * geometry must therefore grow from the same tokens instead of retaining
+ * fixed 24–44px boxes that clip larger glyphs. This file lives outside the
+ * oversized App.css and uses an app-shell scope to remain the final size
+ * contract, including for lazy feature bundles.
+ */
+
+.app-shell {
+  grid-template-rows: var(--app-titlebar-height) minmax(0, 1fr);
+}
+
+.app-shell.detached-shell {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* Shared controls derive both their box and line box from the scaled type. */
+.app-shell :is(.ui-button, button, input, select, textarea) {
+  line-height: var(--line-height-compact);
+}
+
+.app-shell :is(
+  button:not(.tab-main):not(.window-control):not(:has(> .icon)),
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  select
+) {
+  min-height: var(--control-height-sm);
+}
+
+.app-shell :is(.ui-button-sm, .ui-field-sm, .ui-select-control-sm .ui-select-trigger) {
+  min-height: var(--control-height-sm);
+}
+
+.app-shell :is(.ui-button-md, .ui-field-md, .ui-select-control-md .ui-select-trigger) {
+  min-height: var(--control-height);
+}
+
+.app-shell :is(.ui-button-lg, .ui-field-lg, .ui-select-control-lg .ui-select-trigger) {
+  min-height: var(--control-height-lg);
+}
+
+.app-shell .ui-toggle {
+  height: auto;
+  min-height: var(--control-height);
+}
+
+.app-shell .ui-tag {
+  min-height: var(--tag-height);
+}
+
+/* Titlebar and session tabs grow together so tab text is never cropped. */
+.app-shell .app-titlebar {
+  height: var(--app-titlebar-height);
+  min-height: var(--app-titlebar-height);
+}
+
+.app-shell .app-titlebar-tab-slot > .tab-bar,
+.app-shell .tab-bar {
+  min-height: var(--app-titlebar-height);
+}
+
+.app-shell .window-controls {
+  height: 100%;
+}
+
+.app-shell .window-controls :is(.window-control, .window-control.close) {
+  height: 100%;
+  min-height: var(--app-titlebar-height);
+}
+
+.app-shell .tab-main .tab-activity-title {
+  line-height: 1.25;
+}
+
+/* Headers and single-line rows may expand vertically while preserving density. */
+.app-shell :is(
+  .profile-dialog-heading,
+  .profile-dialog-actions,
+  .host-trust-heading,
+  .saved-connections-toolbar,
+  .saved-connections .profile-item,
+  .wsl-card-header,
+  .wsl-card-actions,
+  .saved-card-header,
+  .saved-card-footer,
+  .serial-session-bar,
+  .serial-traffic-toolbar,
+  .file-pane-heading,
+  .file-browser-header,
+  .simple-sftp-path,
+  .settings-page-heading,
+  .settings-menu button,
+  .background-adjustments label,
+  .shortcut-row,
+  .check-row,
+  .security-row,
+  .http-response-summary,
+  .http-editor-toolbar,
+  .http-field-row
+) {
+  height: auto;
+  min-height: var(--section-row-height);
+  max-height: none;
+}
+
+.app-shell :is(
+  .terminal-search-bar,
+  .terminal-tui-scrollback-hint,
+  .saved-section-heading,
+  .serial-send-history-header,
+  .simple-sftp-row,
+  .http-tree-root,
+  .http-tree-row,
+  .http-environment-variable-header,
+  .http-environment-variable-row,
+  .http-variable-reference,
+  .http-parameter-header,
+  .http-key-value-row,
+  .http-response-body-toolbar
+) {
+  height: auto;
+  min-height: var(--content-row-height);
+  max-height: none;
+}
+
+.app-shell :is(
+  .saved-connections .profile-name,
+  .saved-connections .profile-target,
+  .serial-send-input,
+  .terminal-right-click-options strong,
+  .terminal-right-click-options span
+) {
+  line-height: 1.25;
+}
+
+.app-shell .terminal-home-page .home-shortcut-row kbd {
+  height: auto;
+  min-height: max(18px, calc(var(--app-font-size-12, 12px) + 6px));
+  line-height: 1.25;
+}
+
+/* Composed rows own the outer height; their internal fields fill it. */
+.app-shell :is(
+  .serial-port-config-control,
+  .serial-send-ending-select,
+  .http-environment-variable-row,
+  .http-tree-search
+) :is(.ui-field, .ui-select-trigger, input, select) {
+  min-height: var(--control-height);
+  max-height: none;
+}
+
+/* SSH page-level controls use a real grid row instead of a fixed 30px strip. */
+.app-shell .ssh-session-workspace.page-level-panels .ssh-terminal-stage {
+  grid-template-rows: var(--control-height) minmax(0, 1fr);
+}
+
+.app-shell .ssh-session-workspace.page-level-panels .ssh-terminal-panel-controls,
+.app-shell .ssh-command-panel > .ui-card-header,
+.app-shell .ssh-system-summary {
+  height: auto;
+  min-height: var(--control-height);
+}
+
+/* At very large sizes, preserve access to actions instead of clipping them. */
+@media (max-width: 760px) {
+  .app-shell :is(.terminal-search-bar, .terminal-tui-scrollback-hint) {
+    max-width: calc(100% - 20px);
+  }
+}

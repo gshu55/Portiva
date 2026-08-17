@@ -12,6 +12,7 @@ export function terminalPanesForTab(tab: WorkspaceSessionTab): WorkspaceTerminal
     ? [{
         terminal: tab.terminal,
         terminalSnapshot: tab.terminalSnapshot,
+        terminalTitle: tab.terminalTitle,
         terminalWorkingDirectory: tab.terminalWorkingDirectory,
       }]
     : [];

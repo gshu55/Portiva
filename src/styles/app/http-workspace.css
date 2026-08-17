@@ -1,0 +1,999 @@
+/* HTTP Console follows the EasyPost workspace layout while keeping Portiva tokens. */
+.http-console {
+  grid-template-columns: 270px minmax(0, 1fr);
+  gap: var(--space-3, 12px);
+  border: 0;
+  background: transparent;
+}
+
+.http-console-sidebar {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-3, 12px);
+  border: 1px solid var(--border-panel);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+}
+
+.http-sidebar-card,
+.http-request-editor,
+.http-response-workspace,
+.http-environment-workbench,
+.http-share-workbench {
+  border: 1px solid var(--border-panel);
+  background: color-mix(in srgb, var(--panel-bg) 90%, var(--workspace-bg));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-strong) 4%, transparent);
+}
+
+.http-sidebar-card {
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md, 8px);
+}
+
+.http-sidebar-control-card {
+  display: grid;
+  gap: var(--space-3, 12px);
+  align-content: start;
+  padding: var(--space-3, 12px);
+}
+
+.http-sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2-5, 10px);
+  min-width: 0;
+}
+
+.http-sidebar-brand strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--app-font-size-18, 18px);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .http-sidebar-brand > span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border-subtle));
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+  color: var(--accent);
+  padding: 5px var(--space-2-5, 10px);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.http-workspace-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: var(--space-2, 8px);
+}
+
+.http-workspace-switcher {
+  display: block;
+}
+
+.http-workspace-switcher select,
+.http-workspace-name-input {
+  height: 38px;
+  min-height: 38px;
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--field-bg) 90%, var(--panel-solid-bg));
+  font-size: var(--app-font-size-13, 13px);
+}
+
+.http-sidebar-control-card button,
+.http-tree-action,
+.http-save-button,
+.http-response-tools button,
+.http-response-tabs button {
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--button-muted-bg) 88%, transparent);
+  color: var(--text-main);
+}
+
+.http-sidebar-control-card button:hover,
+.http-tree-action:hover,
+.http-save-button:hover,
+.http-response-tools button:hover,
+.http-response-tabs button:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 10%, var(--button-muted-bg));
+  color: var(--text-strong);
+}
+
+.http-workspace-row > button {
+  display: grid;
+  place-items: center;
+  min-width: 38px;
+}
+
+.http-sidebar-tool-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2, 8px);
+}
+
+.http-sidebar-tool-row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1-5, 6px);
+  min-height: 34px;
+  width: 100%;
+}
+
+.http-environment-workbench,
+.http-share-workbench {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: var(--space-3, 12px);
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-3-5, 14px);
+}
+
+.http-environment-heading,
+.http-share-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2-5, 10px);
+  min-width: 0;
+}
+
+.http-environment-heading > div,
+.http-share-heading > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.http-environment-heading strong,
+.http-share-heading strong {
+  color: var(--text-strong);
+  font-size: var(--app-font-size-16, 16px);
+}
+
+.http-environment-heading span,
+.http-share-heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-environment-toolbar {
+  display: grid;
+  gap: var(--space-2-5, 10px);
+  min-width: 0;
+}
+
+.http-environment-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+  min-height: 32px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-faint);
+  padding: 0 0 var(--space-2, 8px);
+}
+
+.app-shell .http-environment-tags > button {
+  appearance: none;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  min-height: 30px;
+  max-height: 30px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--button-muted-bg) 78%, transparent);
+  color: var(--text-main);
+  padding: 0 9px;
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.app-shell .http-environment-tags > button.active {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-subtle));
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+  color: var(--accent);
+}
+
+.http-variable-scope-tabs {
+  display: flex;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.http-variable-scope-tabs button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-height: 30px;
+  border: 1px solid var(--border-faint);
+  background: color-mix(in srgb, var(--button-muted-bg) 88%, transparent);
+  padding: var(--space-1, 4px) var(--space-2-5, 10px);
+  font-size: var(--app-font-size-12, 12px);
+  white-space: nowrap;
+}
+
+.http-variable-scope-tabs small {
+  min-width: 20px;
+  border: 1px solid var(--border-faint);
+  background: var(--button-muted-bg);
+  padding: 0 5px;
+  color: var(--text-soft);
+  font-size: var(--app-font-size-10, 10px);
+  text-align: center;
+}
+
+.http-environment-tags .ui-icon-button,
+.http-environment-heading .ui-icon-button,
+.http-environment-name-row .ui-icon-button {
+  --icon-button-size: 32px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
+
+.http-environment-editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: start;
+  gap: var(--space-3, 12px);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--panel-solid-bg) 58%, transparent);
+  padding: var(--space-3, 12px);
+}
+
+.http-environment-name-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 360px) 32px;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.http-environment-name-row input {
+  min-height: 32px;
+  font-size: var(--app-font-size-13, 13px);
+}
+
+.http-environment-variable-table {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.http-environment-variable-header,
+.http-environment-variable-row {
+  display: grid;
+  grid-template-columns:
+    32px minmax(130px, 0.42fr) minmax(190px, 1fr) minmax(120px, 0.42fr) 44px minmax(160px, 0.62fr)
+    32px;
+  gap: var(--space-2, 8px);
+  align-items: center;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.http-environment-variable-header {
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+  font-weight: 800;
+  padding: 0 var(--space-1, 4px);
+}
+
+.http-environment-variable-row {
+  flex: 0 0 auto;
+  height: 42px;
+  min-height: 42px;
+  max-height: 42px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--field-bg) 42%, transparent);
+  padding: var(--space-1, 4px);
+  overflow: hidden;
+}
+
+.http-environment-variable-row.virtual {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--field-bg) 28%, transparent);
+}
+
+.http-environment-variable-row input {
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  box-sizing: border-box;
+  padding: 0 9px;
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.http-variable-reference {
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  overflow: hidden;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--button-muted-bg) 76%, transparent);
+  color: var(--text-soft);
+  padding: 0 var(--space-2, 8px);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.http-environment-variable-row .http-param-check,
+.http-environment-variable-row .ui-icon-button {
+  width: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+}
+
+.http-variable-reference:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
+  color: var(--accent);
+}
+
+.http-share-tabs {
+  display: flex;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.http-share-tabs button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-height: 30px;
+  border: 1px solid var(--border-faint);
+  background: color-mix(in srgb, var(--button-muted-bg) 88%, transparent);
+  padding: var(--space-1, 4px) var(--space-2-5, 10px);
+  font-size: var(--app-font-size-12, 12px);
+  white-space: nowrap;
+}
+
+.http-share-tabs button.active {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+  color: var(--accent);
+}
+
+.http-share-tabs small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  min-height: 18px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--button-muted-bg);
+  padding: 0 5px;
+  color: var(--text-soft);
+  font-size: var(--app-font-size-10, 10px);
+  box-sizing: border-box;
+}
+
+.http-share-editor {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.http-share-export-panel,
+.http-share-import-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-3, 12px);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--panel-solid-bg) 58%, transparent);
+  padding: var(--space-3, 12px);
+}
+
+.http-share-import-panel {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.http-share-toolbar,
+.http-share-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2-5, 10px);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+}
+
+.http-share-toolbar > div,
+.http-share-actions > div {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2, 8px);
+}
+
+.http-share-toolbar button,
+.http-share-actions button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.http-share-import-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: var(--space-2-5, 10px);
+  min-width: 0;
+}
+
+.http-share-option-group {
+  display: grid;
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+}
+
+.http-share-option-group > span {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+}
+
+.http-share-choice-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1-5, 6px);
+  min-width: 0;
+}
+
+.http-share-choice-row button {
+  min-height: 32px;
+  border: 1px solid var(--border-faint);
+  background: color-mix(in srgb, var(--button-muted-bg) 88%, transparent);
+  white-space: nowrap;
+}
+
+.http-share-choice-row button.active {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+  color: var(--accent);
+}
+
+.http-share-export-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(360px, 1.1fr);
+  gap: var(--space-3, 12px);
+  min-width: 0;
+  min-height: 0;
+}
+
+.http-share-request-list,
+.http-share-json-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--field-bg) 34%, transparent);
+}
+
+.http-share-request-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5, 6px);
+  overflow: auto;
+  padding: var(--space-2, 8px);
+}
+
+.app-shell .http-share-request-row {
+  min-height: 46px;
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  padding: var(--space-1-5, 6px) var(--space-2, 8px);
+}
+
+.app-shell .http-share-request-row .check-row-label {
+  display: grid;
+  grid-template-columns: 58px minmax(120px, 0.7fr) minmax(90px, 0.45fr) minmax(160px, 1fr);
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.http-share-request-row strong,
+.http-share-request-row small,
+.http-share-request-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-share-request-row strong {
+  color: var(--text-strong);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.http-share-request-row small {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.http-share-request-row code {
+  color: var(--text-soft);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.http-share-json-panel {
+  display: grid;
+  padding: 0;
+}
+
+.http-share-json-textarea,
+.http-share-import-textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--field-bg) 88%, var(--panel-solid-bg));
+  font-size: var(--app-font-size-12, 12px);
+  line-height: 1.55;
+}
+
+.http-share-error {
+  color: var(--danger);
+}
+
+.http-tree-card {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  padding: var(--space-3, 12px);
+}
+
+.http-tree-title {
+  display: grid;
+  gap: 3px;
+  margin-bottom: var(--space-3, 12px);
+}
+
+.http-tree-title strong {
+  color: var(--text-strong);
+  font-size: var(--app-font-size-14, 14px);
+}
+
+.http-tree-title span {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.http-tree-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-height: 36px;
+  box-sizing: border-box;
+  overflow: hidden;
+  margin-bottom: var(--space-3, 12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: var(--field-bg);
+  padding: 0 var(--space-2-5, 10px);
+}
+
+.http-tree-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-subtle));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.http-tree-search .icon,
+.saved-connections-search .icon {
+  color: var(--text-muted);
+}
+
+.http-tree-search:focus-within .icon,
+.saved-connections-search:focus-within .icon {
+  color: var(--accent);
+}
+
+.app-shell .http-tree-search input,
+.app-shell .http-tree-search input:hover:not(:disabled),
+.app-shell .http-tree-search input:focus,
+.app-shell .http-tree-search input:focus-visible {
+  min-width: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-main);
+  outline: 0;
+  padding: 0;
+}
+
+.http-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  align-content: start;
+  padding: 0;
+  user-select: none;
+}
+
+.http-tree input,
+.http-tree textarea {
+  user-select: text;
+}
+
+.http-tree-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-content: start;
+  min-width: 0;
+}
+
+.http-tree-root {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 24px 24px;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  margin-bottom: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border-faint));
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel-solid-bg));
+  color: var(--text-strong);
+  padding: 0 var(--space-2, 8px);
+  box-sizing: border-box;
+  overflow: hidden;
+  font-size: var(--app-font-size-13, 13px);
+  cursor: default;
+}
+
+.http-tree-root:hover {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel-solid-bg));
+}
+
+.http-tree-root strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-tree-root .http-tree-inline-input {
+  min-width: 0;
+  height: 24px;
+  min-height: 24px;
+}
+
+.app-shell .http-tree-root-action {
+  --icon-button-size: 24px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.http-tree-root:hover .http-tree-root-action,
+.http-tree-root:focus-within .http-tree-root-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.app-shell .http-tree-root-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 10%, var(--button-muted-bg));
+  color: var(--text-strong);
+}
+
+.http-tree-section-label {
+  display: none;
+}
+
+.http-tree-row {
+  display: grid;
+  align-items: center;
+  gap: var(--space-1-5, 6px);
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  border: 1px solid color-mix(in srgb, var(--border-faint) 72%, transparent);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: transparent;
+  padding: 0 var(--space-2, 8px);
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: 0;
+  cursor: default;
+}
+
+.http-tree-row:hover {
+  border-color: var(--border-faint);
+}
+
+.http-tree-row.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel-solid-bg));
+}
+
+.http-tree-row.parent-active {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border-faint));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel-solid-bg));
+}
+
+.http-tree-row.parent-active:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-faint));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-solid-bg));
+}
+
+.http-project-row {
+  grid-template-columns: 16px minmax(0, 1fr) 24px 24px;
+  margin-left: var(--space-4, 16px);
+  margin-top: 0;
+  width: calc(100% - 16px);
+}
+
+.http-request-row {
+  grid-template-columns: 48px minmax(0, 1fr) 24px;
+  margin-left: var(--space-4, 16px);
+  width: calc(100% - 16px);
+}
+
+.http-workspace-request-row {
+  margin-left: var(--space-4, 16px);
+  width: calc(100% - 16px);
+}
+
+.http-project-request-row {
+  margin-left: 28px;
+  width: calc(100% - 28px);
+}
+
+.http-tree-root > .icon,
+.http-tree-row > .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.http-tree-row .http-method {
+  min-width: 42px;
+  min-height: 18px;
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  padding: var(--space-0-5, 2px) var(--space-1-5, 6px);
+  font-size: var(--app-font-size-10, 10px);
+  line-height: 1.2;
+}
+
+.http-tree-action {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.http-project-row:hover .http-tree-action,
+.http-project-row:focus-within .http-tree-action,
+.http-request-row:hover .http-tree-action,
+.http-request-row:focus-within .http-tree-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.http-tree-card .http-tree,
+.http-tree-card .http-tree-group {
+  gap: 3px;
+  row-gap: 3px;
+}
+
+.http-tree-card .http-tree-root,
+.http-tree-card .http-tree-row {
+  display: grid;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.http-tree-row.drag-enabled,
+.http-tree-row[draggable="true"] {
+  cursor: default;
+}
+
+.http-tree-row.dragging {
+  opacity: 0.46;
+}
+
+.http-tree-drag-preview {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  width: min(220px, calc(100vw - 32px));
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--panel-solid-bg) 92%, var(--accent));
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow-color) 22%, transparent);
+  color: var(--text-strong);
+  opacity: 0.94;
+  padding: 0 var(--space-2-5, 10px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.http-tree-drag-preview-project {
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.http-tree-drag-preview-request {
+  grid-template-columns: 48px minmax(0, 1fr);
+}
+
+.http-tree-drag-preview .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.http-tree-drag-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--app-font-size-12, 12px);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-tree-drag-preview .http-method {
+  min-width: 42px;
+  min-height: 18px;
+  padding: var(--space-0-5, 2px) var(--space-1-5, 6px);
+  font-size: var(--app-font-size-10, 10px);
+  line-height: 1.2;
+}
+
+.http-tree-root.drop-inside,
+.http-project-row.drop-inside {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 15%, var(--panel-solid-bg));
+}
+
+.http-tree-row.drop-before,
+.http-tree-root.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.http-tree-row.drop-after,
+.http-tree-root.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.http-console-main {
+  grid-template-rows: 46px minmax(0, 1fr);
+  gap: var(--space-2, 8px);
+}
+
+.http-request-tabs {
+  gap: var(--space-1-5, 6px);
+  align-items: center;
+  border: 1px solid var(--border-panel);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--panel-bg) 84%, var(--workspace-bg));
+  padding: 5px;
+  overflow-x: auto;
+}
+
+.http-request-tab {
+  grid-template-columns: minmax(0, 1fr) 20px;
+  gap: var(--space-2, 8px);
+  min-width: 160px;
+  max-width: 260px;
+  min-height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--control-radius, 6px);
+  padding: 5px 9px;
+}
+
+.http-request-tab small {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 76%, transparent);
+}
+
+.http-request-tab small.saved {
+  background: transparent;
+}
+
+.http-environment-main-tab .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--accent);
+}
+
+.http-request-tab-close.ui-button {
+  display: grid;
+  place-items: center;
+  align-self: center;
+  justify-self: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  max-width: 20px;
+  max-height: 20px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--control-radius, 6px) - 2px);
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+}
+
+.http-request-tab-close.ui-button:hover {
+  border-color: rgba(233, 131, 91, 0.45);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+

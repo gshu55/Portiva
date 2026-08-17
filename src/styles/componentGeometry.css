@@ -1,25 +1,15 @@
 /*
  * Shared component geometry contract.
- * Controls and compact indicators use one radius; content surfaces use another.
+ * Token values live in designTokens.css; this file maps components to them.
  * True circular affordances such as status dots, radios and progress tracks stay round.
  */
-.app-shell {
-  --control-height-sm: 26px;
-  --control-height: 32px;
-  --control-height-lg: 38px;
-  --choice-control-height: 38px;
-  --control-radius: 6px;
-  --icon-button-size: var(--control-height);
-  --surface-radius: 10px;
-  --tag-radius: var(--control-radius);
-}
 
 /*
  * Single-line control sizing contract.
  *
  * The default button is the sizing anchor. Inputs, selects and composed fields
- * follow the same 32px rhythm; explicitly small and large controls keep their
- * own density. Multi-line editors and compact row-level actions are excluded.
+ * follow the same responsive rhythm; explicitly small and large controls keep
+ * their own density. Multi-line editors and compact row-level actions are excluded.
  */
 .ui-button-sm,
 .app-shell .ui-field-sm:not(.ui-textarea),

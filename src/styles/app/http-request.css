@@ -1,0 +1,536 @@
+/* The request tab owns the surface; nested controls and method text stay flat. */
+.app-shell .http-request-tab .http-request-tab-select.ui-button,
+.app-shell .http-request-tab .http-request-tab-select.ui-button:hover:not(:disabled) {
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.app-shell .http-request-tab .http-request-tab-close.ui-button {
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+.app-shell .http-request-tab .http-method {
+  border-color: transparent;
+  background: transparent;
+}
+
+.http-request-tab-close .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.http-workbench {
+  gap: 0;
+}
+
+.http-console-blank {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-panel);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--panel-bg) 84%, var(--workspace-bg));
+}
+
+.http-request-editor,
+.http-response-workspace,
+.http-environment-workbench {
+  border-radius: var(--radius-md, 8px);
+}
+
+.http-request-bar {
+  grid-template-columns: 112px minmax(0, 1fr) 96px 96px;
+  gap: var(--space-2, 8px);
+  padding: var(--space-3, 12px);
+}
+
+.http-method-select .ui-select-trigger {
+  min-height: 34px;
+  padding: 0 var(--space-2, 8px);
+  font-size: var(--app-font-size-11, 11px);
+  font-weight: 800;
+}
+
+.http-method-select .ui-select-trigger span {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.http-method-select .ui-select-arrow {
+  width: 14px;
+  min-width: 14px;
+}
+
+.http-method-select-menu {
+  max-height: 260px !important;
+}
+
+.http-method-select-menu .ui-select-option {
+  min-height: 32px;
+  padding: 0 var(--space-2, 8px);
+  font-size: var(--app-font-size-11, 11px);
+  font-weight: 700;
+}
+
+.http-request-bar select,
+.http-request-bar input,
+.http-editor-panel textarea,
+.http-parameter-row input {
+  background: color-mix(in srgb, var(--field-bg) 92%, var(--panel-solid-bg));
+}
+
+.http-save-button,
+.http-send-button {
+  min-height: 34px;
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+}
+
+.http-send-button {
+  background: color-mix(in srgb, var(--accent) 24%, var(--button-bg));
+}
+
+.http-section-switcher {
+  gap: var(--space-1-5, 6px);
+  padding: var(--space-2-5, 10px) var(--space-3, 12px);
+  overflow-x: auto;
+}
+
+.http-section-switcher button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  min-width: 78px;
+  border: 1px solid var(--border-faint);
+  background: color-mix(in srgb, var(--button-muted-bg) 88%, transparent);
+  white-space: nowrap;
+}
+
+.http-section-switcher button > span,
+.http-section-switcher button > small {
+  white-space: nowrap;
+}
+
+.app-shell .http-section-switcher button > small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  min-height: 18px;
+  border-radius: var(--radius-pill, 999px);
+  box-sizing: border-box;
+}
+
+.http-editor-panel {
+  padding: var(--space-1-5, 6px) var(--space-3, 12px) var(--space-3, 12px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.http-parameter-table {
+  display: grid;
+  align-content: start;
+  row-gap: var(--space-1-5, 6px);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--panel-solid-bg) 62%, transparent);
+  padding: var(--space-2, 8px);
+  box-sizing: border-box;
+}
+
+.http-parameter-table::-webkit-scrollbar:horizontal {
+  height: 0;
+}
+
+.http-parameter-header,
+.http-parameter-row {
+  display: grid;
+  grid-template-columns: 32px minmax(96px, 0.9fr) minmax(120px, 1.15fr) minmax(96px, 1fr) 108px;
+  gap: var(--space-2, 8px);
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.http-form-table {
+  min-width: 0;
+}
+
+.http-form-table .http-parameter-header,
+.http-form-table .http-parameter-row {
+  grid-template-columns: 32px minmax(96px, 0.75fr) 72px minmax(180px, 1.35fr) minmax(96px, 0.85fr) 108px;
+  min-width: 720px;
+}
+
+.http-parameter-header {
+  min-height: 30px;
+  padding: 0 var(--space-2, 8px);
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.http-parameter-row {
+  min-height: 46px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--field-bg) 48%, transparent);
+  padding: var(--space-1-5, 6px) var(--space-2, 8px);
+}
+
+.http-parameter-row.virtual {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--field-bg) 34%, transparent);
+}
+
+.http-parameter-row.virtual .http-param-check,
+.http-parameter-row.virtual .http-param-actions {
+  opacity: 0.42;
+}
+
+.http-param-check {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--button-muted-bg) 78%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+}
+
+.http-parameter-row input {
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  color: var(--text-main);
+  padding: 0 var(--space-2, 8px);
+  white-space: nowrap;
+}
+
+.http-form-type-toggle,
+.http-form-file-button {
+  display: inline-grid;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--button-muted-bg) 82%, transparent);
+  color: var(--text-main);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.http-form-type-toggle {
+  width: 100%;
+  min-width: 0;
+  padding: 0 var(--space-2, 8px);
+}
+
+.http-form-type-toggle:hover,
+.http-form-file-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.http-form-file-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.http-form-file-summary {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-0-5, 2px);
+}
+
+.http-form-file-summary strong,
+.http-form-file-summary small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-form-file-summary strong {
+  color: var(--text-main);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+}
+
+.http-form-file-summary small {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.http-form-file-button {
+  position: relative;
+  grid-template-columns: 14px auto;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 var(--space-2, 8px);
+  cursor: pointer;
+}
+
+.http-form-file-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.http-form-file-button input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  opacity: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.http-param-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 30px);
+  justify-content: end;
+  gap: var(--space-1, 4px);
+  min-width: 0;
+}
+
+.http-param-actions button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--button-muted-bg) 80%, transparent);
+  color: var(--text-muted);
+}
+
+.http-body-editor,
+.http-auth-editor,
+.http-preview-panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3, 12px);
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--panel-solid-bg) 62%, transparent);
+  padding: var(--space-3, 12px);
+}
+
+.http-editor-panel > .http-parameter-table,
+.http-editor-panel > .http-body-editor,
+.http-editor-panel > .http-auth-editor,
+.http-editor-panel > .http-preview-panel {
+  min-height: 260px;
+}
+
+.http-body-editor {
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+}
+
+.http-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2-5, 10px);
+  min-height: 36px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.http-editor-toolbar > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.http-editor-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.http-editor-toolbar-actions button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.http-editor-toolbar .ui-select-control {
+  flex: 0 0 180px;
+  min-width: 180px;
+}
+
+.http-body-editor textarea {
+  min-height: 180px;
+}
+
+.http-panel-empty {
+  display: grid;
+  place-items: center;
+  gap: 7px;
+  min-height: 160px;
+  border: 1px dashed var(--border-faint);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: color-mix(in srgb, var(--panel-solid-bg) 48%, transparent);
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.http-panel-empty .icon {
+  width: 24px;
+  height: 24px;
+  color: var(--accent);
+}
+
+.http-panel-empty strong {
+  color: var(--text-strong);
+  font-size: var(--app-font-size-13, 13px);
+  white-space: nowrap;
+}
+
+.http-panel-empty span {
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.http-field-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--space-2-5, 10px);
+  align-items: center;
+  min-height: 38px;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+  min-width: 420px;
+}
+
+.http-field-row > span {
+  white-space: nowrap;
+}
+
+.http-field-row input {
+  min-width: 220px;
+}
+
+.http-token-row {
+  align-items: start;
+}
+
+.http-token-row > span {
+  padding-top: 9px;
+}
+
+.http-token-row textarea {
+  min-width: 220px;
+  min-height: 92px;
+  resize: vertical;
+}
+
+.http-field-row .ui-select-control {
+  min-width: 220px;
+}
+
+.http-auth-grid {
+  display: grid;
+  gap: var(--space-2-5, 10px);
+  max-width: 760px;
+}
+
+.http-preview-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.http-preview-panel pre {
+  min-width: 0;
+  min-height: 180px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: var(--terminal-bg);
+  color: var(--terminal-fg);
+  padding: var(--space-3, 12px);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-12, 12px);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.http-response-summary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 48px;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+}
+
+.http-response-summary .http-response-tabs,
+.http-response-summary .http-response-tools {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.http-response-tabs button,
+.http-response-tools button {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+}
+
+.http-response-tabs button.active,
+.http-response-tools button.active {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+  color: var(--accent);
+}
+
+.http-response-tabs > span {
+  border: 1px solid var(--border-faint);
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  background: var(--button-muted-bg);
+  padding: 3px 9px;
+  color: var(--text-soft);
+  font-size: var(--app-font-size-12, 12px);
+  font-weight: 800;
+}
+
+.http-response-tabs .ui-tag {
+  min-height: 26px;
+  border-radius: var(--settings-inner-radius, var(--control-radius, 6px));
+  padding: 3px 9px;
+}
+

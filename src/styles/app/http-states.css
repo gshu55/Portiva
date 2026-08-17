@@ -1,0 +1,212 @@
+/* HTTP tab selections use one solid treatment so every nested label stays legible. */
+.app-shell :is(
+  .http-request-tab.active,
+  .http-section-switcher button.active,
+  .http-variable-scope-tabs button.active,
+  .http-environment-tags > button.active,
+  .http-share-tabs button.active,
+  .http-share-choice-row button.active,
+  .http-response-tabs button.active,
+  .http-response-tools button.active
+) {
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--border-subtle));
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+
+.app-shell .http-request-tab.active :is(
+  .http-request-tab-select,
+  .http-request-tab-close,
+  .http-method,
+  strong,
+  .icon
+),
+.app-shell :is(
+  .http-section-switcher button.active,
+  .http-variable-scope-tabs button.active,
+  .http-share-tabs button.active,
+  .http-share-choice-row button.active,
+  .http-response-tabs button.active,
+  .http-response-tools button.active
+) :is(span, small, .icon) {
+  color: #fff;
+}
+
+.app-shell :is(
+  .http-section-switcher button.active,
+  .http-variable-scope-tabs button.active,
+  .http-share-tabs button.active
+) small {
+  border-color: rgba(255, 255, 255, 0.38);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.app-shell .http-request-tab.active small:not(.saved) {
+  background: #fff;
+}
+
+.http-status-pill {
+  color: var(--accent) !important;
+}
+
+.http-status-pill.sending {
+  animation: http-status-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes http-status-pulse {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--accent) 8%, var(--button-muted-bg));
+  }
+  50% {
+    background: color-mix(in srgb, var(--accent) 18%, var(--button-muted-bg));
+  }
+}
+
+.http-duration-pill {
+  color: var(--danger) !important;
+}
+
+.http-response-tools button:has(.icon) {
+  width: 34px;
+  padding: 0;
+}
+
+.http-context-menu {
+  position: fixed;
+  z-index: 90;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  width: 174px;
+  min-width: 174px;
+  max-width: 174px;
+  box-sizing: border-box;
+  gap: var(--space-1, 4px);
+  padding: 7px;
+  border: 1px solid var(--border-subtle);
+  background: var(--panel-bg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+}
+
+.http-context-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  justify-self: stretch;
+  gap: 9px;
+  width: 100%;
+  max-width: 100%;
+  height: 30px;
+  min-height: 30px;
+  max-height: 30px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-main);
+  padding: 0 9px;
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.http-context-menu button .icon {
+  justify-self: center;
+}
+
+.http-context-menu button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.http-context-menu button:hover:not(:disabled) {
+  border-color: var(--border-subtle);
+  background: var(--accent-bg);
+  color: var(--text-strong);
+}
+
+.http-context-menu .danger-action:hover:not(:disabled) {
+  border-color: rgba(233, 131, 91, 0.5);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.http-context-menu button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+@media (max-width: 860px) {
+  .http-console {
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: var(--space-2, 8px);
+  }
+
+  .http-console-sidebar {
+    display: grid;
+  }
+
+  .http-request-bar {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+
+  .http-send-button {
+    grid-column: 1 / -1;
+  }
+
+  .http-response-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .http-response-headers {
+    max-height: 120px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-faint);
+  }
+}
+
+@media (max-width: 960px) {
+  .settings-page {
+    padding: var(--space-2-5, 10px);
+  }
+
+  .settings-layout {
+    grid-template-columns: var(--settings-menu-width, 218px) minmax(0, 1fr);
+  }
+
+  .settings-menu {
+    max-height: none;
+  }
+
+}
+
+@media (max-width: 640px) {
+  .settings-block {
+    padding: var(--space-3, 12px);
+  }
+
+  .settings-field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .terminal-right-click-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+kbd {
+  min-width: 78px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--field-bg);
+  color: var(--terminal-fg);
+  padding: 3px var(--space-1-5, 6px);
+  text-align: center;
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+

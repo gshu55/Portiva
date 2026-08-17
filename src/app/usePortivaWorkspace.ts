@@ -156,6 +156,17 @@ interface DetachedSessionTabResult {
 }
 const terminalSnapshotEvent = "portiva://terminal-snapshot";
 const terminalPreviewMaxChars = 256 * 1024;
+const maximumTerminalTitleCharacters = 120;
+
+function normalizeTerminalTitle(title: string) {
+  const normalized = title
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return Array.from(normalized).slice(0, maximumTerminalTitleCharacters).join("");
+}
 
 const localRootsPath = "portiva://local-roots";
 const remoteRootPath = "/";
@@ -457,6 +468,7 @@ export function usePortivaWorkspace() {
               terminal: null,
               terminalLayout: null,
               terminalSnapshot: null,
+              terminalTitle: null,
               terminalWorkingDirectory: null,
             }
           : tab,
@@ -1873,6 +1885,7 @@ export function usePortivaWorkspace() {
                 connection: session,
                 terminal,
                 terminalSnapshot: initialTerminalSnapshot,
+                terminalTitle: null,
               }
             : tab,
         ),
@@ -2490,6 +2503,7 @@ export function usePortivaWorkspace() {
               ...item,
               terminal: promotedPane.terminal,
               terminalSnapshot: promotedPane.terminalSnapshot,
+              terminalTitle: promotedPane.terminalTitle,
               terminalWorkingDirectory: promotedPane.terminalWorkingDirectory,
               additionalTerminals: (item.additionalTerminals ?? []).filter(
                 (pane) => pane.terminal.id !== promotedPane.terminal.id,
@@ -3670,6 +3684,42 @@ export function usePortivaWorkspace() {
     });
   }, []);
 
+  const reportTerminalTitle = useCallback((terminalId: string, title: string) => {
+    const normalizedTitle = normalizeTerminalTitle(title);
+
+    setSessionTabs((current) => {
+      let changed = false;
+      const next = current.map((tab) => {
+        if (tab.terminal?.id === terminalId) {
+          if ((tab.terminalTitle ?? "") === normalizedTitle) {
+            return tab;
+          }
+
+          changed = true;
+          return { ...tab, terminalTitle: normalizedTitle || null };
+        }
+
+        let paneChanged = false;
+        const additionalTerminals = tab.additionalTerminals?.map((pane) => {
+          if (pane.terminal.id !== terminalId || (pane.terminalTitle ?? "") === normalizedTitle) {
+            return pane;
+          }
+
+          paneChanged = true;
+          return { ...pane, terminalTitle: normalizedTitle || null };
+        });
+        if (!paneChanged) {
+          return tab;
+        }
+
+        changed = true;
+        return { ...tab, additionalTerminals };
+      });
+
+      return changed ? next : current;
+    });
+  }, []);
+
   const changeLocalPath = useCallback((path: string) => {
     setLocalPathState(path);
     setSelectedLocalEntry(null);
@@ -3789,6 +3839,7 @@ export function usePortivaWorkspace() {
     renameLocalEntry,
     renameRemoteEntry,
     reorderSessionTabs,
+    reportTerminalTitle,
     reportTerminalWorkingDirectory,
     reportWorkspaceMessage,
     resolveTransferConflict,

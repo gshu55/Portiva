@@ -1,0 +1,69 @@
+/*
+ * Portiva design-token contract.
+ *
+ * Theme modules provide the active semantic palette (`--text-*`, `--accent`,
+ * surface and border colors). This layer owns the reusable geometry and type
+ * rhythm consumed by shared UI primitives and feature styles.
+ */
+.app-shell {
+  /* Theme-independent semantic accents. Theme files may override these roles. */
+  --success: #35c49b;
+  --online: #28b89c;
+  --warning: #e8a54f;
+  --text-on-accent: #fff;
+
+  /* Spacing: 4px grid with half steps for dense desktop controls. */
+  --space-0: 0;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-3-5: 14px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --control-content-gap: 7px;
+
+  /* Radius: controls, nested surfaces, top-level surfaces and pills. */
+  --radius-2xs: 2px;
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --control-radius: 6px;
+  --radius-md: 8px;
+  --surface-radius: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+  --tag-radius: var(--control-radius);
+
+  /* Icons use a small fixed scale; clickable boxes use the control scale. */
+  --icon-size-sm: 12px;
+  --icon-size: 15px;
+  --icon-size-lg: 18px;
+
+  /* Typography follows the user-selected application font size. */
+  --font-size-xs: var(--app-font-size-10, 10px);
+  --font-size-sm: var(--app-font-size-11, 11px);
+  --font-size-md: var(--app-font-size-12, 12px);
+  --font-size-base: var(--app-font-size-13, 13px);
+  --font-size-lg: var(--app-font-size-14, 14px);
+  --font-size-xl: var(--app-font-size-16, 16px);
+  --line-height-tight: 1;
+  --line-height-compact: 1.25;
+  --line-height-body: 1.5;
+
+  /* Text-bearing boxes grow with the same responsive font scale. */
+  --control-height-sm: max(26px, calc(var(--font-size-sm) + 15px));
+  --control-height: max(32px, calc(var(--font-size-md) + 20px));
+  --control-height-lg: max(38px, calc(var(--font-size-base) + 25px));
+  --choice-control-height: var(--control-height-lg);
+  --tag-height: max(22px, calc(var(--font-size-sm) + 10px));
+  --icon-button-size: var(--control-height);
+  --titlebar-action-size: var(--control-height-sm);
+  --app-titlebar-height: max(44px, calc(var(--font-size-md) + 26px));
+  --compact-row-height: max(30px, calc(var(--font-size-sm) + 18px));
+  --content-row-height: max(36px, calc(var(--font-size-md) + 24px));
+  --section-row-height: max(44px, calc(var(--font-size-base) + 28px));
+}

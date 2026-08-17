@@ -59,6 +59,7 @@ interface TerminalWorkspaceProps {
   tabBarPortalTarget?: HTMLDivElement | null;
   onSendTerminalBytes: (bytes: number[], terminalId?: string) => Promise<void> | void;
   onSendTerminalData: (data: string, terminalId?: string) => Promise<void> | void;
+  onTerminalTitleChange?: (terminalId: string, title: string) => void;
   onTerminalWorkingDirectoryChange?: (terminalId: string, path: string) => void;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
   onResizeSshTerminalSplit: (tabId: string, path: number[], ratio: number) => void;
@@ -93,6 +94,118 @@ interface SftpSidePanelRenderProps {
 
 const getSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
 const closedTerminalPanelVisibility = { command: false, status: false } as const;
+const terminalActivityHoldMs = 700;
+
+function resolveTabProtocolLabel(tab: WorkspaceSessionTab) {
+  const kind = tab.kind ?? "terminal";
+
+  if (kind === "http-console") {
+    return "HTTP";
+  }
+  if (kind === "wsl-files") {
+    return "WSL 文件";
+  }
+  if (kind === "settings") {
+    return "设置";
+  }
+  if (kind === "network-scan") {
+    return "网络扫描";
+  }
+  if (kind === "host-dashboard") {
+    return "主机概览";
+  }
+  if (kind === "file-transfer") {
+    switch (tab.fileTransferSession?.protocol) {
+      case "wsl":
+        return "WSL 文件";
+      case "ftp":
+        return "FTP";
+      case "webdav":
+        return "WebDAV";
+      case "s3":
+        return "S3";
+      case "scp":
+        return "SCP";
+      case "sftp":
+      default:
+        return "SFTP";
+    }
+  }
+
+  switch (tab.connection.transport?.kind) {
+    case "ssh":
+      return "SSH";
+    case "wsl":
+      return "WSL";
+    case "serial":
+      return "Serial";
+    case "local-shell":
+      return "本地终端";
+    case "telnet":
+      return "Telnet";
+    case "raw-tcp":
+      return "TCP";
+    default:
+      return "终端";
+  }
+}
+
+function resolveConnectionLabel(connection: ConnectionSummary, savedName?: string) {
+  const profileName = savedName?.trim() ?? "";
+  const host = connection.transport?.host.trim() ?? "";
+  const transportKind = connection.transport?.kind;
+  const titleWithoutProtocol = connection.title
+    .replace(/^\s*\[(?:SSH|SFTP|SERIAL|TELNET|RAW|TCP|HTTP|WSL)\]\s*/i, "")
+    .replace(/^\s*(?:SSH|SFTP|SERIAL|TELNET|RAW|TCP|HTTP|WSL)\s*(?:\/|[-—:])\s*/i, "")
+    .trim();
+
+  if (transportKind === "local-shell" || connection.profileId === "local-shell") {
+    return "本地终端";
+  }
+
+  if (transportKind === "serial" || /^\s*\[SERIAL\]/i.test(connection.title)) {
+    return profileName || host || titleWithoutProtocol || "串口调试";
+  }
+
+  return profileName || host || titleWithoutProtocol || "终端";
+}
+
+function escapeRegularExpression(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function resolveTerminalTaskTitle(
+  reportedTitle: string | null,
+  connection: ConnectionSummary,
+  connectionLabel: string,
+) {
+  const title = reportedTitle?.trim();
+  if (!title) {
+    return null;
+  }
+
+  const normalizedTitle = title.toLowerCase();
+  const host = connection.transport?.host.trim() ?? "";
+  if (
+    normalizedTitle === connection.title.trim().toLowerCase() ||
+    normalizedTitle === connectionLabel.toLowerCase() ||
+    (host && normalizedTitle === host.toLowerCase()) ||
+    /(?:^|[\\/\s])(?:bash|cmd|fish|nu|powershell|pwsh|sh|zsh)(?:\.exe)?(?:$|[\s:|\-—])/i.test(title) ||
+    /^(?:[a-z]:[\\/]|~?[\\/])/.test(title) ||
+    /^[^\s@]+@[^:\s]+(?::.*)?$/.test(title)
+  ) {
+    return null;
+  }
+
+  if (host) {
+    const escapedHost = escapeRegularExpression(host);
+    if (new RegExp(`^[^\\s@]+@${escapedHost}(?::|\\s|$)`, "i").test(title)) {
+      return null;
+    }
+  }
+
+  return title;
+}
 const isFileTransferTab = (tab: WorkspaceSessionTab | null | undefined) =>
   (tab?.kind ?? "terminal") === "file-transfer";
 const isCustomTab = (tab: WorkspaceSessionTab | null | undefined) =>
@@ -195,6 +308,7 @@ export function TerminalWorkspace({
   onSendTerminalBytes,
   onSendTerminalData,
   onSplitSshTerminal,
+  onTerminalTitleChange,
   onTerminalWorkingDirectoryChange,
   onToggleFullscreen,
   reattachHintActive = false,
@@ -204,6 +318,7 @@ export function TerminalWorkspace({
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [focusedSshTerminalByTab, setFocusedSshTerminalByTab] = useState<Record<string, string>>({});
+  const [activeOutputTerminalIds, setActiveOutputTerminalIds] = useState<Set<string>>(() => new Set());
   const [pendingSshSplitByTab, setPendingSshSplitByTab] = useState<Record<string, string>>({});
   const [sftpPanelRatio, setSftpPanelRatio] = useState(0.22);
   const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("left");
@@ -215,6 +330,7 @@ export function TerminalWorkspace({
   const [commandHistoryByTab, setCommandHistoryByTab] = useState<Record<string, string[]>>({});
   const savedSshCommands = useSavedSshCommands();
   const tabBarRef = useRef<HTMLDivElement>(null);
+  const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
   const sftpLayoutRef = useRef<HTMLDivElement>(null);
   const tabDropHandledRef = useRef(false);
   const autoClosedLocalShellTabIdsRef = useRef(new Set<string>());
@@ -227,6 +343,36 @@ export function TerminalWorkspace({
   const resolvedActiveTabId = activeTabId ?? connection?.id ?? sessionTabs[0]?.connection.id ?? null;
   const activeTab = sessionTabs.find((tab) => getSessionTabId(tab) === resolvedActiveTabId);
   const activeCustomTabContent = activeTab ? customTabPanels?.[getSessionTabId(activeTab)] : null;
+  const reportTerminalActivity = useCallback((terminalId: string) => {
+    setActiveOutputTerminalIds((current) => {
+      if (current.has(terminalId)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.add(terminalId);
+      return next;
+    });
+
+    const existingTimer = terminalActivityTimersRef.current.get(terminalId);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+    }
+
+    const timer = window.setTimeout(() => {
+      terminalActivityTimersRef.current.delete(terminalId);
+      setActiveOutputTerminalIds((current) => {
+        if (!current.has(terminalId)) {
+          return current;
+        }
+
+        const next = new Set(current);
+        next.delete(terminalId);
+        return next;
+      });
+    }, terminalActivityHoldMs);
+    terminalActivityTimersRef.current.set(terminalId, timer);
+  }, []);
   const recordCommand = useCallback((tabId: string, value: string) => {
     const command = value.trim();
     if (!command) {
@@ -402,6 +548,7 @@ export function TerminalWorkspace({
         terminalRightClickBehavior={terminalRightClickBehavior}
         terminalTheme={terminalTheme}
         terminalSnapshot={tab.terminalSnapshot}
+        onActivity={reportTerminalActivity}
         onCloseDisconnected={() => {
           if (paneCount > 1 && tab.terminal) {
             void onCloseSshTerminalPane(ownerTabId, tab.terminal.id);
@@ -420,6 +567,7 @@ export function TerminalWorkspace({
         onReconnectDisconnected={() => onReconnectSessionTab(ownerTabId)}
         onResizeTerminal={onResizeTerminal}
         onSendData={onSendTerminalData}
+        onTitleChange={onTerminalTitleChange}
         onWorkingDirectoryChange={
           tab.connection.transport?.kind === "ssh"
             ? onTerminalWorkingDirectoryChange
@@ -587,6 +735,7 @@ export function TerminalWorkspace({
             terminal: pane.terminal,
             terminalLayout: null,
             terminalSnapshot: pane.terminalSnapshot,
+            terminalTitle: pane.terminalTitle,
             terminalWorkingDirectory: pane.terminalWorkingDirectory,
           };
           return renderTerminalPane(
@@ -846,6 +995,13 @@ export function TerminalWorkspace({
   }, [onCloseSessionTab, sessionTabs]);
 
   useEffect(() => {
+    return () => {
+      terminalActivityTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      terminalActivityTimersRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!resolvedActiveTabId) {
       return;
     }
@@ -861,6 +1017,30 @@ export function TerminalWorkspace({
     const tabId = getSessionTabId(tab);
     const isFileTransferSessionTab = isFileTransferTab(tab);
     const isCustomSessionTab = isCustomTab(tab);
+    const protocolLabel = resolveTabProtocolLabel(tab);
+    const focusedTerminalId = focusedSshTerminalByTab[tabId];
+    const terminalPanes = terminalPanesForTab(tab);
+    const focusedTerminalPane =
+      terminalPanes.find((pane) => pane.terminal.id === focusedTerminalId) ?? terminalPanes[0];
+    const connectionTitle = resolveConnectionLabel(
+      tab.connection,
+      profilesById.get(tab.connection.profileId)?.name,
+    );
+    const reportedTitle = focusedTerminalPane?.terminal.status === "attached"
+      ? focusedTerminalPane.terminalTitle?.trim() || null
+      : null;
+    const taskTitle = resolveTerminalTaskTitle(reportedTitle, tab.connection, connectionTitle);
+    const displayTitle = taskTitle ?? connectionTitle;
+    const terminalIsBusy = Boolean(
+      focusedTerminalPane &&
+      (activeOutputTerminalIds.has(focusedTerminalPane.terminal.id) || tab.connection.status === "connecting"),
+    );
+    const titleDescription = taskTitle
+      ? `任务：${taskTitle}\n主机：${connectionTitle}\n类型：${protocolLabel}`
+      : `主机：${connectionTitle}\n类型：${protocolLabel}`;
+    const tabAriaLabel = taskTitle
+      ? `切换到任务 ${taskTitle}，主机 ${connectionTitle}，类型 ${protocolLabel}`
+      : `切换到主机 ${connectionTitle}，类型 ${protocolLabel}`;
 
     return (
       <div
@@ -931,13 +1111,16 @@ export function TerminalWorkspace({
         }}
       >
         <button
-          aria-label={`切换到 ${tab.connection.title}`}
+          aria-label={tabAriaLabel}
           className="tab-main"
           onClick={() => selectSessionTab(tabId)}
-          title={tab.connection.title}
+          title={titleDescription}
           type="button"
         >
-          <span>{tab.connection.title}</span>
+          <span className="tab-title-line">
+            {terminalIsBusy ? <i aria-hidden="true" className="tab-terminal-activity" /> : null}
+            <span className="tab-activity-title">{displayTitle}</span>
+          </span>
         </button>
         <div className="tab-tools">
           <button

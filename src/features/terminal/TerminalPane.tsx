@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import { Terminal, type IDecoration, type IMarker } from "@xterm/xterm";
+import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import type {
   TerminalColorPalette,
@@ -29,11 +29,13 @@ interface TerminalPaneProps {
   terminalRightClickBehavior?: TerminalRightClickBehavior;
   terminalTheme: TerminalColorPalette;
   terminalSnapshot: TerminalSnapshot | null;
+  onActivity?: (terminalId: string) => void;
   onCloseDisconnected?: () => void;
   onCommandSubmitted?: (command: string) => void;
   onReconnectDisconnected?: () => void;
   onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
   onSendData: (data: string, terminalId: string) => Promise<void> | void;
+  onTitleChange?: (terminalId: string, title: string) => void;
   onWorkingDirectoryChange?: (terminalId: string, path: string) => void;
 }
 
@@ -47,12 +49,6 @@ type MainstreamCli =
   | "gemini"
   | "opencode"
   | "qwen";
-
-interface CliInputDecorationState {
-  decoration: IDecoration;
-  key: string;
-  marker: IMarker;
-}
 
 const cliExecutableNames: Record<string, MainstreamCli> = {
   "@anthropic-ai/claude-code": "claude",
@@ -169,78 +165,12 @@ function isDarkColor(color: string) {
   return red * 0.299 + green * 0.587 + blue * 0.114 < 150;
 }
 
-function mixTerminalColor(base: RgbColor, accent: RgbColor, accentRatio: number): RgbColor {
-  return base.map((channel, index) =>
-    Math.round(channel * (1 - accentRatio) + accent[index] * accentRatio),
-  ) as RgbColor;
-}
-
-function resolveTuiReportedBackground(theme: TerminalColorPalette): RgbColor {
-  const background = parseTerminalColor(theme.background) ?? [40, 44, 52];
-  const accent = parseTerminalColor(theme.cyan) ?? background;
-  const accentRatio = isDarkColor(theme.background) ? 0.14 : 0.06;
-  return mixTerminalColor(background, accent, accentRatio);
-}
-
 function formatOscRgb(color: RgbColor) {
   const channels = color.map((channel) => {
     const hex = Math.max(0, Math.min(255, channel)).toString(16).padStart(2, "0");
     return `${hex}${hex}`;
   });
   return `rgb:${channels.join("/")}`;
-}
-
-function formatHexRgb(color: RgbColor) {
-  return `#${color
-    .map((channel) => Math.max(0, Math.min(255, channel)).toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function disposeCliInputDecoration(state: CliInputDecorationState | null) {
-  state?.decoration.dispose();
-  state?.marker.dispose();
-}
-
-function terminalLineText(instance: Terminal, absoluteLine: number) {
-  return instance.buffer.active.getLine(absoluteLine)?.translateToString(true) ?? "";
-}
-
-function resolveCliInputRegion(instance: Terminal) {
-  const buffer = instance.buffer.active;
-  if (buffer.type !== "normal") {
-    return null;
-  }
-
-  const cursorLine = buffer.baseY + buffer.cursorY;
-  const topBorderPattern = /(?:[╭┌╔┏╒╓].*[─━═-]{2,}|[─━═]{8,})/;
-  const bottomBorderPattern = /(?:[╰└╚┗╘╙].*[─━═-]{2,}|[─━═]{8,})/;
-  let topBorder = -1;
-  let bottomBorder = -1;
-
-  for (let offset = 1; offset <= Math.min(6, buffer.cursorY); offset += 1) {
-    const line = cursorLine - offset;
-    if (topBorderPattern.test(terminalLineText(instance, line))) {
-      topBorder = line;
-      break;
-    }
-  }
-
-  for (let offset = 1; offset <= 6; offset += 1) {
-    const line = cursorLine + offset;
-    if (bottomBorderPattern.test(terminalLineText(instance, line))) {
-      bottomBorder = line;
-      break;
-    }
-  }
-
-  if (topBorder >= 0 && bottomBorder > cursorLine && bottomBorder - topBorder <= 8) {
-    return { height: bottomBorder - topBorder + 1, startLine: topBorder };
-  }
-
-  // Aider and some Claude/OpenCode versions render a borderless prompt. Keep
-  // that fallback deliberately narrow so status bars and ordinary output are
-  // not recolored with the input row.
-  return { height: 1, startLine: cursorLine };
 }
 
 function createSearchSelectionTheme(theme: TerminalColorPalette) {
@@ -449,10 +379,12 @@ export function TerminalPane({
   clearRevision = 0,
   isActive = true,
   onResizeTerminal,
+  onActivity,
   onCloseDisconnected,
   onCommandSubmitted,
   onReconnectDisconnected,
   onSendData,
+  onTitleChange,
   onWorkingDirectoryChange,
   reportSizeWhenVisible = false,
   terminal,
@@ -487,17 +419,22 @@ export function TerminalPane({
   const inputQueueRef = useRef(Promise.resolve());
   const isActiveRef = useRef(isActive);
   const terminalStatusRef = useRef(terminal?.status ?? null);
+  const activityRef = useRef(onActivity);
   const closeDisconnectedRef = useRef(onCloseDisconnected);
   const reconnectDisconnectedRef = useRef(onReconnectDisconnected);
+  const titleChangeRef = useRef(onTitleChange);
   const workingDirectoryChangeRef = useRef(onWorkingDirectoryChange);
   const openSearchRef = useRef<() => void>(() => undefined);
   const reportSizeWhenVisibleRef = useRef(reportSizeWhenVisible);
   const reportSizeRef = useRef<(() => void) | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
-  const tuiReportedBackgroundRef = useRef(resolveTuiReportedBackground(terminalTheme));
+  const tuiReportedForegroundRef = useRef<RgbColor>(
+    parseTerminalColor(terminalTheme.foreground) ?? [217, 226, 234],
+  );
+  const tuiReportedBackgroundRef = useRef<RgbColor>(
+    parseTerminalColor(terminalTheme.background) ?? [8, 10, 12],
+  );
   const activeMainstreamCliRef = useRef<MainstreamCli | null>(null);
-  const cliInputDecorationRef = useRef<CliInputDecorationState | null>(null);
-  const refreshCliInputDecorationRef = useRef<() => void>(() => undefined);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -506,6 +443,9 @@ export function TerminalPane({
   const [searchStatus, setSearchStatus] = useState<SearchStatus>("idle");
   const [searchMatchIndex, setSearchMatchIndex] = useState(-1);
   const [pasteDraft, setPasteDraft] = useState<string | null>(null);
+  const [alternateScreenCli, setAlternateScreenCli] = useState<MainstreamCli | null>(null);
+  const [dismissedScrollbackHintFor, setDismissedScrollbackHintFor] = useState<string | null>(null);
+  const [copiedScrollbackFixFor, setCopiedScrollbackFixFor] = useState<string | null>(null);
   const terminalBuffer = terminalSnapshot?.bufferPreview ?? "";
   const terminalOutputChunk = terminalSnapshot?.outputChunk ?? "";
   const terminalStatus = terminal?.status ?? terminalSnapshot?.status ?? null;
@@ -540,8 +480,14 @@ export function TerminalPane({
   }, [onResizeTerminal]);
 
   useEffect(() => {
-    tuiReportedBackgroundRef.current = resolveTuiReportedBackground(terminalTheme);
-    refreshCliInputDecorationRef.current();
+    activityRef.current = onActivity;
+  }, [onActivity]);
+
+  useEffect(() => {
+    tuiReportedForegroundRef.current =
+      parseTerminalColor(terminalTheme.foreground) ?? [217, 226, 234];
+    tuiReportedBackgroundRef.current =
+      parseTerminalColor(terminalTheme.background) ?? [8, 10, 12];
   }, [terminalTheme]);
 
   useEffect(() => {
@@ -563,6 +509,10 @@ export function TerminalPane({
   useEffect(() => {
     reconnectDisconnectedRef.current = onReconnectDisconnected;
   }, [onReconnectDisconnected]);
+
+  useEffect(() => {
+    titleChangeRef.current = onTitleChange;
+  }, [onTitleChange]);
 
   useEffect(() => {
     workingDirectoryChangeRef.current = onWorkingDirectoryChange;
@@ -803,8 +753,7 @@ export function TerminalPane({
 
     commandDraftRef.current = "";
     activeMainstreamCliRef.current = null;
-    disposeCliInputDecoration(cliInputDecorationRef.current);
-    cliInputDecorationRef.current = null;
+    setAlternateScreenCli(null);
 
     if (!terminal || !container) {
       xtermRef.current?.dispose();
@@ -846,75 +795,46 @@ export function TerminalPane({
 
       return true;
     });
+    const foregroundQueryHandler = instance.parser.registerOscHandler(10, (data) => {
+      if (data.trim() !== "?") {
+        return false;
+      }
+
+      instance.input(
+        `\x1b]10;${formatOscRgb(tuiReportedForegroundRef.current)}\x1b\\`,
+        false,
+      );
+      return true;
+    });
     const backgroundQueryHandler = instance.parser.registerOscHandler(11, (data) => {
       if (data.trim() !== "?") {
         return false;
       }
 
-      // Adaptive TUIs such as Codex derive their composer fill from OSC 11.
-      // Report a subtle accent-tinted color while keeping Portiva's real canvas
-      // background unchanged.
+      // Full-screen TUIs such as Codex require both OSC 10 and OSC 11 before
+      // enabling their native composer background. Report the real terminal
+      // palette and let each TUI paint its own complete input region.
       instance.input(
         `\x1b]11;${formatOscRgb(tuiReportedBackgroundRef.current)}\x1b\\`,
         false,
       );
       return true;
     });
-    let cliDecorationFrame: number | null = null;
-    const refreshCliInputDecoration = () => {
-      cliDecorationFrame = null;
-      const activeCli = activeMainstreamCliRef.current;
-      const color = formatHexRgb(tuiReportedBackgroundRef.current);
-      const region = activeCli ? resolveCliInputRegion(instance) : null;
-
-      if (!region) {
-        disposeCliInputDecoration(cliInputDecorationRef.current);
-        cliInputDecorationRef.current = null;
-        return;
-      }
-
-      const key = `${activeCli}:${region.startLine}:${region.height}:${instance.cols}:${color}`;
-      if (cliInputDecorationRef.current?.key === key) {
-        return;
-      }
-
-      disposeCliInputDecoration(cliInputDecorationRef.current);
-      cliInputDecorationRef.current = null;
-
-      const cursorLine = instance.buffer.active.baseY + instance.buffer.active.cursorY;
-      const marker = instance.registerMarker(region.startLine - cursorLine);
-      const decoration = instance.registerDecoration({
-        backgroundColor: color,
-        height: region.height,
-        layer: "bottom",
-        marker,
-        width: instance.cols,
-        x: 0,
-      });
-
-      if (!decoration) {
-        marker.dispose();
-        return;
-      }
-
-      cliInputDecorationRef.current = { decoration, key, marker };
-    };
-    const scheduleCliInputDecorationRefresh = () => {
-      if (cliDecorationFrame !== null) {
-        return;
-      }
-      cliDecorationFrame = window.requestAnimationFrame(refreshCliInputDecoration);
+    const syncAlternateScreenCli = () => {
+      const nextCli =
+        instance.buffer.active.type === "alternate" ? activeMainstreamCliRef.current : null;
+      setAlternateScreenCli((current) => (current === nextCli ? current : nextCli));
     };
     const setActiveMainstreamCli = (cli: MainstreamCli | null) => {
       if (activeMainstreamCliRef.current === cli) {
-        scheduleCliInputDecorationRefresh();
+        syncAlternateScreenCli();
         return;
       }
       activeMainstreamCliRef.current = cli;
-      scheduleCliInputDecorationRefresh();
+      syncAlternateScreenCli();
     };
-    refreshCliInputDecorationRef.current = scheduleCliInputDecorationRefresh;
     const titleChangeHandler = instance.onTitleChange((title) => {
+      titleChangeRef.current?.(terminal.id, title);
       const detectedCli = detectMainstreamCliTitle(title);
       if (detectedCli) {
         setActiveMainstreamCli(detectedCli);
@@ -922,9 +842,10 @@ export function TerminalPane({
         setActiveMainstreamCli(null);
       }
     });
-    const cursorMoveHandler = instance.onCursorMove(scheduleCliInputDecorationRefresh);
-    const resizeHandler = instance.onResize(scheduleCliInputDecorationRefresh);
-    const writeParsedHandler = instance.onWriteParsed(scheduleCliInputDecorationRefresh);
+    const bufferChangeHandler = instance.buffer.onBufferChange(syncAlternateScreenCli);
+    const writeParsedHandler = instance.onWriteParsed(() => {
+      activityRef.current?.(terminal.id);
+    });
     instance.attachCustomKeyEventHandler((event) => {
       if (event.type === "keydown" && isTerminalSearchShortcut(event)) {
         event.preventDefault();
@@ -1071,19 +992,12 @@ export function TerminalPane({
     return () => {
       resizeObserver.disconnect();
       workingDirectoryHandler.dispose();
+      foregroundQueryHandler.dispose();
       backgroundQueryHandler.dispose();
       titleChangeHandler.dispose();
-      cursorMoveHandler.dispose();
-      resizeHandler.dispose();
+      bufferChangeHandler.dispose();
       writeParsedHandler.dispose();
-      if (cliDecorationFrame !== null) {
-        window.cancelAnimationFrame(cliDecorationFrame);
-        cliDecorationFrame = null;
-      }
-      disposeCliInputDecoration(cliInputDecorationRef.current);
-      cliInputDecorationRef.current = null;
       activeMainstreamCliRef.current = null;
-      refreshCliInputDecorationRef.current = () => undefined;
       if (resizeTimerRef.current) {
         window.clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;
@@ -1338,12 +1252,36 @@ export function TerminalPane({
     await pasteClipboardText();
   };
 
+  const showTuiScrollbackHint = Boolean(
+    alternateScreenCli &&
+      terminal &&
+      terminal.status !== "closed" &&
+      dismissedScrollbackHintFor !== terminal.id,
+  );
+
+  const copyCodexInlineCommand = async () => {
+    if (!terminal) {
+      return;
+    }
+
+    try {
+      await writeClipboardText("codex --no-alt-screen");
+      setCopiedScrollbackFixFor(terminal.id);
+    } catch (error) {
+      console.warn("复制 Codex 长对话兼容命令失败", error);
+    }
+  };
+
   return (
     <section
       className="terminal-pane"
       tabIndex={-1}
       onClick={(event) => {
-        if ((event.target as HTMLElement).closest(".terminal-search-bar, .terminal-paste-confirm")) {
+        if (
+          (event.target as HTMLElement).closest(
+            ".terminal-search-bar, .terminal-paste-confirm, .terminal-tui-scrollback-hint",
+          )
+        ) {
           return;
         }
 
@@ -1351,7 +1289,11 @@ export function TerminalPane({
         xtermRef.current?.focus();
       }}
       onMouseDownCapture={(event) => {
-        if ((event.target as HTMLElement).closest(".terminal-search-bar, .terminal-paste-confirm")) {
+        if (
+          (event.target as HTMLElement).closest(
+            ".terminal-search-bar, .terminal-paste-confirm, .terminal-tui-scrollback-hint",
+          )
+        ) {
           return;
         }
 
@@ -1378,6 +1320,38 @@ export function TerminalPane({
       }}
     >
       <div className="xterm-host" ref={containerRef} />
+      {showTuiScrollbackHint && terminal ? (
+        <aside className="terminal-tui-scrollback-hint" role="status">
+          <span aria-hidden="true" className="terminal-tui-scrollback-hint-indicator" />
+          <span className="terminal-tui-scrollback-hint-copy">
+            <strong>长对话未进入终端回滚</strong>
+            <span>
+              {alternateScreenCli === "codex"
+                ? "退出后用 inline 模式重启，可保留完整滚动记录"
+                : `${alternateScreenCli} 正在使用备用屏幕，请启用其 inline 模式`}
+            </span>
+          </span>
+          {alternateScreenCli === "codex" ? (
+            <button
+              className="terminal-tui-scrollback-hint-action"
+              onClick={() => void copyCodexInlineCommand()}
+              title={'长期生效：在 ~/.codex/config.toml 中设置 [tui] alternate_screen = "never"'}
+              type="button"
+            >
+              {copiedScrollbackFixFor === terminal.id ? "已复制" : "复制启动命令"}
+            </button>
+          ) : null}
+          <button
+            aria-label="关闭长对话兼容提示"
+            className="terminal-tui-scrollback-hint-close"
+            onClick={() => setDismissedScrollbackHintFor(terminal.id)}
+            title="本次终端不再提示"
+            type="button"
+          >
+            <Icon name="x" />
+          </button>
+        </aside>
+      ) : null}
       {pasteDraft !== null ? (
         <div className="terminal-paste-confirm-backdrop" role="presentation">
           <div

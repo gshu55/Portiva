@@ -1,0 +1,753 @@
+.status-dock {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 300px;
+  gap: var(--space-3-5, 14px);
+  max-height: 168px;
+  min-height: 0;
+  padding: var(--space-3, 12px) 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--button-muted-bg);
+}
+
+.transfer-queue,
+.log-panel,
+.status-strip {
+  display: grid;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+}
+
+.dock-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-strong);
+}
+
+.dock-heading button {
+  min-height: 24px;
+  border: 1px solid var(--border-subtle);
+  background: var(--button-bg);
+  color: var(--text-main);
+  padding: 0 var(--space-2, 8px);
+  cursor: pointer;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.dock-heading button:disabled {
+  cursor: not-allowed;
+}
+
+.dock-heading span {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.transfer-item {
+  display: grid;
+  grid-template-columns: 62px minmax(100px, 1fr) minmax(90px, 1fr) 70px 38px 76px minmax(130px, auto);
+  align-items: center;
+  gap: var(--space-2, 8px);
+  color: var(--text-soft);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.transfer-actions {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.transfer-actions button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--button-bg);
+  color: var(--text-soft);
+  padding: 0;
+  cursor: pointer;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.log-list {
+  display: grid;
+  gap: var(--space-1-5, 6px);
+}
+
+.log-heading-copy {
+  display: grid;
+  gap: var(--space-0-5, 2px);
+  min-width: 0;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 54px minmax(120px, 0.52fr) minmax(80px, 0.32fr) minmax(110px, 0.4fr);
+  gap: 5px var(--space-2, 8px);
+  align-items: start;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 7px var(--space-2, 8px);
+  color: var(--text-soft);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.log-row time,
+.log-row code,
+.log-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-row code {
+  color: var(--text-main);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-11, 11px);
+}
+
+.log-row small {
+  color: var(--text-muted);
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+  font-size: var(--app-font-size-10, 10px);
+}
+
+.log-row p {
+  grid-column: 2 / -1;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-main);
+  line-height: 1.45;
+}
+
+.log-empty {
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.log-row.info span:first-child {
+  color: var(--accent);
+}
+
+.log-row.warn span:first-child {
+  color: var(--terminal-fg);
+}
+
+.log-row.error span:first-child {
+  color: var(--danger);
+}
+
+.status-strip {
+  align-content: start;
+  color: var(--text-muted);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.status-strip strong {
+  color: var(--text-strong);
+}
+
+progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.app-shell .brand p,
+.app-shell .profile-target,
+.app-shell .panel small,
+.app-shell .toolbar span,
+.app-shell .todo-note,
+.app-shell .launcher-grid small,
+.app-shell .launcher-row small,
+.app-shell .tab,
+.app-shell .file-path-row label,
+.app-shell .file-selection,
+.app-shell .tunnel-row,
+.app-shell .settings-block span,
+.app-shell .settings-block label,
+.app-shell .security-row,
+.app-shell .status-strip,
+.app-shell .dock-heading span,
+.app-shell .transfer-item,
+.app-shell .log-row {
+  color: var(--text-muted);
+}
+
+.app-shell .panel-heading,
+.app-shell .launcher-grid button.enabled,
+.app-shell .launcher-section strong,
+.app-shell .profile-name,
+.app-shell .tab.active,
+.app-shell .protocol-card-title strong,
+.app-shell .settings-block strong,
+.app-shell .security-list strong,
+.app-shell .dock-heading,
+.app-shell .status-strip strong {
+  color: var(--text-strong);
+}
+
+.app-shell .panel {
+  border-color: var(--border-panel);
+  background: var(--panel-bg);
+}
+
+.app-shell .toolbar {
+  border-bottom-color: var(--border-panel);
+  background: var(--toolbar-bg);
+}
+
+.app-shell .status-dock {
+  border-top-color: var(--border-panel);
+  background: var(--dock-bg);
+}
+
+.app-shell .primary-action,
+.app-shell .toolbar-actions button,
+.app-shell .tab,
+.app-shell .panel-action,
+.app-shell .terminal-context-menu button,
+.app-shell .file-path-row button,
+.app-shell .tunnel-actions button,
+.app-shell .file-actions button,
+.app-shell .profile-actions button,
+.app-shell .security-row button,
+.app-shell .transfer-actions button {
+  background: var(--button-bg);
+  color: var(--text-main);
+}
+
+.app-shell .primary-action,
+.app-shell .toolbar-actions button,
+.app-shell .panel-action,
+.app-shell .terminal-context-menu button,
+.app-shell .file-path-row button,
+.app-shell .tunnel-actions button,
+.app-shell .file-actions button,
+.app-shell .profile-actions button,
+.app-shell .security-row button,
+.app-shell .transfer-actions button {
+  border-color: var(--border-subtle);
+}
+
+.app-shell .tab {
+  border-color: var(--tab-border);
+}
+
+.app-shell .transfer-actions .danger-action:not(:disabled) {
+  border-color: rgba(233, 131, 91, 0.38);
+  color: var(--danger);
+}
+
+.app-shell .transfer-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.app-shell .launcher-grid button,
+.app-shell .protocol-card,
+.app-shell .file-list button {
+  border-color: var(--border-subtle);
+  background: var(--panel-solid-bg);
+  color: var(--text-soft);
+}
+
+.app-shell input,
+.app-shell textarea,
+.app-shell select,
+.app-shell kbd {
+  border-color: var(--border-subtle);
+  background: var(--field-bg);
+  color: var(--text-strong);
+}
+
+.app-shell .profile-item,
+.app-shell .panel-heading,
+.app-shell .settings-block {
+  border-color: var(--border-faint);
+}
+
+.app-shell .profile-protocol,
+.app-shell .tab.active,
+.app-shell .protocol-caps small,
+.app-shell .tunnel-row small,
+.app-shell .log-row.info span:first-child {
+  color: var(--accent);
+}
+
+.app-shell .terminal-pane {
+  border-color: var(--content-border);
+  background: var(--terminal-bg);
+}
+
+.app-shell .terminal-pane pre,
+.app-shell .file-list,
+.app-shell .file-path-row input,
+.app-shell .profile-target,
+.app-shell .protocol-form input,
+.app-shell .protocol-form select {
+  font-family: var(--app-font-family, "Portiva JetBrains Mono"), monospace;
+}
+
+.app-shell .terminal-pane pre {
+  font-size: var(--terminal-font-size);
+}
+
+.app-shell button,
+.app-shell input,
+.app-shell select,
+.app-shell textarea,
+.app-shell .tab,
+.app-shell .profile-item,
+.app-shell .file-browser-row,
+.app-shell .security-row,
+.app-shell .transfer-item,
+.app-shell .settings-menu button {
+  border-radius: var(--control-radius);
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.app-shell .tab {
+  border-radius: var(--control-radius);
+}
+
+.app-shell button:hover:not(:disabled),
+.app-shell .file-browser-row:hover:not(:disabled),
+.app-shell .profile-item:hover,
+.app-shell .security-row:hover,
+.app-shell .transfer-item:hover,
+.app-shell .settings-menu button:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-subtle));
+  background-color: color-mix(in srgb, var(--accent) 9%, var(--button-bg));
+  color: var(--text-strong);
+}
+
+.app-shell .tab:hover:not(.active) {
+  border-color: var(--tab-hover-border);
+  background-color: color-mix(in srgb, var(--accent) 6%, var(--button-muted-bg));
+  color: var(--text-strong);
+}
+
+.app-shell .tab .tab-main:hover:not(:disabled),
+.app-shell .tab .tab-main:active:not(:disabled) {
+  border-color: transparent;
+  background-color: transparent;
+  color: inherit;
+  transform: none;
+}
+
+.app-shell .tab:hover:not(.active) .tab-main span {
+  color: var(--text-strong);
+}
+
+.app-shell :is(.tab, .http-request-tab) :is(.tab-close, .http-request-tab-close.ui-button):hover:not(:disabled) {
+  border-color: rgba(233, 131, 91, 0.45);
+  /* background-color: var(--danger-bg); */
+  color: var(--danger);
+}
+
+.app-shell button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.app-shell .app-titlebar-actions button:hover,
+.app-shell .app-titlebar-actions button.active {
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background-color: var(--accent-bg);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.app-shell .window-control {
+  border-radius: 0;
+}
+
+.app-shell .window-controls.windows .window-control,
+.app-shell .window-controls.linux .window-control {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  transform: none;
+}
+
+.app-shell .window-control:hover:not(:disabled) {
+  border-color: transparent;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-strong);
+}
+
+.app-shell .window-controls.windows .window-control.close:hover:not(:disabled),
+.app-shell .window-controls.linux .window-control.close:hover:not(:disabled) {
+  width: 44px;
+  height: 44px;
+  border-radius: 0;
+  background-color: #c42b1c;
+  color: #ffffff;
+}
+
+.app-shell .window-control:active:not(:disabled) {
+  transform: none;
+}
+
+.app-shell .settings-page {
+  --settings-content-radius: var(--surface-radius);
+  --settings-inner-radius: var(--control-radius);
+}
+
+.app-shell .settings-content > .settings-panel {
+  overflow: auto;
+  border-radius: var(--settings-content-radius);
+}
+
+.app-shell .settings-page .connection-launcher,
+.app-shell .settings-page .protocol-matrix,
+.app-shell .settings-page .tunnel-panel,
+.app-shell .settings-page .status-dock,
+.app-shell .settings-page .log-panel {
+  overflow: hidden;
+  border-radius: var(--settings-inner-radius);
+}
+
+.app-shell .settings-page .settings-block input[type="text"],
+.app-shell .settings-page .settings-block input:not([type]),
+.app-shell .settings-page .settings-block input[type="number"],
+.app-shell .settings-page .settings-block select,
+.app-shell .settings-page .settings-block textarea,
+.app-shell .settings-page .terminal-palette-preview,
+.app-shell .settings-page .terminal-right-click-options button,
+.app-shell .settings-page .shortcut-row,
+.app-shell .settings-page .check-row,
+.app-shell .settings-page .security-row,
+.app-shell .settings-page .launcher-grid button,
+.app-shell .settings-page .launcher-row,
+.app-shell .settings-page .protocol-card,
+.app-shell .settings-page .protocol-caps small,
+.app-shell .settings-page .tunnel-actions button,
+.app-shell .settings-page .tunnel-row,
+.app-shell .settings-page .log-row {
+  border-radius: var(--settings-inner-radius);
+}
+
+.app-shell .settings-page .segmented-control {
+  overflow: hidden;
+  border-radius: var(--settings-inner-radius);
+}
+
+.app-shell .settings-page .segmented-control button {
+  border-radius: 0;
+}
+
+.app-shell button:focus-visible,
+.app-shell input:focus-visible,
+.app-shell select:focus-visible,
+.app-shell textarea:focus-visible,
+.app-shell .file-browser-row:focus-visible,
+.app-shell .settings-menu button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.app-shell input:hover:not(:disabled),
+.app-shell select:hover:not(:disabled),
+.app-shell textarea:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border-subtle));
+}
+
+.app-shell input:focus,
+.app-shell select:focus,
+.app-shell textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-subtle));
+  outline: none;
+}
+
+.app-shell .ui-field-shell:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-subtle));
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.app-shell :is(
+  .ui-field-shell,
+  .saved-connections-search,
+  .http-tree-search,
+  .network-proxy-row
+) :is(input, button):focus,
+.app-shell :is(
+  .ui-field-shell,
+  .saved-connections-search,
+  .http-tree-search,
+  .network-proxy-row
+) :is(input, button):focus-visible {
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.app-shell .danger-action:not(:disabled),
+.app-shell .profile-actions .danger-action:not(:disabled),
+.app-shell .transfer-actions .danger-action:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border-subtle));
+  color: var(--danger);
+}
+
+.app-shell .danger-action:hover:not(:disabled),
+.app-shell .profile-actions .danger-action:hover:not(:disabled),
+.app-shell .transfer-actions .danger-action:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 62%, var(--border-subtle));
+  background-color: var(--danger-bg);
+  color: color-mix(in srgb, var(--danger) 82%, var(--text-strong));
+}
+
+.app-shell .tab.active,
+.app-shell .profile-item.active,
+.app-shell .file-list button.active,
+.app-shell .file-browser-row.active,
+.app-shell .settings-menu button.active,
+.app-shell .segmented-control button.active,
+.app-shell .terminal-icon-button.active,
+.app-shell .home-rail button.active {
+  color: var(--text-strong);
+}
+
+.app-shell .profile-item.active,
+.app-shell .file-list button.active,
+.app-shell .file-browser-row.active,
+.app-shell .settings-menu button.active,
+.app-shell .segmented-control button.active,
+.app-shell .terminal-icon-button.active,
+.app-shell .home-rail button.active {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-subtle));
+}
+
+.app-shell .tab.active {
+  border-color: var(--tab-active-border);
+}
+
+.app-shell .tab.active,
+.app-shell .profile-item.active,
+.app-shell .file-list button.active,
+.app-shell .file-browser-row.active,
+.app-shell .settings-menu button.active {
+  background-color: color-mix(in srgb, var(--accent) 12%, var(--panel-solid-bg));
+}
+
+.app-shell .settings-menu button.active {
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--border-subtle));
+  background-color: color-mix(in srgb, var(--accent) 20%, var(--panel-solid-bg));
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.app-shell .settings-menu button.active .icon {
+  color: var(--accent);
+}
+
+.app-shell .tab.active {
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--border-subtle));
+  background: var(--accent);
+  color: #fff;
+}
+
+.app-shell .tab.active :is(.tab-main span, .tab-close) {
+  color: #fff;
+}
+
+/*
+ * Layout-only containers never paint a second surface behind their children.
+ * Actual cards, lists, editors and controls remain responsible for visuals.
+ */
+.app-shell :is(
+  .http-console-sidebar,
+  .http-console-main,
+  .http-sidebar-card,
+  .http-request-tabs,
+  .settings-menu,
+  .settings-content > .settings-panel,
+  .file-manager,
+  .file-manager > .transfer-queue,
+  .simple-sftp-transfers,
+  .serial-terminal-panel,
+  .serial-control-layout
+) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell :is(
+  .http-sidebar-card,
+  .settings-menu,
+  .file-manager > .transfer-queue,
+  .simple-sftp-transfers
+) {
+  border: 0;
+  border-radius: 0;
+}
+
+/* Theme mode follows the same sliding selection language as Serial TEXT / HEX. */
+.app-shell .settings-page .theme-mode-control {
+  position: relative;
+  isolation: isolate;
+  border-color: color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: color-mix(in srgb, var(--button-muted-bg) 76%, var(--workspace-bg));
+}
+
+.app-shell .settings-page .theme-mode-control::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 0;
+  width: calc(100% / 3);
+  border-radius: var(--control-radius) 0 0 var(--control-radius);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent);
+  content: "";
+  transition: transform 0.16s ease, border-radius 0.16s ease;
+}
+
+.app-shell .settings-page .theme-mode-control.mode-light::before {
+  border-radius: 0;
+  transform: translateX(100%);
+}
+
+.app-shell .settings-page .theme-mode-control.mode-system::before,
+.app-shell .settings-page .theme-mode-control.mode-custom::before {
+  border-radius: 0 var(--control-radius) var(--control-radius) 0;
+  transform: translateX(200%);
+}
+
+.app-shell .settings-page .theme-mode-control .ui-button,
+.app-shell .settings-page .theme-mode-control .ui-button:hover:not(:disabled) {
+  position: relative;
+  z-index: 1;
+  border-color: color-mix(in srgb, var(--border-subtle) 70%, transparent);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.app-shell .settings-page .theme-mode-control .ui-button.active,
+.app-shell .settings-page .theme-mode-control .ui-button.active:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text-strong);
+  box-shadow: none;
+}
+
+.app-shell button:disabled,
+.app-shell input:disabled,
+.app-shell select:disabled,
+.app-shell textarea:disabled {
+  filter: grayscale(0.22);
+}
+
+.app-shell .terminal-pane pre,
+.app-shell kbd {
+  color: var(--terminal-fg);
+}
+
+.app-shell .risk-banner {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.app-shell progress {
+  accent-color: var(--accent);
+}
+
+.wsl-file-transfer-page {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-2, 8px) var(--space-2-5, 10px) var(--space-2-5, 10px);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--success) 5%, transparent), transparent 34%),
+    var(--workspace-bg);
+}
+
+.wsl-file-transfer-page > .file-manager {
+  height: 100%;
+  border-color: color-mix(in srgb, var(--success) 20%, var(--border-faint));
+  border-radius: var(--surface-radius);
+}
+
+.wsl-file-transfer-page.compact {
+  padding: 0;
+  background: transparent;
+}
+
+/* Light surfaces keep their existing gray labels; solid primary actions use white. */
+.app-shell[data-theme="light"] :is(
+  .ui-button-primary,
+  .primary-action,
+  .saved-create-button,
+  .saved-card-primary,
+  .saved-connections-empty button,
+  .serial-open-action,
+  .http-send-button:not(.sending)
+) {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
+  background-color: var(--accent);
+  color: #fff;
+}
+
+.app-shell[data-theme="light"] :is(
+  .ui-button-primary,
+  .primary-action,
+  .saved-create-button,
+  .saved-card-primary,
+  .saved-connections-empty button,
+  .serial-open-action,
+  .http-send-button:not(.sending)
+):hover:not(:disabled) {
+  background-color: var(--accent-strong);
+  color: #fff;
+}
+
+@media (prefers-color-scheme: light) {
+  .app-shell[data-theme="system"] :is(
+    .ui-button-primary,
+    .primary-action,
+    .saved-create-button,
+    .saved-card-primary,
+    .saved-connections-empty button,
+    .serial-open-action,
+    .http-send-button:not(.sending)
+  ) {
+    border-color: color-mix(in srgb, var(--accent) 72%, var(--border-subtle));
+    background-color: var(--accent);
+    color: #fff;
+  }
+
+  .app-shell[data-theme="system"] :is(
+    .ui-button-primary,
+    .primary-action,
+    .saved-create-button,
+    .saved-card-primary,
+    .saved-connections-empty button,
+    .serial-open-action,
+    .http-send-button:not(.sending)
+  ):hover:not(:disabled) {
+    background-color: var(--accent-strong);
+    color: #fff;
+  }
+}

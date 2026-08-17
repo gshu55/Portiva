@@ -182,7 +182,7 @@
 }
 
 .app-shell[data-background] .settings-menu {
-  gap: 8px;
+  gap: var(--space-2, 8px);
   padding: 0;
 }
 
@@ -199,7 +199,7 @@
 
 .app-shell[data-background] .settings-content > .settings-panel {
   display: grid;
-  gap: 10px;
+  gap: var(--space-2-5, 10px);
   align-content: start;
   padding: 0;
 }
@@ -261,12 +261,12 @@
 
 /* Serial: left and right workbenches are the surfaces; their children are not. */
 .app-shell[data-background] .serial-terminal-panel {
-  gap: 10px;
-  padding: 10px;
+  gap: var(--space-2-5, 10px);
+  padding: var(--space-2-5, 10px);
 }
 
 .app-shell[data-background] .serial-control-layout {
-  gap: 10px;
+  gap: var(--space-2-5, 10px);
 }
 
 .app-shell[data-background] :is(
@@ -291,18 +291,18 @@
 
 /* HTTP: each workbench uses the same surface; editors within it are flat. */
 .app-shell[data-background] .http-console {
-  gap: 10px;
+  gap: var(--space-2-5, 10px);
   padding: 0;
 }
 
 .app-shell[data-background] .http-console-sidebar {
-  gap: 10px;
+  gap: var(--space-2-5, 10px);
   background: transparent;
 }
 
 .app-shell[data-background] .http-console-main {
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--space-2-5, 10px);
 }
 
 .app-shell[data-background] :is(
