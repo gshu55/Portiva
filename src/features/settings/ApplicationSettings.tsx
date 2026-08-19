@@ -9,6 +9,9 @@ import { SettingsSectionHeader } from "./SettingsSection";
 type UpdatePhase = "available" | "checking" | "current" | "downloading" | "error" | "idle" | "installing";
 
 interface UpdateState {
+  attempt: number | null;
+  maxAttempts: number | null;
+  message: string | null;
   phase: UpdatePhase;
   progress: number | null;
   version: string | null;
@@ -16,11 +19,16 @@ interface UpdateState {
 
 interface UpdateProgressEvent {
   kind: "started" | "progress" | "finished";
+  attempt: number;
   chunkLength: number;
   contentLength: number | null;
+  maxAttempts: number;
 }
 
 const initialUpdateState: UpdateState = {
+  attempt: null,
+  maxAttempts: null,
+  message: null,
   phase: "idle",
   progress: null,
   version: null,
@@ -75,8 +83,12 @@ export function ApplicationSettings() {
         phase: "available",
         version: update.version,
       });
-    } catch {
-      setUpdateState({ ...initialUpdateState, phase: "error" });
+    } catch (error) {
+      setUpdateState({
+        ...initialUpdateState,
+        message: formatUpdateError(error, "检查更新失败，请稍后重试。"),
+        phase: "error",
+      });
     }
   };
 
@@ -98,7 +110,16 @@ export function ApplicationSettings() {
     try {
       const unlisten = await listen<UpdateProgressEvent>("portiva://update-progress", (event) => {
         if (event.payload.kind === "started") {
+          downloadedBytesRef.current = 0;
           totalBytesRef.current = event.payload.contentLength ?? null;
+          setUpdateState((current) => ({
+            ...current,
+            attempt: event.payload.attempt,
+            maxAttempts: event.payload.maxAttempts,
+            message: null,
+            phase: "downloading",
+            progress: null,
+          }));
           return;
         }
 
@@ -121,6 +142,8 @@ export function ApplicationSettings() {
 
         setUpdateState((current) => ({
           ...current,
+          attempt: event.payload.attempt,
+          maxAttempts: event.payload.maxAttempts,
           phase: "installing",
           progress: 100,
         }));
@@ -132,8 +155,12 @@ export function ApplicationSettings() {
       } finally {
         unlisten();
       }
-    } catch {
-      setUpdateState((current) => ({ ...current, phase: "error" }));
+    } catch (error) {
+      setUpdateState((current) => ({
+        ...current,
+        message: formatUpdateError(error, "更新下载或安装失败，请稍后重试。"),
+        phase: "error",
+      }));
     }
   };
 
@@ -147,7 +174,10 @@ export function ApplicationSettings() {
   };
 
   const updateButtonLabel = getUpdateButtonLabel(updateState);
-  const updateAction = updateState.phase === "available" ? installAvailableUpdate : checkForUpdates;
+  const canRetryDownload = updateState.phase === "error" && Boolean(updateState.version);
+  const updateAction = updateState.phase === "available" || canRetryDownload
+    ? installAvailableUpdate
+    : checkForUpdates;
   const updateDisabled = updateBusy || updateState.phase === "current";
 
   return (
@@ -163,11 +193,16 @@ export function ApplicationSettings() {
             className="application-update-button"
             disabled={updateDisabled}
             onClick={() => void updateAction()}
-            tone={updateState.phase === "available" ? "primary" : "muted"}
+            tone={updateState.phase === "available" || canRetryDownload ? "primary" : "muted"}
           >
             {updateButtonLabel}
           </Button>
         </div>
+        {updateState.message ? (
+          <p className="application-update-error profile-dialog-note danger" role="alert">
+            {updateState.message}
+          </p>
+        ) : null}
       </section>
       <section className="settings-block application-settings-block application-resources-block">
         <SettingsSectionHeader title="相关声明" />
@@ -198,12 +233,26 @@ function getUpdateButtonLabel(state: UpdateState) {
     case "available":
       return state.version ? `更新至 v${state.version}` : "安装更新";
     case "downloading":
+      if (state.attempt && state.attempt > 1) {
+        const attempt = state.maxAttempts ? `${state.attempt}/${state.maxAttempts}` : String(state.attempt);
+        return state.progress === null ? `重试下载 ${attempt}` : `重试 ${attempt} · ${state.progress}%`;
+      }
       return state.progress === null ? "正在下载" : `下载中 ${state.progress}%`;
     case "installing":
       return "正在安装";
     case "error":
-      return "重试检查";
+      return state.version ? "重试下载" : "重试检查";
     default:
       return "检查更新";
   }
+}
+
+function formatUpdateError(error: unknown, fallback: string) {
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
 }

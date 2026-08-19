@@ -99,14 +99,12 @@ button.tab-main {
 }
 
 .tab-main .tab-title-line {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  display: block;
   width: 100%;
 }
 
 .tab-main .tab-activity-title {
-  flex: 1 1 auto;
+  display: block;
   line-height: 16px;
 }
 
@@ -118,8 +116,14 @@ button.tab-main {
   border: 1.5px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-top-color: var(--accent);
   border-radius: var(--radius-pill, 999px);
-  animation: terminal-tab-activity-spin 720ms linear infinite;
+  opacity: 0;
+  animation: none;
   box-shadow: 0 0 7px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.tab-terminal-activity.is-active {
+  opacity: 1;
+  animation: terminal-tab-activity-spin 720ms linear infinite;
 }
 
 @keyframes terminal-tab-activity-spin {
@@ -129,7 +133,7 @@ button.tab-main {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tab-terminal-activity {
+  .tab-terminal-activity.is-active {
     animation: none;
     border-color: var(--accent);
     box-shadow: none;
@@ -139,6 +143,7 @@ button.tab-main {
 .tab-tools {
   display: flex;
   align-items: center;
+  gap: 7px;
   flex: 0 0 auto;
   padding-right: var(--space-1, 4px);
 }
@@ -508,6 +513,21 @@ button.tab-main {
   height: 100vh;
   height: 100dvh;
   padding: var(--space-2, 8px);
+}
+
+.detached-shell-macos .terminal-workspace > .tab-bar {
+  grid-template-columns: 84px minmax(0, 1fr);
+}
+
+.detached-shell-macos .terminal-workspace > .tab-bar::before {
+  grid-column: 1;
+  grid-row: 1;
+  content: "";
+}
+
+.detached-shell-macos .terminal-workspace > .tab-bar > .tabs {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .terminal-body {

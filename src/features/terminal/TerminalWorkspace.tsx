@@ -1053,6 +1053,7 @@ export function TerminalWorkspace({
         ]
           .filter(Boolean)
           .join(" ")}
+        data-tauri-drag-region="false"
         data-session-tab-id={tabId}
         draggable={!isCustomSessionTab}
         key={tabId}
@@ -1118,11 +1119,14 @@ export function TerminalWorkspace({
           type="button"
         >
           <span className="tab-title-line">
-            {terminalIsBusy ? <i aria-hidden="true" className="tab-terminal-activity" /> : null}
             <span className="tab-activity-title">{displayTitle}</span>
           </span>
         </button>
         <div className="tab-tools">
+          <i
+            aria-hidden="true"
+            className={`tab-terminal-activity${terminalIsBusy ? " is-active" : ""}`}
+          />
           <button
             aria-label={`关闭 ${tab.connection.title}`}
             className="tab-close"
@@ -1140,7 +1144,11 @@ export function TerminalWorkspace({
     );
   };
   const tabBar = hasSessionTabs ? (
-        <div className="tab-bar" ref={tabBarRef}>
+        <div
+          className="tab-bar"
+          data-tauri-drag-region={isDetachedWindow ? "deep" : undefined}
+          ref={tabBarRef}
+        >
           <nav className="tabs" aria-label="已打开会话" onWheel={scrollTabsHorizontally}>
             {sessionTabs.map(renderSessionTab)}
           </nav>

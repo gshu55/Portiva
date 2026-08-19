@@ -1,5 +1,6 @@
 import "./App.css";
 import { type CSSProperties, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { ActiveFileTransferPanel } from "./app/ActiveFileTransferPanel";
 import { AppTitlebar } from "./app/AppTitlebar";
 import { GlobalNotice } from "./app/GlobalNotice";
@@ -47,6 +48,11 @@ const mainWindowMinWidth = 900;
 const mainWindowMinHeight = 640;
 const detachedWindowMinWidth = 900;
 const detachedWindowMinHeight = 640;
+const macosDetachedWindowChrome = {
+  hiddenTitle: true,
+  titleBarStyle: "overlay" as const,
+  trafficLightPosition: new LogicalPosition(14, 22),
+};
 const settingsTabId = "portiva-settings";
 const httpConsoleTabId = "portiva-http-console";
 const networkScannerTabId = "portiva-network-scanner";
@@ -71,6 +77,12 @@ const inactiveCapabilities: ConnectionCapabilities = {
   terminal: false,
   tunnel: false,
 };
+
+function isMacDesktop() {
+  const platform = navigator.platform.toLowerCase();
+  const userAgent = navigator.userAgent.toLowerCase();
+  return platform.includes("mac") || userAgent.includes("mac os");
+}
 const settingsSessionTab: WorkspaceSessionTab = {
   id: settingsTabId,
   kind: "settings",
@@ -816,6 +828,7 @@ function App() {
         const webview = new WebviewWindow(label, {
           decorations: true,
           height: 760,
+          ...(isMacDesktop() ? macosDetachedWindowChrome : {}),
           minHeight: detachedWindowMinHeight,
           minWidth: detachedWindowMinWidth,
           resizable: true,
@@ -1350,6 +1363,7 @@ function App() {
           const webview = new WebviewWindow(detachedPostWindowLabel, {
             decorations: true,
             height: 760,
+            ...(isMacDesktop() ? macosDetachedWindowChrome : {}),
             minHeight: detachedWindowMinHeight,
             minWidth: detachedWindowMinWidth,
             resizable: true,
@@ -1580,7 +1594,7 @@ function App() {
   if (detachedToolPage === "post") {
     return (
       <main
-        className="app-shell detached-shell"
+        className={`app-shell detached-shell${isMacDesktop() ? " detached-shell-macos" : ""}`}
         data-background={appBackground.enabled ? "true" : "false"}
         data-theme={workspace.settings.theme.mode}
         style={themeStyle}
@@ -1634,7 +1648,7 @@ function App() {
   if (detachedSessionId) {
     return (
       <main
-        className="app-shell detached-shell"
+        className={`app-shell detached-shell${isMacDesktop() ? " detached-shell-macos" : ""}`}
         data-background={appBackground.enabled ? "true" : "false"}
         data-theme={workspace.settings.theme.mode}
         style={themeStyle}

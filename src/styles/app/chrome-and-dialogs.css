@@ -16,6 +16,18 @@
   grid-template-columns: 84px minmax(0, 1fr) 36px minmax(0, auto);
 }
 
+/*
+ * macOS uses Tauri's deep drag-region hit testing so empty descendants remain
+ * draggable after the scrollable tab strip is mounted. Disable WebKit regions
+ * there to avoid competing native and JavaScript drag implementations.
+ */
+.app-titlebar.window-controls-macos,
+.app-titlebar.window-controls-macos .app-titlebar-tab-slot,
+.app-titlebar.window-controls-macos .app-titlebar-tab-slot > .tab-bar,
+.app-titlebar.window-controls-macos .app-titlebar-drag-handle {
+  -webkit-app-region: no-drag;
+}
+
 .app-titlebar-tab-slot {
   align-self: stretch;
   min-width: 0;

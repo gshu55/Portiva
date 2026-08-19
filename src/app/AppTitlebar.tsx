@@ -143,6 +143,7 @@ export function AppTitlebar({
   return (
     <header
       className={`app-titlebar window-controls-${windowControlPlatform}`}
+      data-tauri-drag-region={isMacWindow ? "deep" : undefined}
       onDoubleClick={toggleTitlebarMaximize}
       onMouseDown={startTitlebarDrag}
     >
