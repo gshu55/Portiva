@@ -12,13 +12,18 @@ use std::sync::{
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 
 const DETACHED_TAB_WINDOW_PREFIX: &str = "portiva-tab-";
 const DETACHED_TERMINAL_WINDOW_PREFIX: &str = "portiva-terminal-";
 const TRAY_SHOW_MENU_ID: &str = "portiva-tray-show";
+const TRAY_LOCAL_TERMINAL_MENU_ID: &str = "portiva-tray-local-terminal";
+const TRAY_SERIAL_TERMINAL_MENU_ID: &str = "portiva-tray-serial-terminal";
+const TRAY_HTTP_MENU_ID: &str = "portiva-tray-http";
+const TRAY_NETWORK_SCAN_MENU_ID: &str = "portiva-tray-network-scan";
 const TRAY_QUIT_MENU_ID: &str = "portiva-tray-quit";
+const TRAY_QUICK_ACTION_EVENT: &str = "portiva://tray-quick-action";
 
 fn is_portiva_window(label: &str) -> bool {
     label == "main"
@@ -47,6 +52,16 @@ fn show_portiva_windows<R: tauri::Runtime, M: tauri::Manager<R>>(manager: &M) {
     }
 }
 
+fn dispatch_tray_quick_action<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, action: &str) {
+    if let Some(main_window) = app_handle.get_webview_window("main") {
+        let _ = main_window.show();
+        let _ = main_window.unminimize();
+        let _ = main_window.set_focus();
+    }
+
+    let _ = app_handle.emit_to("main", TRAY_QUICK_ACTION_EVENT, action);
+}
+
 fn destroy_detached_terminal_windows<R: tauri::Runtime, M: tauri::Manager<R>>(manager: &M) {
     for (label, window) in manager.webview_windows() {
         if label.starts_with(DETACHED_TAB_WINDOW_PREFIX)
@@ -59,15 +74,56 @@ fn destroy_detached_terminal_windows<R: tauri::Runtime, M: tauri::Manager<R>>(ma
 
 fn setup_system_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, TRAY_SHOW_MENU_ID, "显示 Portiva", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
+    let quick_action_separator = PredefinedMenuItem::separator(app)?;
+    let local_terminal_item = MenuItem::with_id(
+        app,
+        TRAY_LOCAL_TERMINAL_MENU_ID,
+        "打开本地终端",
+        true,
+        None::<&str>,
+    )?;
+    let serial_terminal_item = MenuItem::with_id(
+        app,
+        TRAY_SERIAL_TERMINAL_MENU_ID,
+        "打开串口终端",
+        true,
+        None::<&str>,
+    )?;
+    let http_item = MenuItem::with_id(app, TRAY_HTTP_MENU_ID, "打开 HTTP", true, None::<&str>)?;
+    let network_scan_item = MenuItem::with_id(
+        app,
+        TRAY_NETWORK_SCAN_MENU_ID,
+        "打开局域网扫描",
+        true,
+        None::<&str>,
+    )?;
+    let quit_separator = PredefinedMenuItem::separator(app)?;
     let quit_item = MenuItem::with_id(app, TRAY_QUIT_MENU_ID, "退出 Portiva", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show_item,
+            &quick_action_separator,
+            &local_terminal_item,
+            &serial_terminal_item,
+            &http_item,
+            &network_scan_item,
+            &quit_separator,
+            &quit_item,
+        ],
+    )?;
     let mut tray_builder = TrayIconBuilder::new()
         .tooltip("Portiva")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app_handle, event| match event.id().as_ref() {
             TRAY_SHOW_MENU_ID => show_portiva_windows(app_handle),
+            TRAY_LOCAL_TERMINAL_MENU_ID => dispatch_tray_quick_action(app_handle, "local-terminal"),
+            TRAY_SERIAL_TERMINAL_MENU_ID => {
+                dispatch_tray_quick_action(app_handle, "serial-terminal")
+            }
+            TRAY_HTTP_MENU_ID => dispatch_tray_quick_action(app_handle, "http"),
+            TRAY_NETWORK_SCAN_MENU_ID => dispatch_tray_quick_action(app_handle, "network-scan"),
             TRAY_QUIT_MENU_ID => app_handle.exit(0),
             _ => {}
         })

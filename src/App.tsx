@@ -41,6 +41,7 @@ const detachedReattachCompleteEvent = "portiva://detached-reattach-complete";
 const detachedReattachDragStartEvent = "portiva://detached-reattach-drag-start";
 const detachedReattachDragEndEvent = "portiva://detached-reattach-drag-end";
 const detachedToolReattachEvent = "portiva://detached-tool-reattach";
+const trayQuickActionEvent = "portiva://tray-quick-action";
 const detachedWindowLabelPrefix = "portiva-tab-";
 const detachedPostWindowLabel = `${detachedWindowLabelPrefix}tool-post`;
 const legacyDetachedTerminalWindowLabelPrefix = "portiva-terminal-";
@@ -48,16 +49,22 @@ const mainWindowMinWidth = 900;
 const mainWindowMinHeight = 640;
 const detachedWindowMinWidth = 900;
 const detachedWindowMinHeight = 640;
+const macosMainTrafficLightPosition = { x: 14, y: 22 };
+const detachedWindowTopInset = 8;
 const macosDetachedWindowChrome = {
   hiddenTitle: true,
   titleBarStyle: "overlay" as const,
-  trafficLightPosition: new LogicalPosition(14, 22),
+  trafficLightPosition: new LogicalPosition(
+    macosMainTrafficLightPosition.x,
+    macosMainTrafficLightPosition.y + detachedWindowTopInset,
+  ),
 };
 const settingsTabId = "portiva-settings";
 const httpConsoleTabId = "portiva-http-console";
 const networkScannerTabId = "portiva-network-scanner";
 const hostDashboardTabId = "portiva-host-dashboard";
 const wslFilesTabPrefix = "portiva-wsl-files:";
+type TrayQuickAction = "http" | "local-terminal" | "network-scan" | "serial-terminal";
 const HttpConsolePanel = lazy(() =>
   import("./features/http/HttpConsolePanel").then((module) => ({ default: module.HttpConsolePanel })),
 );
@@ -1197,14 +1204,65 @@ function App() {
     setNetworkScannerOpen(false);
     setActiveShellTabId((current) => (current === networkScannerTabId ? null : current));
   };
-  const openHttpConsoleTab = () => {
+  const openHttpConsoleTab = useCallback(() => {
     setHttpConsoleOpen(true);
     setActiveShellTabId(httpConsoleTabId);
-  };
-  const openNetworkScannerTab = () => {
+  }, []);
+  const openNetworkScannerTab = useCallback(() => {
     setNetworkScannerOpen(true);
     setActiveShellTabId(networkScannerTabId);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (workspace.dataSource !== "tauri" || detachedSessionId || detachedToolPage) {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen<TrayQuickAction>(trayQuickActionEvent, ({ payload }) => {
+        switch (payload) {
+          case "local-terminal":
+            openLocalTerminalTab();
+            break;
+          case "serial-terminal":
+            openSerialTerminalTab();
+            break;
+          case "http":
+            openHttpConsoleTab();
+            break;
+          case "network-scan":
+            openNetworkScannerTab();
+            break;
+        }
+      }))
+      .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      })
+      .catch(() => {
+        // Browser preview and mocked mode do not have the native event bridge.
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [
+    detachedSessionId,
+    detachedToolPage,
+    openHttpConsoleTab,
+    openLocalTerminalTab,
+    openNetworkScannerTab,
+    openSerialTerminalTab,
+    workspace.dataSource,
+  ]);
+
   const openWslFilesTab = useCallback((distribution: string) => {
     setWslFileDistributions((current) => current.includes(distribution) ? current : [...current, distribution]);
     setActiveShellTabId(wslFilesTabId(distribution));
