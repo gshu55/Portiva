@@ -143,6 +143,7 @@ export interface ProfileSaveResult {
 export interface TestConnectionResult {
   fingerprint?: string;
   host?: string;
+  hostKeyChanged: boolean;
   port?: number;
   ok: boolean;
   message: string;

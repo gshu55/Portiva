@@ -5,6 +5,7 @@ interface HostTrustDialogProps {
   connectAfterTrust: boolean;
   fingerprint: string;
   host: string;
+  hostKeyChanged: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -14,6 +15,7 @@ export function HostTrustDialog({
   connectAfterTrust,
   fingerprint,
   host,
+  hostKeyChanged,
   onCancel,
   onConfirm,
 }: HostTrustDialogProps) {
@@ -36,7 +38,7 @@ export function HostTrustDialog({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="host-trust-heading">
-          <strong>确认信任 SSH 主机</strong>
+          <strong>{hostKeyChanged ? "SSH 主机身份已更改" : "确认信任 SSH 主机"}</strong>
           <button
             aria-label="关闭确认弹窗"
             disabled={busy}
@@ -48,7 +50,11 @@ export function HostTrustDialog({
           </button>
         </div>
         <div className="host-trust-content">
-          <p>请核对该主机指纹。确认后会写入 known_hosts，之后同一主机将自动校验。</p>
+          <p className={hostKeyChanged ? "host-trust-warning" : undefined}>
+            {hostKeyChanged
+              ? "保存的主机指纹与当前设备不一致。仅当你确认该 IP 对应的设备确实已更换时继续；确认后会替换旧指纹。"
+              : "请核对该主机指纹。确认后会写入 known_hosts，之后同一主机将自动校验。"}
+          </p>
           <dl>
             <div>
               <dt>主机</dt>
@@ -65,7 +71,15 @@ export function HostTrustDialog({
             取消
           </button>
           <button className="primary-action" disabled={busy} onClick={onConfirm} type="button">
-            {busy ? "处理中..." : connectAfterTrust ? "信任并连接" : "信任"}
+            {busy
+              ? "处理中..."
+              : hostKeyChanged
+                ? connectAfterTrust
+                  ? "替换指纹并连接"
+                  : "替换指纹"
+                : connectAfterTrust
+                  ? "信任并连接"
+                  : "信任"}
           </button>
         </div>
       </section>

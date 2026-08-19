@@ -14,7 +14,7 @@ import type {
 
 interface ConnectionListProps {
   activeProfileId: string;
-  connectingProfileId: string | null;
+  connectingProfileIds: ReadonlySet<string>;
   profiles: ConnectionProfile[];
   sessionTabs: WorkspaceSessionTab[];
   onConnectProfile: (profile: ConnectionProfile) => void;
@@ -56,7 +56,7 @@ const profileIcons: Record<ConnectionProfile["type"], IconName> = {
 
 export function ConnectionList({
   activeProfileId,
-  connectingProfileId,
+  connectingProfileIds,
   onConnectProfile,
   onCreateProfile,
   onDeleteProfile,
@@ -78,14 +78,14 @@ export function ConnectionList({
   const [overviewByProfile, setOverviewByProfile] = useState<Record<string, HostOverviewState>>({});
   const [wslOverviewByDistribution, setWslOverviewByDistribution] = useState<Record<string, WslOverviewState>>({});
   const [openMenuProfileId, setOpenMenuProfileId] = useState<string | null>(null);
-  const [openingWslDistribution, setOpeningWslDistribution] = useState<string | null>(null);
+  const [openingWslDistributions, setOpeningWslDistributions] = useState<ReadonlySet<string>>(() => new Set());
   const [wslRefreshing, setWslRefreshing] = useState(false);
   const [wslRefreshError, setWslRefreshError] = useState<string | null>(null);
   const refreshingProfileIds = useRef(new Set<string>());
   const refreshingWslDistributions = useRef(new Set<string>());
+  const openingWslDistributionsRef = useRef(new Set<string>());
   const refreshingWslDiscoveryRef = useRef(false);
   const mountedRef = useRef(true);
-  const connectionPending = Boolean(connectingProfileId);
 
   const sessionsByProfile = useMemo(() => {
     const result = new Map<string, WorkspaceSessionTab>();
@@ -295,17 +295,19 @@ export function ConnectionList({
   }, [refreshSavedOverviews, refreshWsl, wslDiscovery.supported]);
 
   const openWslDistribution = useCallback(async (distribution: string) => {
-    if (openingWslDistribution) {
+    if (openingWslDistributionsRef.current.has(distribution)) {
       return;
     }
 
-    setOpeningWslDistribution(distribution);
+    openingWslDistributionsRef.current.add(distribution);
+    setOpeningWslDistributions(new Set(openingWslDistributionsRef.current));
     try {
       await onOpenWslDistribution(distribution);
     } finally {
-      setOpeningWslDistribution(null);
+      openingWslDistributionsRef.current.delete(distribution);
+      setOpeningWslDistributions(new Set(openingWslDistributionsRef.current));
     }
-  }, [onOpenWslDistribution, openingWslDistribution]);
+  }, [onOpenWslDistribution]);
 
   const autoRefreshKey = useMemo(
     () =>
@@ -425,7 +427,7 @@ export function ConnectionList({
             >
               <Icon className={totalRefreshingCount > 0 ? "is-spinning" : ""} name="refresh-ccw" />
             </button>
-            <button aria-label="新建连接" className="saved-create-button" disabled={connectionPending} onClick={onCreateProfile} type="button">
+            <button aria-label="新建连接" className="saved-create-button" onClick={onCreateProfile} type="button">
               <Icon name="plus" />
               <span>新建连接</span>
             </button>
@@ -463,8 +465,7 @@ export function ConnectionList({
                       index={index}
                       key={distribution.name}
                       overview={wslOverviewByDistribution[distribution.name]}
-                      opening={openingWslDistribution === distribution.name}
-                      openingBlocked={Boolean(openingWslDistribution) || connectionPending}
+                      opening={openingWslDistributions.has(distribution.name)}
                       onOpen={openWslDistribution}
                       onOpenFiles={onOpenWslFiles}
                       onRefresh={() => distribution.state === "running" ? refreshWslOverview(distribution) : refreshWsl()}
@@ -497,7 +498,7 @@ export function ConnectionList({
           {filteredProfiles.length > 0 ? (
             <div className="saved-connections-grid">
               {filteredProfiles.map((profile, index) => {
-                const isConnecting = profile.id === connectingProfileId;
+                const isConnecting = connectingProfileIds.has(profile.id);
                 const session = sessionsByProfile.get(profile.id);
                 const isSessionConnected = Boolean(session?.connection.transport?.authenticated);
                 const overviewState = overviewByProfile[profile.id];
@@ -571,8 +572,9 @@ export function ConnectionList({
 
                     <div className="saved-card-footer">
                       <button
+                        aria-busy={isConnecting}
                         className="saved-card-primary"
-                        disabled={connectionPending}
+                        disabled={isConnecting}
                         onClick={(event) => {
                           event.stopPropagation();
                           if (tabId && isSessionConnected) {
@@ -583,13 +585,13 @@ export function ConnectionList({
                         }}
                         type="button"
                       >
-                        <Icon name="terminal" />
+                        <Icon className={isConnecting ? "is-spinning" : ""} name={isConnecting ? "refresh-ccw" : "terminal"} />
                         <span>{isConnecting ? "正在连接…" : tabId && isSessionConnected ? "打开终端" : "新建终端"}</span>
                       </button>
                       <button
                         aria-label={`打开 ${profile.name} 的文件管理`}
                         className="saved-card-round-action"
-                        disabled={connectionPending || !canOpenFileTransfer}
+                        disabled={isConnecting || !canOpenFileTransfer}
                         onClick={(event) => {
                           event.stopPropagation();
                           if (
@@ -626,7 +628,7 @@ export function ConnectionList({
                           aria-haspopup="menu"
                           aria-label={`更多操作：${profile.name}`}
                           className="saved-card-round-action"
-                          disabled={connectionPending}
+                          disabled={isConnecting}
                           onClick={(event) => {
                             event.stopPropagation();
                             setOpenMenuProfileId((current) => current === profile.id ? null : profile.id);
@@ -664,7 +666,7 @@ export function ConnectionList({
               <Icon name="server" />
               <strong>暂无连接</strong>
               <span>新建连接后会显示在这里。</span>
-              <button disabled={connectionPending} onClick={onCreateProfile} type="button"><Icon name="plus" />新建连接</button>
+              <button onClick={onCreateProfile} type="button"><Icon name="plus" />新建连接</button>
             </div>
           ) : null}
         </div>
@@ -681,7 +683,6 @@ function WslDistributionCard({
   onRefresh,
   overview,
   opening,
-  openingBlocked,
   refreshing,
 }: {
   activeSessions: number;
@@ -692,7 +693,6 @@ function WslDistributionCard({
   onRefresh: () => Promise<unknown>;
   overview: WslOverviewState | undefined;
   opening: boolean;
-  openingBlocked: boolean;
   refreshing: boolean;
 }) {
   const versionLabel = distribution.version ? `WSL ${distribution.version}` : "WSL";
@@ -763,12 +763,13 @@ function WslDistributionCard({
 
       <div className="wsl-card-actions">
         <button
+          aria-busy={opening}
           className="wsl-card-open"
-          disabled={openingBlocked}
+          disabled={opening}
           onClick={() => void onOpen(distribution.name)}
           type="button"
         >
-          <Icon name="terminal" />
+          <Icon className={opening ? "is-spinning" : ""} name={opening ? "refresh-ccw" : "terminal"} />
           <span>{opening ? "正在启动…" : "打开 Linux 终端"}</span>
         </button>
         <button
@@ -964,12 +965,7 @@ function formatCapacityTotal(total: number | null) {
 }
 
 function formatLatencyBadge(value: number) {
-  if (value < 1_000) {
-    return `${Math.round(value)}ms`;
-  }
-
-  const seconds = value / 1_000;
-  return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+  return String(Math.round(value));
 }
 
 function profileCardSubtitle(profile: ConnectionProfile) {

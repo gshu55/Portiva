@@ -33,6 +33,7 @@ pub struct TestConnectionResult {
     pub ok: bool,
     pub message: String,
     pub requires_fingerprint_confirmation: bool,
+    pub host_key_changed: bool,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub fingerprint: Option<String>,
@@ -160,6 +161,8 @@ pub async fn profile_test_connection(
         let fingerprint = probe.host_key_fingerprint.as_str();
         let port = probe.transport.port;
         let decision = known_hosts.verify_host_key(host, port, fingerprint)?;
+        let (requires_fingerprint_confirmation, host_key_changed) =
+            host_key_confirmation_state(&decision);
 
         return Ok(match decision {
             KnownHostDecision::Trusted => {
@@ -181,7 +184,8 @@ pub async fn profile_test_connection(
                                 probe.transport.port,
                                 probe.transport.server_identification
                             ),
-                            requires_fingerprint_confirmation: false,
+                            requires_fingerprint_confirmation,
+                            host_key_changed,
                             host: Some(host.to_string()),
                             port: Some(port),
                             fingerprint: Some(display_fingerprint(fingerprint)),
@@ -189,7 +193,8 @@ pub async fn profile_test_connection(
                         Err(error) => TestConnectionResult {
                             ok: false,
                             message: format!("SSH 密码认证失败：{error}"),
-                            requires_fingerprint_confirmation: false,
+                            requires_fingerprint_confirmation,
+                            host_key_changed,
                             host: Some(host.to_string()),
                             port: Some(port),
                             fingerprint: Some(display_fingerprint(fingerprint)),
@@ -204,7 +209,8 @@ pub async fn profile_test_connection(
                             probe.transport.port,
                             probe.transport.server_identification
                         ),
-                        requires_fingerprint_confirmation: false,
+                        requires_fingerprint_confirmation,
+                        host_key_changed,
                         host: Some(host.to_string()),
                         port: Some(port),
                         fingerprint: Some(display_fingerprint(fingerprint)),
@@ -220,15 +226,17 @@ pub async fn profile_test_connection(
                     probe.transport.server_identification,
                     display_fingerprint(fingerprint)
                 ),
-                requires_fingerprint_confirmation: true,
+                requires_fingerprint_confirmation,
+                host_key_changed,
                 host: Some(host.to_string()),
                 port: Some(port),
                 fingerprint: Some(display_fingerprint(fingerprint)),
             },
             KnownHostDecision::Changed => TestConnectionResult {
                 ok: false,
-                message: "host key changed; connection must be blocked".to_string(),
-                requires_fingerprint_confirmation: false,
+                message: "SSH 主机密钥已更改。请确认该 IP 对应的设备确实已更换；确认后将替换旧指纹并允许重新连接。".to_string(),
+                requires_fingerprint_confirmation,
+                host_key_changed,
                 host: Some(host.to_string()),
                 port: Some(port),
                 fingerprint: Some(display_fingerprint(fingerprint)),
@@ -245,6 +253,7 @@ pub async fn profile_test_connection(
                     profile.port_name.as_deref().unwrap_or("unconfigured-port")
                 ),
                 requires_fingerprint_confirmation: false,
+                host_key_changed: false,
                 host: None,
                 port: None,
                 fingerprint: None,
@@ -253,6 +262,7 @@ pub async fn profile_test_connection(
                 ok: false,
                 message: error,
                 requires_fingerprint_confirmation: false,
+                host_key_changed: false,
                 host: None,
                 port: None,
                 fingerprint: None,
@@ -276,6 +286,7 @@ pub async fn profile_test_connection(
                     profile.port.unwrap_or_default()
                 ),
                 requires_fingerprint_confirmation: false,
+                host_key_changed: false,
                 host: profile.host.clone(),
                 port: profile.port,
                 fingerprint: None,
@@ -284,6 +295,7 @@ pub async fn profile_test_connection(
                 ok: false,
                 message: error,
                 requires_fingerprint_confirmation: false,
+                host_key_changed: false,
                 host: profile.host.clone(),
                 port: profile.port,
                 fingerprint: None,
@@ -295,10 +307,19 @@ pub async fn profile_test_connection(
         ok: false,
         message: "当前连接类型不支持连通性测试。".to_string(),
         requires_fingerprint_confirmation: false,
+        host_key_changed: false,
         host: None,
         port: None,
         fingerprint: None,
     })
+}
+
+fn host_key_confirmation_state(decision: &KnownHostDecision) -> (bool, bool) {
+    match decision {
+        KnownHostDecision::Trusted => (false, false),
+        KnownHostDecision::Unknown => (true, false),
+        KnownHostDecision::Changed => (true, true),
+    }
 }
 
 #[tauri::command]
@@ -419,9 +440,26 @@ async fn test_ssh_password_auth(
 
 #[cfg(test)]
 mod tests {
-    use super::should_clear_saved_password;
+    use super::{host_key_confirmation_state, should_clear_saved_password};
     use crate::domain::profile::ConnectionType;
+    use crate::services::known_hosts_store::KnownHostDecision;
     use crate::services::profile_store::ProfileStore;
+
+    #[test]
+    fn changed_host_key_requires_explicit_replacement_confirmation() {
+        assert_eq!(
+            host_key_confirmation_state(&KnownHostDecision::Changed),
+            (true, true)
+        );
+        assert_eq!(
+            host_key_confirmation_state(&KnownHostDecision::Unknown),
+            (true, false)
+        );
+        assert_eq!(
+            host_key_confirmation_state(&KnownHostDecision::Trusted),
+            (false, false)
+        );
+    }
 
     #[test]
     fn keeps_saved_password_when_only_profile_name_changes() {

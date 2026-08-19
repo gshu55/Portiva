@@ -66,6 +66,7 @@ fn credential_error(action: &str, error: keyring::Error) -> String {
 #[derive(Default)]
 struct MemoryCredentialBackend {
     values: Mutex<HashMap<String, String>>,
+    get_calls: std::sync::atomic::AtomicUsize,
 }
 
 #[cfg(test)]
@@ -79,6 +80,8 @@ impl CredentialBackend for MemoryCredentialBackend {
     }
 
     fn get(&self, account: &str) -> Result<Option<String>, String> {
+        self.get_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(self
             .values
             .lock()
@@ -99,6 +102,7 @@ impl CredentialBackend for MemoryCredentialBackend {
 #[derive(Clone)]
 pub struct SecretStore {
     secrets: Arc<Mutex<HashMap<String, StoredSecret>>>,
+    session_values: Arc<Mutex<HashMap<String, String>>>,
     path: Option<PathBuf>,
     backend: Arc<dyn CredentialBackend>,
     credential_operations: Arc<Mutex<()>>,
@@ -142,6 +146,7 @@ impl SecretStore {
 
         Self {
             secrets: Arc::new(Mutex::new(secrets)),
+            session_values: Arc::new(Mutex::new(HashMap::new())),
             path,
             backend,
             credential_operations: Arc::new(Mutex::new(())),
@@ -192,6 +197,7 @@ impl SecretStore {
                 )),
             };
         }
+        self.cache_session_value(&id, value)?;
 
         Ok(stored.metadata)
     }
@@ -214,11 +220,18 @@ impl SecretStore {
         };
         match stored.protection.as_deref() {
             Some(OS_KEYRING_PROTECTION) => {
-                let value = self.backend.get(&id)?;
-                if value.is_none() {
-                    self.mark_credential_missing(&id)?;
+                if let Some(value) = self.session_value(&id)? {
+                    return Ok(Some(value));
                 }
-                Ok(value)
+
+                let value = self.backend.get(&id)?;
+                if let Some(value) = value {
+                    self.cache_session_value(&id, value.clone())?;
+                    Ok(Some(value))
+                } else {
+                    self.mark_credential_missing(&id)?;
+                    Ok(None)
+                }
             }
             Some(LEGACY_WINDOWS_DPAPI_PROTECTION) => {
                 let protected_value = stored
@@ -232,6 +245,7 @@ impl SecretStore {
 
                 self.backend.set(&id, &value)?;
                 self.replace_with_keyring_metadata(&id, &stored)?;
+                self.cache_session_value(&id, value.clone())?;
                 Ok(Some(value))
             }
             Some(protection) => Err(format!("不支持的密码保护格式：{protection}")),
@@ -272,7 +286,10 @@ impl SecretStore {
         };
 
         let previous_credential = if stored.protection.as_deref() == Some(OS_KEYRING_PROTECTION) {
-            self.backend.get(secret_id)?
+            match self.session_value(secret_id)? {
+                Some(value) => Some(value),
+                None => self.backend.get(secret_id)?,
+            }
         } else {
             None
         };
@@ -303,6 +320,8 @@ impl SecretStore {
                 }
             });
         }
+
+        self.remove_session_value(secret_id)?;
 
         Ok(())
     }
@@ -338,6 +357,31 @@ impl SecretStore {
         self.credential_operations
             .lock()
             .map_err(|_| "credential operation lock poisoned".to_string())
+    }
+
+    fn session_value(&self, secret_id: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .session_values
+            .lock()
+            .map_err(|_| "session credential cache lock poisoned".to_string())?
+            .get(secret_id)
+            .cloned())
+    }
+
+    fn cache_session_value(&self, secret_id: &str, value: String) -> Result<(), String> {
+        self.session_values
+            .lock()
+            .map_err(|_| "session credential cache lock poisoned".to_string())?
+            .insert(secret_id.to_string(), value);
+        Ok(())
+    }
+
+    fn remove_session_value(&self, secret_id: &str) -> Result<(), String> {
+        self.session_values
+            .lock()
+            .map_err(|_| "session credential cache lock poisoned".to_string())?
+            .remove(secret_id);
+        Ok(())
     }
 
     fn replace_with_keyring_metadata(
@@ -387,6 +431,7 @@ impl SecretStore {
                 .insert(secret_id.to_string(), previous);
             return Err(error);
         }
+        self.remove_session_value(secret_id)?;
         Ok(())
     }
 
@@ -566,6 +611,7 @@ mod tests {
     use super::{credential_error, MemoryCredentialBackend, SecretStore, OS_KEYRING_PROTECTION};
     use crate::domain::secret::SecretPurpose;
     use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
     #[test]
@@ -662,6 +708,43 @@ mod tests {
         reloaded.delete(&metadata.id).unwrap();
         assert!(reloaded.list().unwrap().is_empty());
 
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn caches_keyring_value_after_first_read_for_the_app_session() {
+        let path = test_path("secrets-session-cache.json");
+        let _ = std::fs::remove_file(&path);
+        let backend = Arc::new(MemoryCredentialBackend::default());
+        let store = SecretStore::with_backend(Some(path.clone()), backend.clone());
+        let metadata = store
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Password,
+                "hunter2".to_string(),
+            )
+            .unwrap();
+        drop(store);
+
+        let reloaded = SecretStore::with_backend(Some(path.clone()), backend.clone());
+        assert_eq!(
+            reloaded
+                .get_secret("profile-1", SecretPurpose::Password)
+                .unwrap()
+                .as_deref(),
+            Some("hunter2")
+        );
+        assert_eq!(
+            reloaded
+                .get_secret("profile-1", SecretPurpose::Password)
+                .unwrap()
+                .as_deref(),
+            Some("hunter2")
+        );
+        assert_eq!(backend.get_calls.load(Ordering::Relaxed), 1);
+
+        reloaded.delete(&metadata.id).unwrap();
+        assert_eq!(backend.get_calls.load(Ordering::Relaxed), 1);
         let _ = std::fs::remove_file(path);
     }
 

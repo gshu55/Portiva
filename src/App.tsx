@@ -254,9 +254,9 @@ function App() {
   const [appTabOrder, setAppTabOrder] = useState<string[]>([]);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
-  const [connectingProfileId, setConnectingProfileId] = useState<string | null>(null);
+  const [connectingProfileIds, setConnectingProfileIds] = useState<ReadonlySet<string>>(() => new Set());
   const [titlebarTabSlot, setTitlebarTabSlot] = useState<HTMLDivElement | null>(null);
-  const connectingProfileIdRef = useRef<string | null>(null);
+  const connectingProfileIdsRef = useRef(new Set<string>());
   const detachedTarget = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const tabId = params.get("detachedSession");
@@ -1084,12 +1084,12 @@ function App() {
     profile: ConnectionProfile,
     target: "terminal" | "file-transfer" = "terminal",
   ) => {
-    if (connectingProfileIdRef.current) {
+    if (connectingProfileIdsRef.current.has(profile.id)) {
       return;
     }
 
-    connectingProfileIdRef.current = profile.id;
-    setConnectingProfileId(profile.id);
+    connectingProfileIdsRef.current.add(profile.id);
+    setConnectingProfileIds(new Set(connectingProfileIdsRef.current));
     try {
       const connectionProfile: ConnectionProfile =
         target === "file-transfer" && profile.type === "ssh"
@@ -1114,8 +1114,8 @@ function App() {
         );
       }
     } finally {
-      connectingProfileIdRef.current = null;
-      setConnectingProfileId(null);
+      connectingProfileIdsRef.current.delete(profile.id);
+      setConnectingProfileIds(new Set(connectingProfileIdsRef.current));
     }
   };
   const openSshFromActiveFileTransfer = () => {
@@ -1441,7 +1441,9 @@ function App() {
   const fileTransferPanel = (
     <ActiveFileTransferPanel
       onOpenSsh={openSshFromActiveFileTransfer}
-      openSshPending={Boolean(connectingProfileId)}
+      openSshPending={Boolean(
+        workspace.activeConnection && connectingProfileIds.has(workspace.activeConnection.profileId)
+      )}
       workspace={workspace}
     />
   );
@@ -1503,6 +1505,7 @@ function App() {
       connectAfterTrust={activeHostTrustRequest.connectAfterTrust}
       fingerprint={pendingHostTrust.fingerprint}
       host={pendingHostTrust.host}
+      hostKeyChanged={pendingHostTrust.hostKeyChanged}
       onCancel={cancelHostTrust}
       onConfirm={() => void confirmHostTrust()}
     />
@@ -1717,7 +1720,7 @@ function App() {
               [hostDashboardTabId]: (
                 <ConnectionList
                   activeProfileId={workspace.activeProfileId}
-                  connectingProfileId={connectingProfileId}
+                  connectingProfileIds={connectingProfileIds}
                   profiles={workspace.profiles}
                   sessionTabs={workspace.sessionTabs}
                   onConnectProfile={connectSavedConnection}

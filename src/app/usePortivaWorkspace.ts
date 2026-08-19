@@ -378,6 +378,7 @@ export function usePortivaWorkspace() {
   const [pendingKnownHost, setPendingKnownHost] = useState<{
     fingerprint: string;
     host: string;
+    hostKeyChanged: boolean;
     port: number;
   } | null>(null);
   const [knownHosts, setKnownHosts] = useState<KnownHostEntry[]>(sampleKnownHosts);
@@ -522,7 +523,12 @@ export function usePortivaWorkspace() {
       const result = await profileTestConnection(profile);
       if (result.requiresFingerprintConfirmation) {
         if (result.host && result.port && result.fingerprint) {
-          setPendingKnownHost({ host: result.host, port: result.port, fingerprint: result.fingerprint });
+          setPendingKnownHost({
+            host: result.host,
+            hostKeyChanged: result.hostKeyChanged,
+            port: result.port,
+            fingerprint: result.fingerprint,
+          });
         }
         setWorkspaceMessage(result.message);
         return connectionResult("needs-trust", result.message);
@@ -2023,7 +2029,12 @@ export function usePortivaWorkspace() {
     try {
       const result = await profileTestConnection(profile, options.secret);
       if (result.requiresFingerprintConfirmation && result.host && result.port && result.fingerprint) {
-        setPendingKnownHost({ host: result.host, port: result.port, fingerprint: result.fingerprint });
+        setPendingKnownHost({
+          host: result.host,
+          hostKeyChanged: result.hostKeyChanged,
+          port: result.port,
+          fingerprint: result.fingerprint,
+        });
       } else {
         setPendingKnownHost(null);
       }
@@ -2034,6 +2045,7 @@ export function usePortivaWorkspace() {
         ok: false,
         message: `测试配置失败：${String(error)}`,
         requiresFingerprintConfirmation: false,
+        hostKeyChanged: false,
       };
       setWorkspaceMessage(result.message);
       return result;
@@ -2591,7 +2603,11 @@ export function usePortivaWorkspace() {
 
       const trusted = await knownHostTrustPlaceholder(pending.host, pending.port, pending.fingerprint);
       setPendingKnownHost(null);
-      setWorkspaceMessage(`已信任 ${trusted.host}:${trusted.port} 的待确认 SSH 指纹：${trusted.fingerprint}。`);
+      setWorkspaceMessage(
+        pending.hostKeyChanged
+          ? `已替换 ${trusted.host}:${trusted.port} 的 SSH 主机指纹：${trusted.fingerprint}。`
+          : `已信任 ${trusted.host}:${trusted.port} 的待确认 SSH 指纹：${trusted.fingerprint}。`,
+      );
       await refreshWorkspace();
       return true;
     } catch (error) {
