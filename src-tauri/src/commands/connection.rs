@@ -367,6 +367,7 @@ pub fn ssh_authenticate_agent(
 pub async fn ssh_collect_host_overview(
     profile_id: String,
     connection_id: Option<String>,
+    reuse_only: Option<bool>,
     app_handle: AppHandle,
 ) -> Result<SshHostOverview, String> {
     let profile = {
@@ -397,6 +398,9 @@ pub async fn ssh_collect_host_overview(
         }
         None => None,
     };
+    if reuse_only.unwrap_or(false) && reusable_connection_id.is_none() {
+        return Err("已认证 SSH 会话尚未就绪，请稍后重试".to_string());
+    }
 
     tauri::async_runtime::spawn(async move {
         collect_profile_host_overview(

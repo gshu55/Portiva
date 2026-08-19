@@ -25,7 +25,7 @@ interface ConnectionListProps {
   onOpenSession: (tabId: string) => void;
   onOpenWslDistribution: (distribution: string) => Promise<unknown>;
   onOpenWslFiles: (distribution: string) => void;
-  onRefreshHostOverview: (profileId: string, connectionId?: string) => Promise<SshHostOverview>;
+  onRefreshHostOverview: (profileId: string, connectionId?: string, reuseOnly?: boolean) => Promise<SshHostOverview>;
   onRefreshWslHostOverview: (distribution: string) => Promise<WslHostOverview>;
   onRefreshWslDistributions: () => Promise<WslDiscovery>;
   onSelectProfile: (profileId: string) => void;
@@ -53,6 +53,9 @@ const profileIcons: Record<ConnectionProfile["type"], IconName> = {
   ssh: "server",
   telnet: "network",
 };
+
+const AUTO_REFRESH_DELAY_MS = 500;
+const AUTO_REFRESH_TIMEOUT_MS = 12_000;
 
 export function ConnectionList({
   activeProfileId,
@@ -145,7 +148,7 @@ export function ConnectionList({
   }, [sessionTabs]);
 
   const refreshOverview = useCallback(
-    async (profile: ConnectionProfile) => {
+    async (profile: ConnectionProfile, automatic = false) => {
       if ((profile.type !== "ssh" && profile.type !== "sftp") || refreshingProfileIds.current.has(profile.id)) {
         return;
       }
@@ -163,7 +166,10 @@ export function ConnectionList({
 
       try {
         const session = sessionsByProfile.get(profile.id);
-        const overview = await onRefreshHostOverview(profile.id, session?.connection.id);
+        const request = onRefreshHostOverview(profile.id, session?.connection.id, automatic);
+        const overview = automatic
+          ? await withTimeout(request, AUTO_REFRESH_TIMEOUT_MS, "自动刷新主机概览超时，请手动重试")
+          : await request;
         if (!mountedRef.current) {
           return;
         }
@@ -290,11 +296,11 @@ export function ConnectionList({
   const refreshAuthenticatedOverviews = useCallback(() => {
     savedProfiles.forEach((profile) => {
       const session = sessionsByProfile.get(profile.id);
-      if (session?.connection.transport?.authenticated) {
-        void refreshOverview(profile);
+      if (session?.connection.transport?.authenticated && !connectingProfileIds.has(profile.id)) {
+        void refreshOverview(profile, true);
       }
     });
-  }, [refreshOverview, savedProfiles, sessionsByProfile]);
+  }, [connectingProfileIds, refreshOverview, savedProfiles, sessionsByProfile]);
 
   const refreshAll = useCallback(() => {
     refreshSavedOverviews();
@@ -322,9 +328,19 @@ export function ConnectionList({
     () =>
       savedProfiles
         .filter((profile) => profile.type === "ssh" || profile.type === "sftp")
-        .map((profile) => `${profile.id}:${profile.updatedAt}:${sessionsByProfile.get(profile.id)?.connection.id ?? ""}`)
+        .map((profile) => {
+          const session = sessionsByProfile.get(profile.id);
+          return [
+            profile.id,
+            profile.updatedAt,
+            session?.connection.id ?? "",
+            session?.connection.status ?? "",
+            session?.connection.transport?.authenticated ? "authenticated" : "pending",
+            connectingProfileIds.has(profile.id) ? "connecting" : "settled",
+          ].join(":");
+        })
         .join("|"),
-    [savedProfiles, sessionsByProfile],
+    [connectingProfileIds, savedProfiles, sessionsByProfile],
   );
   const wslAutoRefreshKey = useMemo(
     () => wslDiscovery.distributions
@@ -335,8 +351,9 @@ export function ConnectionList({
 
   useEffect(() => {
     mountedRef.current = true;
-    refreshAuthenticatedOverviews();
+    const timer = window.setTimeout(refreshAuthenticatedOverviews, AUTO_REFRESH_DELAY_MS);
     return () => {
+      window.clearTimeout(timer);
       mountedRef.current = false;
     };
     // autoRefreshKey intentionally captures profile edits and newly authenticated sessions.
@@ -997,6 +1014,22 @@ function hostOverviewErrorMessage(error: unknown) {
     return "SSH 请求超时";
   }
   return message || "未知错误";
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function uniqueProfilesByTarget(profiles: ConnectionProfile[]) {
