@@ -2,6 +2,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
+use ring::{
+    aead,
+    rand::{SecureRandom, SystemRandom},
+};
+
 #[cfg(windows)]
 use std::{ffi::c_void, ptr};
 
@@ -9,7 +15,11 @@ use crate::domain::secret::{SecretMetadata, SecretPurpose};
 use crate::utils::{app_paths, clock, json_store};
 
 const KEYRING_SERVICE: &str = "Portiva";
-const OS_KEYRING_PROTECTION: &str = "os-keyring-v1";
+const KEYRING_MASTER_KEY_ACCOUNT: &str = "credential-master-key-v2";
+const LEGACY_OS_KEYRING_PROTECTION: &str = "os-keyring-v1";
+const MASTER_KEY_PROTECTION: &str = "keyring-master-key-aes256gcm-v2";
+const CREDENTIAL_MASTER_KEY_BYTES: usize = 32;
+const CREDENTIAL_NONCE_BYTES: usize = 12;
 const LEGACY_WINDOWS_DPAPI_PROTECTION: &str = "windows-dpapi-current-user";
 
 trait CredentialBackend: Send + Sync {
@@ -66,7 +76,19 @@ fn credential_error(action: &str, error: keyring::Error) -> String {
 #[derive(Default)]
 struct MemoryCredentialBackend {
     values: Mutex<HashMap<String, String>>,
-    get_calls: std::sync::atomic::AtomicUsize,
+    get_calls: Mutex<HashMap<String, usize>>,
+}
+
+#[cfg(test)]
+impl MemoryCredentialBackend {
+    fn get_count(&self, account: &str) -> usize {
+        self.get_calls
+            .lock()
+            .expect("test credential get counter lock poisoned")
+            .get(account)
+            .copied()
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -80,8 +102,12 @@ impl CredentialBackend for MemoryCredentialBackend {
     }
 
     fn get(&self, account: &str) -> Result<Option<String>, String> {
-        self.get_calls
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut calls = self
+            .get_calls
+            .lock()
+            .map_err(|_| "test credential get counter lock poisoned".to_string())?;
+        *calls.entry(account.to_string()).or_default() += 1;
+        drop(calls);
         Ok(self
             .values
             .lock()
@@ -102,7 +128,7 @@ impl CredentialBackend for MemoryCredentialBackend {
 #[derive(Clone)]
 pub struct SecretStore {
     secrets: Arc<Mutex<HashMap<String, StoredSecret>>>,
-    session_values: Arc<Mutex<HashMap<String, String>>>,
+    credential_master_key: Arc<Mutex<Option<[u8; CREDENTIAL_MASTER_KEY_BYTES]>>>,
     path: Option<PathBuf>,
     backend: Arc<dyn CredentialBackend>,
     credential_operations: Arc<Mutex<()>>,
@@ -146,7 +172,7 @@ impl SecretStore {
 
         Self {
             secrets: Arc::new(Mutex::new(secrets)),
-            session_values: Arc::new(Mutex::new(HashMap::new())),
+            credential_master_key: Arc::new(Mutex::new(None)),
             path,
             backend,
             credential_operations: Arc::new(Mutex::new(())),
@@ -165,6 +191,7 @@ impl SecretStore {
         }
 
         let id = secret_id(&profile_id, &purpose);
+        let protected_value = self.encrypt_secret(&id, value.as_bytes())?;
         let stored = StoredSecret {
             metadata: SecretMetadata {
                 id: id.clone(),
@@ -173,8 +200,8 @@ impl SecretStore {
                 created_at: clock::now_stamp(),
                 has_value: true,
             },
-            protected_value: None,
-            protection: Some(OS_KEYRING_PROTECTION.to_string()),
+            protected_value: Some(protected_value),
+            protection: Some(MASTER_KEY_PROTECTION.to_string()),
         };
 
         let previous = self
@@ -182,22 +209,19 @@ impl SecretStore {
             .lock()
             .map_err(|_| "secret store lock poisoned".to_string())?
             .insert(id.clone(), stored.clone());
+        let previous_was_legacy_keyring = previous.as_ref().is_some_and(|stored| {
+            stored.protection.as_deref() == Some(LEGACY_OS_KEYRING_PROTECTION)
+        });
 
         if let Err(error) = self.persist() {
             self.restore_stored(&id, previous)?;
             return Err(error);
         }
-
-        if let Err(error) = self.backend.set(&id, &value) {
-            self.restore_stored(&id, previous)?;
-            return match self.persist() {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(format!(
-                    "{error}; failed to roll back secret metadata: {rollback_error}"
-                )),
-            };
+        if previous_was_legacy_keyring {
+            if let Err(error) = self.backend.delete(&id) {
+                eprintln!("failed to remove replaced legacy credential {id}: {error}");
+            }
         }
-        self.cache_session_value(&id, value)?;
 
         Ok(stored.metadata)
     }
@@ -219,14 +243,17 @@ impl SecretStore {
             return Ok(None);
         };
         match stored.protection.as_deref() {
-            Some(OS_KEYRING_PROTECTION) => {
-                if let Some(value) = self.session_value(&id)? {
-                    return Ok(Some(value));
-                }
-
+            Some(MASTER_KEY_PROTECTION) => {
+                let protected_value = stored
+                    .protected_value
+                    .as_deref()
+                    .ok_or_else(|| "凭据密文数据不完整".to_string())?;
+                Ok(Some(self.decrypt_secret(&id, protected_value)?))
+            }
+            Some(LEGACY_OS_KEYRING_PROTECTION) => {
                 let value = self.backend.get(&id)?;
                 if let Some(value) = value {
-                    self.cache_session_value(&id, value.clone())?;
+                    self.migrate_legacy_keyring_value(&id, value.clone(), &stored)?;
                     Ok(Some(value))
                 } else {
                     self.mark_credential_missing(&id)?;
@@ -243,9 +270,8 @@ impl SecretStore {
                 let value = String::from_utf8(secret)
                     .map_err(|error| format!("旧版密码不是有效的 UTF-8：{error}"))?;
 
-                self.backend.set(&id, &value)?;
-                self.replace_with_keyring_metadata(&id, &stored)?;
-                self.cache_session_value(&id, value.clone())?;
+                let protected_value = self.encrypt_secret(&id, value.as_bytes())?;
+                self.replace_with_master_key_metadata(&id, protected_value, &stored)?;
                 Ok(Some(value))
             }
             Some(protection) => Err(format!("不支持的密码保护格式：{protection}")),
@@ -285,16 +311,14 @@ impl SecretStore {
             return Ok(());
         };
 
-        let previous_credential = if stored.protection.as_deref() == Some(OS_KEYRING_PROTECTION) {
-            match self.session_value(secret_id)? {
-                Some(value) => Some(value),
-                None => self.backend.get(secret_id)?,
-            }
-        } else {
-            None
-        };
+        let previous_credential =
+            if stored.protection.as_deref() == Some(LEGACY_OS_KEYRING_PROTECTION) {
+                self.backend.get(secret_id)?
+            } else {
+                None
+            };
 
-        if stored.protection.as_deref() == Some(OS_KEYRING_PROTECTION) {
+        if stored.protection.as_deref() == Some(LEGACY_OS_KEYRING_PROTECTION) {
             self.backend.delete(secret_id)?;
         }
 
@@ -320,8 +344,6 @@ impl SecretStore {
                 }
             });
         }
-
-        self.remove_session_value(secret_id)?;
 
         Ok(())
     }
@@ -359,40 +381,122 @@ impl SecretStore {
             .map_err(|_| "credential operation lock poisoned".to_string())
     }
 
-    fn session_value(&self, secret_id: &str) -> Result<Option<String>, String> {
-        Ok(self
-            .session_values
+    fn load_master_key(
+        &self,
+        create_if_missing: bool,
+    ) -> Result<[u8; CREDENTIAL_MASTER_KEY_BYTES], String> {
+        if let Some(key) = self
+            .credential_master_key
             .lock()
-            .map_err(|_| "session credential cache lock poisoned".to_string())?
-            .get(secret_id)
-            .cloned())
+            .map_err(|_| "credential master key cache lock poisoned".to_string())?
+            .as_ref()
+            .copied()
+        {
+            return Ok(key);
+        }
+
+        let key = match self.backend.get(KEYRING_MASTER_KEY_ACCOUNT)? {
+            Some(encoded) => {
+                let bytes = BASE64_STANDARD
+                    .decode(encoded)
+                    .map_err(|error| format!("Portiva 凭据主密钥编码损坏：{error}"))?;
+                bytes.try_into().map_err(|bytes: Vec<u8>| {
+                    format!("Portiva 凭据主密钥长度无效：{} 字节", bytes.len())
+                })?
+            }
+            None if create_if_missing => {
+                let mut key = [0_u8; CREDENTIAL_MASTER_KEY_BYTES];
+                SystemRandom::new()
+                    .fill(&mut key)
+                    .map_err(|_| "生成 Portiva 凭据主密钥失败".to_string())?;
+                self.backend
+                    .set(KEYRING_MASTER_KEY_ACCOUNT, &BASE64_STANDARD.encode(key))?;
+                key
+            }
+            None => return Err("未找到 Portiva 凭据主密钥，请重新输入并保存相关密码".to_string()),
+        };
+
+        *self
+            .credential_master_key
+            .lock()
+            .map_err(|_| "credential master key cache lock poisoned".to_string())? = Some(key);
+        Ok(key)
     }
 
-    fn cache_session_value(&self, secret_id: &str, value: String) -> Result<(), String> {
-        self.session_values
-            .lock()
-            .map_err(|_| "session credential cache lock poisoned".to_string())?
-            .insert(secret_id.to_string(), value);
-        Ok(())
+    fn encrypt_secret(&self, secret_id: &str, value: &[u8]) -> Result<String, String> {
+        let key = self.load_master_key(true)?;
+        let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key)
+            .map_err(|_| "初始化 Portiva 凭据加密失败".to_string())?;
+        let key = aead::LessSafeKey::new(unbound);
+        let mut nonce = [0_u8; CREDENTIAL_NONCE_BYTES];
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| "生成 Portiva 凭据随机数失败".to_string())?;
+        let mut encrypted = value.to_vec();
+        key.seal_in_place_append_tag(
+            aead::Nonce::assume_unique_for_key(nonce),
+            aead::Aad::from(secret_id.as_bytes()),
+            &mut encrypted,
+        )
+        .map_err(|_| "加密 Portiva 凭据失败".to_string())?;
+
+        let mut payload = Vec::with_capacity(CREDENTIAL_NONCE_BYTES + encrypted.len());
+        payload.extend_from_slice(&nonce);
+        payload.extend_from_slice(&encrypted);
+        Ok(BASE64_STANDARD.encode(payload))
     }
 
-    fn remove_session_value(&self, secret_id: &str) -> Result<(), String> {
-        self.session_values
-            .lock()
-            .map_err(|_| "session credential cache lock poisoned".to_string())?
-            .remove(secret_id);
-        Ok(())
+    fn decrypt_secret(&self, secret_id: &str, protected_value: &str) -> Result<String, String> {
+        let payload = BASE64_STANDARD
+            .decode(protected_value)
+            .map_err(|error| format!("Portiva 凭据密文编码损坏：{error}"))?;
+        if payload.len() < CREDENTIAL_NONCE_BYTES + aead::AES_256_GCM.tag_len() {
+            return Err("Portiva 凭据密文长度无效".to_string());
+        }
+
+        let nonce: [u8; CREDENTIAL_NONCE_BYTES] = payload[..CREDENTIAL_NONCE_BYTES]
+            .try_into()
+            .map_err(|_| "Portiva 凭据随机数长度无效".to_string())?;
+        let mut encrypted = payload[CREDENTIAL_NONCE_BYTES..].to_vec();
+        let master_key = self.load_master_key(false)?;
+        let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &master_key)
+            .map_err(|_| "初始化 Portiva 凭据解密失败".to_string())?;
+        let key = aead::LessSafeKey::new(unbound);
+        let plain = key
+            .open_in_place(
+                aead::Nonce::assume_unique_for_key(nonce),
+                aead::Aad::from(secret_id.as_bytes()),
+                &mut encrypted,
+            )
+            .map_err(|_| "Portiva 凭据解密或完整性校验失败".to_string())?;
+        String::from_utf8(plain.to_vec())
+            .map_err(|error| format!("Portiva 凭据不是有效的 UTF-8：{error}"))
     }
 
-    fn replace_with_keyring_metadata(
+    fn migrate_legacy_keyring_value(
         &self,
         secret_id: &str,
+        value: String,
+        previous: &StoredSecret,
+    ) -> Result<(), String> {
+        let protected_value = self.encrypt_secret(secret_id, value.as_bytes())?;
+        self.replace_with_master_key_metadata(secret_id, protected_value, previous)?;
+        if let Err(error) = self.backend.delete(secret_id) {
+            eprintln!("failed to remove migrated legacy credential {secret_id}: {error}");
+        }
+        Ok(())
+    }
+
+    fn replace_with_master_key_metadata(
+        &self,
+        secret_id: &str,
+        protected_value: String,
         previous: &StoredSecret,
     ) -> Result<(), String> {
         let mut stored = previous.clone();
         stored.metadata.has_value = true;
-        stored.protected_value = None;
-        stored.protection = Some(OS_KEYRING_PROTECTION.to_string());
+        stored.protected_value = Some(protected_value);
+        stored.protection = Some(MASTER_KEY_PROTECTION.to_string());
 
         self.secrets
             .lock()
@@ -431,7 +535,6 @@ impl SecretStore {
                 .insert(secret_id.to_string(), previous);
             return Err(error);
         }
-        self.remove_session_value(secret_id)?;
         Ok(())
     }
 
@@ -476,7 +579,7 @@ fn load_secret_metadata(path: &Path) -> Result<HashMap<String, StoredSecret>, St
     let mut stored = HashMap::new();
     for mut secret in secrets {
         secret.metadata.has_value = secret.protected_value.is_some()
-            || secret.protection.as_deref() == Some(OS_KEYRING_PROTECTION);
+            || secret.protection.as_deref() == Some(LEGACY_OS_KEYRING_PROTECTION);
         validate_metadata(&secret.metadata)?;
         stored.insert(secret.metadata.id.clone(), secret);
     }
@@ -608,10 +711,13 @@ fn unprotect_legacy_windows_secret(_value: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{credential_error, MemoryCredentialBackend, SecretStore, OS_KEYRING_PROTECTION};
-    use crate::domain::secret::SecretPurpose;
+    use super::{
+        credential_error, secret_id, write_secret_metadata, CredentialBackend,
+        MemoryCredentialBackend, SecretStore, StoredSecret, KEYRING_MASTER_KEY_ACCOUNT,
+        LEGACY_OS_KEYRING_PROTECTION, MASTER_KEY_PROTECTION,
+    };
+    use crate::domain::secret::{SecretMetadata, SecretPurpose};
     use std::path::PathBuf;
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
     #[test]
@@ -671,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn stores_secret_in_credential_backend_without_writing_value_to_metadata() {
+    fn encrypts_secret_metadata_with_a_keyring_backed_master_key() {
         let path = test_path("secrets-keyring.json");
         let _ = std::fs::remove_file(&path);
         let backend = Arc::new(MemoryCredentialBackend::default());
@@ -686,8 +792,13 @@ mod tests {
             .unwrap();
 
         let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(raw.contains(OS_KEYRING_PROTECTION));
+        assert!(raw.contains(MASTER_KEY_PROTECTION));
         assert!(!raw.contains("hunter2"));
+        assert!(backend
+            .values
+            .lock()
+            .unwrap()
+            .contains_key(KEYRING_MASTER_KEY_ACCOUNT));
         assert_eq!(
             store
                 .get_secret("profile-1", SecretPurpose::Password)
@@ -712,39 +823,146 @@ mod tests {
     }
 
     #[test]
-    fn caches_keyring_value_after_first_read_for_the_app_session() {
+    fn one_master_key_read_unlocks_multiple_profile_credentials_for_the_app_session() {
         let path = test_path("secrets-session-cache.json");
         let _ = std::fs::remove_file(&path);
         let backend = Arc::new(MemoryCredentialBackend::default());
         let store = SecretStore::with_backend(Some(path.clone()), backend.clone());
-        let metadata = store
+        let first = store
             .set_secret(
                 "profile-1".to_string(),
                 SecretPurpose::Password,
-                "hunter2".to_string(),
+                "one".to_string(),
+            )
+            .unwrap();
+        let second = store
+            .set_secret(
+                "profile-2".to_string(),
+                SecretPurpose::Password,
+                "two".to_string(),
             )
             .unwrap();
         drop(store);
 
+        let reads_before_reload = backend.get_count(KEYRING_MASTER_KEY_ACCOUNT);
         let reloaded = SecretStore::with_backend(Some(path.clone()), backend.clone());
         assert_eq!(
             reloaded
                 .get_secret("profile-1", SecretPurpose::Password)
                 .unwrap()
                 .as_deref(),
-            Some("hunter2")
+            Some("one")
         );
         assert_eq!(
             reloaded
-                .get_secret("profile-1", SecretPurpose::Password)
+                .get_secret("profile-2", SecretPurpose::Password)
                 .unwrap()
                 .as_deref(),
-            Some("hunter2")
+            Some("two")
         );
-        assert_eq!(backend.get_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            backend.get_count(KEYRING_MASTER_KEY_ACCOUNT),
+            reads_before_reload + 1
+        );
 
-        reloaded.delete(&metadata.id).unwrap();
-        assert_eq!(backend.get_calls.load(Ordering::Relaxed), 1);
+        reloaded.delete(&first.id).unwrap();
+        reloaded.delete(&second.id).unwrap();
+        assert_eq!(
+            backend.get_count(KEYRING_MASTER_KEY_ACCOUNT),
+            reads_before_reload + 1
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn encrypted_credentials_use_unique_nonces_and_are_bound_to_their_ids() {
+        let store = SecretStore::in_memory();
+        let first = store
+            .set_secret(
+                "profile-1".to_string(),
+                SecretPurpose::Password,
+                "same-password".to_string(),
+            )
+            .unwrap();
+        let second = store
+            .set_secret(
+                "profile-2".to_string(),
+                SecretPurpose::Password,
+                "same-password".to_string(),
+            )
+            .unwrap();
+        let secrets = store.secrets.lock().unwrap();
+        let first_ciphertext = secrets
+            .get(&first.id)
+            .unwrap()
+            .protected_value
+            .as_deref()
+            .unwrap();
+        let second_ciphertext = secrets
+            .get(&second.id)
+            .unwrap()
+            .protected_value
+            .as_deref()
+            .unwrap();
+
+        assert_ne!(first_ciphertext, second_ciphertext);
+        assert!(store
+            .decrypt_secret(&first.id, second_ciphertext)
+            .unwrap_err()
+            .contains("完整性校验失败"));
+    }
+
+    #[test]
+    fn migrates_legacy_profile_item_to_master_key_encryption() {
+        let path = test_path("secrets-master-key-migration.json");
+        let _ = std::fs::remove_file(&path);
+        let backend = Arc::new(MemoryCredentialBackend::default());
+        let profile_id = "legacy-profile";
+        let id = secret_id(profile_id, &SecretPurpose::Password);
+        let legacy = StoredSecret {
+            metadata: SecretMetadata {
+                id: id.clone(),
+                profile_id: profile_id.to_string(),
+                purpose: SecretPurpose::Password,
+                created_at: "legacy".to_string(),
+                has_value: true,
+            },
+            protected_value: None,
+            protection: Some(LEGACY_OS_KEYRING_PROTECTION.to_string()),
+        };
+        write_secret_metadata(&path, &[legacy]).unwrap();
+        backend.set(&id, "legacy-password").unwrap();
+
+        let store = SecretStore::with_backend(Some(path.clone()), backend.clone());
+        assert_eq!(
+            store
+                .get_secret(profile_id, SecretPurpose::Password)
+                .unwrap()
+                .as_deref(),
+            Some("legacy-password")
+        );
+        assert_eq!(backend.get_count(&id), 1);
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains(MASTER_KEY_PROTECTION));
+        assert!(backend
+            .values
+            .lock()
+            .unwrap()
+            .contains_key(KEYRING_MASTER_KEY_ACCOUNT));
+        assert!(!backend.values.lock().unwrap().contains_key(&id));
+        drop(store);
+
+        let legacy_reads = backend.get_count(&id);
+        let reloaded = SecretStore::with_backend(Some(path.clone()), backend.clone());
+        assert_eq!(
+            reloaded
+                .get_secret(profile_id, SecretPurpose::Password)
+                .unwrap()
+                .as_deref(),
+            Some("legacy-password")
+        );
+        assert_eq!(backend.get_count(&id), legacy_reads);
         let _ = std::fs::remove_file(path);
     }
 

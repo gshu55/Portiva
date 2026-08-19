@@ -38,6 +38,7 @@ serial2 = "0.2.37"
 arboard = "3.6.1"
 encoding_rs = "0.8"
 keyring = "4.1.5"
+ring = "0.17"
 fontdb = "0.23.0"
 
 [target.'cfg(unix)'.dependencies]

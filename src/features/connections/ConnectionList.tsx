@@ -287,6 +287,15 @@ export function ConnectionList({
     });
   }, [refreshOverview, savedProfiles]);
 
+  const refreshAuthenticatedOverviews = useCallback(() => {
+    savedProfiles.forEach((profile) => {
+      const session = sessionsByProfile.get(profile.id);
+      if (session?.connection.transport?.authenticated) {
+        void refreshOverview(profile);
+      }
+    });
+  }, [refreshOverview, savedProfiles, sessionsByProfile]);
+
   const refreshAll = useCallback(() => {
     refreshSavedOverviews();
     if (wslDiscovery.supported) {
@@ -326,7 +335,7 @@ export function ConnectionList({
 
   useEffect(() => {
     mountedRef.current = true;
-    refreshSavedOverviews();
+    refreshAuthenticatedOverviews();
     return () => {
       mountedRef.current = false;
     };
@@ -422,7 +431,7 @@ export function ConnectionList({
               className="saved-toolbar-icon-button"
               disabled={totalRefreshingCount > 0}
               onClick={refreshAll}
-              title={totalRefreshingCount > 0 ? "正在刷新主机概览" : "刷新全部"}
+              title={totalRefreshingCount > 0 ? "正在刷新主机概览" : "刷新全部；未连接的 SSH 主机可能需要解锁凭据"}
               type="button"
             >
               <Icon className={totalRefreshingCount > 0 ? "is-spinning" : ""} name="refresh-ccw" />
