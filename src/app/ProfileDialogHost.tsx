@@ -57,7 +57,7 @@ export function ProfileDialogHost({
     <ConnectionProfileDialog
       credentialNotice={
         dialog.forceSecretEntry
-          ? "无法读取原来保存的系统凭据。请重新输入密码；需要继续保存时，请重新勾选“记住密码”。"
+          ? "当前连接需要输入 SSH 密码或私钥口令；需要继续保存时，请勾选“记住密码”。"
           : undefined
       }
       mode={dialog.mode}

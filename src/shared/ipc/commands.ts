@@ -353,11 +353,10 @@ export function sshAuthenticateAgent(connectionId: string) {
   return invoke<ConnectionSummary>(commandNames.sshAuthenticateAgent, { connectionId });
 }
 
-export function sshCollectHostOverview(profileId: string, connectionId?: string, reuseOnly = false) {
+export function sshCollectHostOverview(profileId: string, connectionId?: string) {
   return invoke<SshHostOverview>(commandNames.sshCollectHostOverview, {
     profileId,
     connectionId,
-    reuseOnly,
   });
 }
 

@@ -21,6 +21,7 @@ import {
   resolveAppBackgroundTerminalColor,
 } from "./shared/appBackgrounds";
 import { resolveTerminalPalette } from "./shared/terminalThemes";
+import { requiresSavedCredentialRecovery } from "./shared/credentials";
 import {
   applicationFontReferenceSizes,
   resolveApplicationFontSize,
@@ -247,15 +248,6 @@ function isSessionWindowLabel(label: string) {
   );
 }
 
-function requiresSavedCredentialRecovery(message: string) {
-  return (
-    message.includes("系统凭据库读取凭据失败") ||
-    message.includes("系统凭据库任务执行失败") ||
-    message.includes("读取已保存的 SSH 凭据超时") ||
-    message.includes("未找到已保存的 SSH 密码")
-  );
-}
-
 function App() {
   const workspace = usePortivaWorkspace();
   const [profileDialog, setProfileDialog] = useState<{
@@ -273,6 +265,14 @@ function App() {
   const [appTabOrder, setAppTabOrder] = useState<string[]>([]);
   const [activeShellTabId, setActiveShellTabId] = useState<string | null>(null);
   const [savedConnectionsOpen, setSavedConnectionsOpen] = useState(false);
+  const rememberedPasswordProfileIds = useMemo(
+    () => new Set(
+      workspace.secrets
+        .filter((secret) => secret.purpose === "password" && secret.hasValue)
+        .map((secret) => secret.profileId),
+    ),
+    [workspace.secrets],
+  );
   const [connectingProfileIds, setConnectingProfileIds] = useState<ReadonlySet<string>>(() => new Set());
   const [titlebarTabSlot, setTitlebarTabSlot] = useState<HTMLDivElement | null>(null);
   const connectingProfileIdsRef = useRef(new Set<string>());
@@ -1794,6 +1794,7 @@ function App() {
                   activeProfileId={workspace.activeProfileId}
                   connectingProfileIds={connectingProfileIds}
                   profiles={workspace.profiles}
+                  rememberedPasswordProfileIds={rememberedPasswordProfileIds}
                   sessionTabs={workspace.sessionTabs}
                   onConnectProfile={connectSavedConnection}
                   onCreateProfile={openCreateProfileDialog}
@@ -1817,6 +1818,13 @@ function App() {
                     return workspace.openWslShellTab(distribution);
                   }}
                   onOpenWslFiles={openWslFilesTab}
+                  onRequestCredential={(profile, message) => {
+                    setReconnectTabId(null);
+                    setProfileDialog({ forceSecretEntry: true, mode: "edit", profile });
+                    workspace.reportWorkspaceMessage(
+                      `${message} 请重新输入密码；需要继续保存时，请勾选“记住密码”。`,
+                    );
+                  }}
                   onRefreshHostOverview={sshCollectHostOverview}
                   onRefreshWslHostOverview={wslCollectHostOverview}
                   onRefreshWslDistributions={workspace.refreshWslDistributions}

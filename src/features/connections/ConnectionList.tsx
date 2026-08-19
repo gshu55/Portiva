@@ -3,6 +3,7 @@ import { profileTarget } from "../../shared/profile";
 import { protocolLabel } from "../../shared/labels";
 import { Icon, type IconName } from "../../shared/Icon";
 import { formatBytes, formatUptimeDays } from "../../shared/format";
+import { requiresSavedCredentialRecovery } from "../../shared/credentials";
 import type {
   ConnectionProfile,
   SshHostOverview,
@@ -16,6 +17,7 @@ interface ConnectionListProps {
   activeProfileId: string;
   connectingProfileIds: ReadonlySet<string>;
   profiles: ConnectionProfile[];
+  rememberedPasswordProfileIds: ReadonlySet<string>;
   sessionTabs: WorkspaceSessionTab[];
   onConnectProfile: (profile: ConnectionProfile) => void;
   onCreateProfile: () => void;
@@ -25,7 +27,8 @@ interface ConnectionListProps {
   onOpenSession: (tabId: string) => void;
   onOpenWslDistribution: (distribution: string) => Promise<unknown>;
   onOpenWslFiles: (distribution: string) => void;
-  onRefreshHostOverview: (profileId: string, connectionId?: string, reuseOnly?: boolean) => Promise<SshHostOverview>;
+  onRequestCredential: (profile: ConnectionProfile, message: string) => void;
+  onRefreshHostOverview: (profileId: string, connectionId?: string) => Promise<SshHostOverview>;
   onRefreshWslHostOverview: (distribution: string) => Promise<WslHostOverview>;
   onRefreshWslDistributions: () => Promise<WslDiscovery>;
   onSelectProfile: (profileId: string) => void;
@@ -55,7 +58,7 @@ const profileIcons: Record<ConnectionProfile["type"], IconName> = {
 };
 
 const AUTO_REFRESH_DELAY_MS = 500;
-const AUTO_REFRESH_TIMEOUT_MS = 12_000;
+const AUTO_REFRESH_TIMEOUT_MS = 60_000;
 
 export function ConnectionList({
   activeProfileId,
@@ -68,11 +71,13 @@ export function ConnectionList({
   onOpenSession,
   onOpenWslDistribution,
   onOpenWslFiles,
+  onRequestCredential,
   onRefreshHostOverview,
   onRefreshWslHostOverview,
   onRefreshWslDistributions,
   onSelectProfile,
   profiles,
+  rememberedPasswordProfileIds,
   sessionTabs,
   wslDiscovery,
 }: ConnectionListProps) {
@@ -85,6 +90,7 @@ export function ConnectionList({
   const [wslRefreshing, setWslRefreshing] = useState(false);
   const [wslRefreshError, setWslRefreshError] = useState<string | null>(null);
   const refreshingProfileIds = useRef(new Set<string>());
+  const automaticRefreshRunningRef = useRef(false);
   const refreshingWslDistributions = useRef(new Set<string>());
   const openingWslDistributionsRef = useRef(new Set<string>());
   const refreshingWslDiscoveryRef = useRef(false);
@@ -148,9 +154,9 @@ export function ConnectionList({
   }, [sessionTabs]);
 
   const refreshOverview = useCallback(
-    async (profile: ConnectionProfile, automatic = false) => {
+    async (profile: ConnectionProfile, automatic = false): Promise<string | null> => {
       if ((profile.type !== "ssh" && profile.type !== "sftp") || refreshingProfileIds.current.has(profile.id)) {
-        return;
+        return null;
       }
 
       refreshingProfileIds.current.add(profile.id);
@@ -166,12 +172,12 @@ export function ConnectionList({
 
       try {
         const session = sessionsByProfile.get(profile.id);
-        const request = onRefreshHostOverview(profile.id, session?.connection.id, automatic);
+        const request = onRefreshHostOverview(profile.id, session?.connection.id);
         const overview = automatic
           ? await withTimeout(request, AUTO_REFRESH_TIMEOUT_MS, "自动刷新主机概览超时，请手动重试")
           : await request;
         if (!mountedRef.current) {
-          return;
+          return null;
         }
         setOverviewByProfile((current) => ({
           ...current,
@@ -182,24 +188,30 @@ export function ConnectionList({
             refreshedAt: Date.now(),
           },
         }));
+        return null;
       } catch (error) {
+        const message = hostOverviewErrorMessage(error);
         if (!mountedRef.current) {
-          return;
+          return message;
         }
         setOverviewByProfile((current) => ({
           ...current,
           [profile.id]: {
             data: current[profile.id]?.data ?? null,
-            error: hostOverviewErrorMessage(error),
+            error: message,
             loading: false,
             refreshedAt: current[profile.id]?.refreshedAt ?? null,
           },
         }));
+        if (requiresSavedCredentialRecovery(message)) {
+          onRequestCredential(profile, message);
+        }
+        return message;
       } finally {
         refreshingProfileIds.current.delete(profile.id);
       }
     },
-    [onRefreshHostOverview, sessionsByProfile],
+    [onRefreshHostOverview, onRequestCredential, sessionsByProfile],
   );
 
   const refreshWslOverview = useCallback(async (distribution: WslDistributionInfo) => {
@@ -287,23 +299,40 @@ export function ConnectionList({
     }
   }, [onRefreshWslDistributions, refreshWslOverview]);
 
-  const refreshSavedOverviews = useCallback(() => {
-    savedProfiles.forEach((profile) => {
-      void refreshOverview(profile);
-    });
-  }, [refreshOverview, savedProfiles]);
+  const refreshSavedOverviews = useCallback(async (automatic = false) => {
+    if (automatic && automaticRefreshRunningRef.current) {
+      return;
+    }
+    if (automatic) {
+      automaticRefreshRunningRef.current = true;
+    }
 
-  const refreshAuthenticatedOverviews = useCallback(() => {
-    savedProfiles.forEach((profile) => {
-      const session = sessionsByProfile.get(profile.id);
-      if (session?.connection.transport?.authenticated && !connectingProfileIds.has(profile.id)) {
-        void refreshOverview(profile, true);
+    try {
+      for (const profile of savedProfiles) {
+        if (
+          automatic &&
+          (profile.type === "ssh" || profile.type === "sftp") &&
+          profile.authType === "password" &&
+          !rememberedPasswordProfileIds.has(profile.id)
+        ) {
+          onRequestCredential(profile, "未找到已保存的 SSH 密码");
+          return;
+        }
+
+        const error = await refreshOverview(profile, automatic);
+        if (automatic && error && requiresSavedCredentialRecovery(error)) {
+          return;
+        }
       }
-    });
-  }, [connectingProfileIds, refreshOverview, savedProfiles, sessionsByProfile]);
+    } finally {
+      if (automatic) {
+        automaticRefreshRunningRef.current = false;
+      }
+    }
+  }, [onRequestCredential, refreshOverview, rememberedPasswordProfileIds, savedProfiles]);
 
   const refreshAll = useCallback(() => {
-    refreshSavedOverviews();
+    void refreshSavedOverviews();
     if (wslDiscovery.supported) {
       void refreshWsl();
     }
@@ -337,10 +366,11 @@ export function ConnectionList({
             session?.connection.status ?? "",
             session?.connection.transport?.authenticated ? "authenticated" : "pending",
             connectingProfileIds.has(profile.id) ? "connecting" : "settled",
+            rememberedPasswordProfileIds.has(profile.id) ? "credential" : "no-credential",
           ].join(":");
         })
         .join("|"),
-    [connectingProfileIds, savedProfiles, sessionsByProfile],
+    [connectingProfileIds, rememberedPasswordProfileIds, savedProfiles, sessionsByProfile],
   );
   const wslAutoRefreshKey = useMemo(
     () => wslDiscovery.distributions
@@ -351,7 +381,7 @@ export function ConnectionList({
 
   useEffect(() => {
     mountedRef.current = true;
-    const timer = window.setTimeout(refreshAuthenticatedOverviews, AUTO_REFRESH_DELAY_MS);
+    const timer = window.setTimeout(() => void refreshSavedOverviews(true), AUTO_REFRESH_DELAY_MS);
     return () => {
       window.clearTimeout(timer);
       mountedRef.current = false;
