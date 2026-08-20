@@ -3756,7 +3756,11 @@ export function usePortivaWorkspace() {
     [activateSessionTab, sessionTabs],
   );
 
-  const reorderSessionTabs = useCallback((sourceConnectionId: string, targetConnectionId: string) => {
+  const reorderSessionTabs = useCallback((
+    sourceConnectionId: string,
+    targetConnectionId: string,
+    position: "before" | "after" = "before",
+  ) => {
     if (sourceConnectionId === targetConnectionId) {
       return;
     }
@@ -3771,7 +3775,10 @@ export function usePortivaWorkspace() {
 
       const nextTabs = [...current];
       const [movedTab] = nextTabs.splice(sourceIndex, 1);
-      nextTabs.splice(targetIndex, 0, movedTab);
+      const nextTargetIndex = nextTabs.findIndex(
+        (tab) => (tab.id ?? tab.connection.id) === targetConnectionId,
+      );
+      nextTabs.splice(nextTargetIndex + (position === "after" ? 1 : 0), 0, movedTab);
       return nextTabs;
     });
     setWorkspaceMessage("已调整标签顺序。");

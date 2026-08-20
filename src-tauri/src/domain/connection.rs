@@ -28,6 +28,25 @@ pub struct ConnectionTransportInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct DiskPartitionOverview {
+    pub role: DiskPartitionRole,
+    pub device: String,
+    pub mount_point: String,
+    pub file_system: Option<String>,
+    pub used_bytes: Option<u64>,
+    pub available_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DiskPartitionRole {
+    Root,
+    Efi,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct SshHostOverview {
     pub hostname: String,
     pub operating_system: String,
@@ -38,6 +57,7 @@ pub struct SshHostOverview {
     pub memory_total_bytes: Option<u64>,
     pub disk_used_bytes: Option<u64>,
     pub disk_total_bytes: Option<u64>,
+    pub disk_partitions: Vec<DiskPartitionOverview>,
     pub network_received_bytes: Option<u64>,
     pub network_transmitted_bytes: Option<u64>,
     pub uptime_seconds: Option<u64>,

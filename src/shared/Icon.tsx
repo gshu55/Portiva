@@ -9,6 +9,7 @@ export type IconName =
   | "columns-2"
   | "command"
   | "copy"
+  | "cpu"
   | "download"
   | "edit"
   | "eye"
@@ -66,6 +67,7 @@ const iconPaths: Record<IconName, string[]> = {
     "M18 8a3 3 0 1 0-3-3v14a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V5a3 3 0 1 0-3 3h12",
   ],
   copy: ["M8 8h10v10H8z", "M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"],
+  cpu: ["M9 9h6v6H9z", "M4 9h2", "M4 15h2", "M18 9h2", "M18 15h2", "M9 4v2", "M15 4v2", "M9 18v2", "M15 18v2", "M7 7h10v10H7z"],
   download: ["M12 3v12", "m7 10 5 5 5-5", "M5 21h14"],
   edit: ["M12 20h9", "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"],
   eye: ["M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z", "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"],

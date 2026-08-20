@@ -59,6 +59,26 @@ const profileIcons: Record<ConnectionProfile["type"], IconName> = {
 
 const AUTO_REFRESH_DELAY_MS = 500;
 const AUTO_REFRESH_TIMEOUT_MS = 60_000;
+const HOST_OVERVIEW_REFRESH_INTERVAL_MS = 10_000;
+const SSH_OVERVIEW_CONCURRENCY = 4;
+
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>,
+) {
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await task(item);
+    }
+  });
+
+  await Promise.all(workers);
+}
 
 export function ConnectionList({
   activeProfileId,
@@ -91,6 +111,7 @@ export function ConnectionList({
   const [wslRefreshError, setWslRefreshError] = useState<string | null>(null);
   const refreshingProfileIds = useRef(new Set<string>());
   const automaticRefreshRunningRef = useRef(false);
+  const automaticCredentialPromptRef = useRef<string | null>(null);
   const refreshingWslDistributions = useRef(new Set<string>());
   const openingWslDistributionsRef = useRef(new Set<string>());
   const refreshingWslDiscoveryRef = useRef(false);
@@ -154,7 +175,11 @@ export function ConnectionList({
   }, [sessionTabs]);
 
   const refreshOverview = useCallback(
-    async (profile: ConnectionProfile, automatic = false): Promise<string | null> => {
+    async (
+      profile: ConnectionProfile,
+      automatic = false,
+      requestCredential = true,
+    ): Promise<string | null> => {
       if ((profile.type !== "ssh" && profile.type !== "sftp") || refreshingProfileIds.current.has(profile.id)) {
         return null;
       }
@@ -203,7 +228,7 @@ export function ConnectionList({
             refreshedAt: current[profile.id]?.refreshedAt ?? null,
           },
         }));
-        if (requiresSavedCredentialRecovery(message)) {
+        if (requestCredential && requiresSavedCredentialRecovery(message)) {
           onRequestCredential(profile, message);
         }
         return message;
@@ -308,28 +333,64 @@ export function ConnectionList({
     }
 
     try {
-      for (const profile of savedProfiles) {
-        if (
-          automatic &&
-          (profile.type === "ssh" || profile.type === "sftp") &&
-          profile.authType === "password" &&
-          !rememberedPasswordProfileIds.has(profile.id)
-        ) {
-          onRequestCredential(profile, "未找到已保存的 SSH 密码");
+      const sshProfiles = savedProfiles.filter(
+        (profile) => profile.type === "ssh" || profile.type === "sftp",
+      );
+      let profilesToRefresh = sshProfiles;
+      let hasMissingCredentialProfiles = false;
+      if (automatic) {
+        const missingCredentialProfiles = sshProfiles.filter(
+          (profile) =>
+            profile.authType === "password" &&
+            !rememberedPasswordProfileIds.has(profile.id) &&
+            !sessionsByProfile.get(profile.id)?.connection.transport?.authenticated,
+        );
+        const missingCredentialProfile = missingCredentialProfiles[0];
+        hasMissingCredentialProfiles = missingCredentialProfiles.length > 0;
+        if (missingCredentialProfile) {
+          const promptKey = `missing:${missingCredentialProfile.id}:${missingCredentialProfile.updatedAt}`;
+          if (automaticCredentialPromptRef.current !== promptKey) {
+            automaticCredentialPromptRef.current = promptKey;
+            onRequestCredential(missingCredentialProfile, "未找到已保存的 SSH 密码");
+          }
+          const missingIds = new Set(missingCredentialProfiles.map((profile) => profile.id));
+          profilesToRefresh = sshProfiles.filter((profile) => !missingIds.has(profile.id));
+        }
+      }
+
+      let stopScheduling = false;
+      let credentialRequested = automatic && automaticCredentialPromptRef.current !== null;
+      let credentialRecoveryFailed = false;
+      await runWithConcurrency(profilesToRefresh, SSH_OVERVIEW_CONCURRENCY, async (profile) => {
+        if (stopScheduling) {
           return;
         }
 
-        const error = await refreshOverview(profile, automatic);
-        if (automatic && error && requiresSavedCredentialRecovery(error)) {
+        const error = await refreshOverview(profile, automatic, false);
+        if (!error || !requiresSavedCredentialRecovery(error)) {
           return;
         }
+        credentialRecoveryFailed = true;
+        if (!credentialRequested) {
+          credentialRequested = true;
+          if (automatic) {
+            automaticCredentialPromptRef.current = `error:${profile.id}:${profile.updatedAt}`;
+          }
+          onRequestCredential(profile, error);
+        }
+        if (automatic) {
+          stopScheduling = true;
+        }
+      });
+      if (automatic && !hasMissingCredentialProfiles && !credentialRecoveryFailed) {
+        automaticCredentialPromptRef.current = null;
       }
     } finally {
       if (automatic) {
         automaticRefreshRunningRef.current = false;
       }
     }
-  }, [onRequestCredential, refreshOverview, rememberedPasswordProfileIds, savedProfiles]);
+  }, [onRequestCredential, refreshOverview, rememberedPasswordProfileIds, savedProfiles, sessionsByProfile]);
 
   const refreshAll = useCallback(() => {
     void refreshSavedOverviews();
@@ -381,9 +442,17 @@ export function ConnectionList({
 
   useEffect(() => {
     mountedRef.current = true;
-    const timer = window.setTimeout(() => void refreshSavedOverviews(true), AUTO_REFRESH_DELAY_MS);
+    const initialTimer = window.setTimeout(
+      () => void refreshSavedOverviews(true),
+      AUTO_REFRESH_DELAY_MS,
+    );
+    const refreshTimer = window.setInterval(
+      () => void refreshSavedOverviews(true),
+      HOST_OVERVIEW_REFRESH_INTERVAL_MS,
+    );
     return () => {
-      window.clearTimeout(timer);
+      window.clearTimeout(initialTimer);
+      window.clearInterval(refreshTimer);
       mountedRef.current = false;
     };
     // autoRefreshKey intentionally captures profile edits and newly authenticated sessions.
@@ -404,7 +473,7 @@ export function ConnectionList({
     }
     const timer = window.setInterval(() => {
       void refreshWsl(true);
-    }, 15_000);
+    }, HOST_OVERVIEW_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [refreshWsl, wslDiscovery.supported]);
 

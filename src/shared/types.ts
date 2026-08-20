@@ -168,6 +168,7 @@ export interface WslHostOverview {
   memoryTotalBytes: number | null;
   diskUsedBytes: number | null;
   diskTotalBytes: number | null;
+  diskPartitions: DiskPartitionOverview[];
   networkReceivedBytes: number | null;
   networkTransmittedBytes: number | null;
   uptimeSeconds: number | null;
@@ -184,10 +185,21 @@ export interface SshHostOverview {
   memoryTotalBytes: number | null;
   diskUsedBytes: number | null;
   diskTotalBytes: number | null;
+  diskPartitions: DiskPartitionOverview[];
   networkReceivedBytes: number | null;
   networkTransmittedBytes: number | null;
   uptimeSeconds: number | null;
   latencyMs: number;
+}
+
+export interface DiskPartitionOverview {
+  role: "root" | "efi";
+  device: string;
+  mountPoint: string;
+  fileSystem: string | null;
+  usedBytes: number | null;
+  availableBytes: number | null;
+  totalBytes: number | null;
 }
 
 export interface RemoteEntry {

@@ -15,12 +15,14 @@ import { readClipboardText, writeClipboardHtml, writeClipboardText } from "../..
 import { Icon } from "../../shared/Icon";
 import { parseOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "../../shared/terminalFonts";
+import { TerminalSemanticHighlighter } from "./terminalSemanticHighlighter";
 
 interface TerminalPaneProps {
   autoScroll?: boolean;
   clearRevision?: number;
   isActive?: boolean;
   reportSizeWhenVisible?: boolean;
+  semanticHighlighting?: boolean;
   terminal: TerminalSession | null;
   terminalConfirmMultilinePaste?: boolean;
   terminalCopyRichText?: boolean;
@@ -387,6 +389,7 @@ export function TerminalPane({
   onTitleChange,
   onWorkingDirectoryChange,
   reportSizeWhenVisible = false,
+  semanticHighlighting = false,
   terminal,
   terminalConfirmMultilinePaste = true,
   terminalCopyRichText = false,
@@ -403,6 +406,7 @@ export function TerminalPane({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const serializeAddonRef = useRef<SerializeAddon | null>(null);
+  const semanticHighlighterRef = useRef<TerminalSemanticHighlighter | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pasteTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const lastBufferRef = useRef("");
@@ -782,6 +786,7 @@ export function TerminalPane({
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon({ highlightLimit: 2000 });
     const serializeAddon = new SerializeAddon();
+    const semanticHighlighter = new TerminalSemanticHighlighter(instance, terminalTheme, semanticHighlighting);
     instance.loadAddon(fitAddon);
     instance.loadAddon(searchAddon);
     instance.loadAddon(serializeAddon);
@@ -845,7 +850,9 @@ export function TerminalPane({
     const bufferChangeHandler = instance.buffer.onBufferChange(syncAlternateScreenCli);
     const writeParsedHandler = instance.onWriteParsed(() => {
       activityRef.current?.(terminal.id);
+      semanticHighlighter.schedule();
     });
+    const semanticScrollHandler = instance.onScroll(() => semanticHighlighter.schedule());
     instance.attachCustomKeyEventHandler((event) => {
       if (event.type === "keydown" && isTerminalSearchShortcut(event)) {
         event.preventDefault();
@@ -890,6 +897,7 @@ export function TerminalPane({
         const capture = captureSubmittedCommands(data, commandDraftRef.current);
         commandDraftRef.current = capture.draft;
         capture.commands.forEach((command) => {
+          semanticHighlighterRef.current?.trackCommand(command);
           if (!activeMainstreamCliRef.current) {
             const detectedCli = detectMainstreamCliCommand(command);
             if (detectedCli) {
@@ -931,6 +939,7 @@ export function TerminalPane({
     fitAddonRef.current = fitAddon;
     searchAddonRef.current = searchAddon;
     serializeAddonRef.current = serializeAddon;
+    semanticHighlighterRef.current = semanticHighlighter;
     lastBufferRef.current = "";
     renderInitializedRef.current = false;
     replayingSnapshotRef.current = false;
@@ -997,6 +1006,8 @@ export function TerminalPane({
       titleChangeHandler.dispose();
       bufferChangeHandler.dispose();
       writeParsedHandler.dispose();
+      semanticScrollHandler.dispose();
+      semanticHighlighter.dispose();
       activeMainstreamCliRef.current = null;
       if (resizeTimerRef.current) {
         window.clearTimeout(resizeTimerRef.current);
@@ -1013,6 +1024,7 @@ export function TerminalPane({
         fitAddonRef.current = null;
         searchAddonRef.current = null;
         serializeAddonRef.current = null;
+        semanticHighlighterRef.current = null;
         lastBufferRef.current = "";
         renderInitializedRef.current = false;
         replayingSnapshotRef.current = false;
@@ -1046,7 +1058,8 @@ export function TerminalPane({
     }
 
     xtermRef.current.options.theme = createXtermTheme(terminalTheme, emphasizeSearchSelection);
-  }, [terminalTheme, emphasizeSearchSelection]);
+    semanticHighlighterRef.current?.update(terminalTheme, semanticHighlighting);
+  }, [terminalTheme, emphasizeSearchSelection, semanticHighlighting]);
 
   useEffect(() => {
     if (!xtermRef.current || xtermRef.current.options.scrollback === resolvedScrollbackLines) {

@@ -327,16 +327,25 @@
 .ssh-system-summary-item {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   flex: 0 0 auto;
   min-height: 28px;
   padding: 0 8px;
   border-right: 1px solid var(--border-faint);
   color: var(--text-main);
+  text-align: center;
 }
 
 .ssh-system-host {
-  max-width: 170px;
+  width: auto;
+  min-width: 140px;
+  max-width: 220px;
+}
+
+.ssh-system-summary-item {
+  width: auto;
+  min-width: 108px;
 }
 
 .ssh-system-host.error {
@@ -363,15 +372,68 @@
   color: #35c49b;
 }
 
-.ssh-system-summary-item small {
-  color: var(--text-muted);
-  font-size: var(--app-font-size-9, 9px);
-}
-
 .ssh-system-summary-item strong {
   color: var(--text-strong);
   white-space: nowrap;
   font-size: var(--app-font-size-10, 10px);
+}
+
+.ssh-system-cpu-item {
+  min-width: 82px;
+}
+
+.ssh-system-memory-item {
+  min-width: 156px;
+}
+
+.ssh-system-disk-item {
+  min-width: 174px;
+}
+
+.ssh-system-disk-item strong,
+.ssh-system-disk-item strong > span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ssh-system-disk-item strong {
+  gap: 10px;
+}
+
+.ssh-system-disk-item strong > span {
+  gap: 4px;
+}
+
+.ssh-system-disk-item b {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.ssh-system-disk-item .unavailable {
+  color: var(--text-muted);
+}
+
+.ssh-system-network-item {
+  min-width: 112px;
+}
+
+.ssh-system-network-item {
+  gap: 5px;
+}
+
+.ssh-system-network-item strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ssh-system-network-item b {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.ssh-system-network-item.transmitted b {
+  color: var(--success);
 }
 
 @media (max-width: 1080px) {

@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type MouseEvent, type Ref } from "react";
-import { Icon, type IconName } from "../shared/Icon";
-
-type WindowAction = "close" | "drag" | "minimize" | "toggle-maximize";
-type WindowControlPlatform = "linux" | "macos" | "windows";
+import { useRef, type MouseEvent, type Ref } from "react";
+import { Icon } from "../shared/Icon";
+import {
+  detectWindowControlPlatform,
+  runWindowAction,
+  WindowControls,
+} from "../shared/WindowControls";
 
 interface AppTitlebarProps {
   httpConsoleActive: boolean;
@@ -17,49 +19,6 @@ interface AppTitlebarProps {
   onOpenSavedConnections: () => void;
   onOpenSettings: () => void;
   tabSlotRef: Ref<HTMLDivElement>;
-}
-
-async function runWindowAction(action: WindowAction) {
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const currentWindow = getCurrentWindow();
-
-    if (action === "drag") {
-      await currentWindow.startDragging();
-    } else if (action === "minimize") {
-      await currentWindow.minimize();
-    } else if (action === "toggle-maximize") {
-      await currentWindow.toggleMaximize();
-    } else {
-      await currentWindow.close();
-    }
-  } catch {
-    // Browser preview and mocked mode do not have native window controls.
-  }
-}
-
-async function readWindowMaximized() {
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    return await getCurrentWindow().isMaximized();
-  } catch {
-    return false;
-  }
-}
-
-function detectWindowControlPlatform(): WindowControlPlatform {
-  const platform = navigator.platform.toLowerCase();
-  const userAgent = navigator.userAgent.toLowerCase();
-
-  if (platform.includes("mac") || userAgent.includes("mac os")) {
-    return "macos";
-  }
-
-  if (platform.includes("linux") || userAgent.includes("linux")) {
-    return "linux";
-  }
-
-  return "windows";
 }
 
 function isTitlebarInteractiveTarget(target: EventTarget | null) {
@@ -87,17 +46,7 @@ export function AppTitlebar({
   onOpenSettings,
   tabSlotRef,
 }: AppTitlebarProps) {
-  const [isMaximized, setIsMaximized] = useState(false);
   const suppressNextDoubleClickRef = useRef(false);
-
-  useEffect(() => {
-    void readWindowMaximized().then(setIsMaximized);
-  }, []);
-
-  const toggleWindowMaximize = async () => {
-    await runWindowAction("toggle-maximize");
-    setIsMaximized(await readWindowMaximized());
-  };
 
   const startTitlebarDrag = (event: MouseEvent<HTMLElement>) => {
     if (event.button !== 0 || isTitlebarInteractiveTarget(event.target)) {
@@ -108,7 +57,7 @@ export function AppTitlebar({
       suppressNextDoubleClickRef.current = true;
       event.preventDefault();
       event.stopPropagation();
-      void toggleWindowMaximize();
+      void runWindowAction("toggle-maximize");
       return;
     }
 
@@ -128,17 +77,10 @@ export function AppTitlebar({
       return;
     }
 
-    void toggleWindowMaximize();
+    void runWindowAction("toggle-maximize");
   };
   const windowControlPlatform = detectWindowControlPlatform();
   const isMacWindow = windowControlPlatform === "macos";
-  const maximizeIcon: IconName = isMaximized ? "restore" : "maximize";
-  const maximizeLabel = isMaximized ? "还原" : "最大化";
-  const nonMacWindowControls = [
-    { action: "minimize" as const, className: "minimize", icon: "minus" as const, label: "最小化", title: "最小化" },
-    { action: "toggle-maximize" as const, className: "maximize", icon: maximizeIcon, label: maximizeLabel, title: maximizeLabel },
-    { action: "close" as const, className: "close", icon: "x" as const, label: "后台运行", title: "关闭到系统托盘" },
-  ];
 
   return (
     <header
@@ -197,29 +139,7 @@ export function AppTitlebar({
           <Icon name="settings" />
         </button>
       </nav>
-      {!isMacWindow ? (
-        <div className={`window-controls ${windowControlPlatform}`} aria-label="窗口控制">
-          {nonMacWindowControls.map((control) => (
-            <button
-              type="button"
-              className={`window-control ${control.className}`}
-              title={control.title}
-              aria-label={control.label}
-              key={control.action}
-              onClick={() => {
-                if (control.action === "toggle-maximize") {
-                  void toggleWindowMaximize();
-                  return;
-                }
-
-                void runWindowAction(control.action);
-              }}
-            >
-              <Icon name={control.icon} />
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <WindowControls closeLabel="后台运行" closeTitle="关闭到系统托盘" />
     </header>
   );
 }

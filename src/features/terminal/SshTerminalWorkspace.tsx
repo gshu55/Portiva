@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { formatBytes, formatUptime, formatUptimeDays } from "../../shared/format";
-import { Icon } from "../../shared/Icon";
+import { Icon, type IconName } from "../../shared/Icon";
 import { sshCollectHostOverview, wslCollectHostOverview } from "../../shared/ipc/commands";
-import type { SshHostOverview, WslHostOverview } from "../../shared/types";
+import type { DiskPartitionOverview, SshHostOverview, WslHostOverview } from "../../shared/types";
 import { Card, ConfirmDialog, IconButton, SegmentedControl, TextInput, VirtualList } from "../../shared/ui";
 import type { SavedSshCommand } from "./useSavedSshCommands";
 import "./sshTerminalWorkspace.css";
 
-const sshOverviewRefreshIntervalMs = 10_000;
-const wslOverviewRefreshIntervalMs = 2_000;
+const sshOverviewRefreshIntervalMs = 1_000;
+const wslOverviewRefreshIntervalMs = 1_000;
 
 interface SshTerminalWorkspaceProps {
   children: ReactNode;
@@ -147,7 +147,7 @@ function useSshHostOverview(profileId: string, connectionId: string, enabled: bo
     return () => window.clearInterval(timer);
   }, [connectionId, enabled, profileId, refresh]);
 
-  return { ...state, refresh };
+  return state;
 }
 
 function useWslHostOverview(distribution: string, enabled: boolean) {
@@ -231,25 +231,91 @@ function useWslHostOverview(distribution: string, enabled: boolean) {
     return () => window.clearInterval(timer);
   }, [distribution, enabled, refresh]);
 
-  return { ...state, refresh };
+  return state;
 }
 
 function SystemSummaryItem({
+  className = "",
   icon,
   label,
   title,
   value,
 }: {
-  icon: "activity" | "hard-drive" | "network" | "server";
+  className?: string;
+  icon: IconName;
   label: string;
   title: string;
   value: string;
 }) {
   return (
-    <span className="ssh-system-summary-item" title={title}>
+    <span aria-label={`${label} ${value}`} className={["ssh-system-summary-item", className].filter(Boolean).join(" ")} title={title}>
       <Icon name={icon} />
-      <small>{label}</small>
       <strong>{value}</strong>
+    </span>
+  );
+}
+
+function partitionUsage(partition: DiskPartitionOverview | null) {
+  const value = percent(partition?.usedBytes ?? null, partition?.totalBytes ?? null);
+  return value === null ? "—" : `${value}%`;
+}
+
+function partitionDetail(label: string, partition: DiskPartitionOverview | null) {
+  if (!partition) {
+    return `${label}：未检测到已挂载分区`;
+  }
+
+  return [
+    `${label} · ${partition.mountPoint}`,
+    partition.device ? `设备：${partition.device}` : null,
+    partition.fileSystem ? `文件系统：${partition.fileSystem}` : null,
+    `已用：${formatBytes(partition.usedBytes)} / ${formatBytes(partition.totalBytes)}`,
+    `可用：${formatBytes(partition.availableBytes)} · 占用 ${partitionUsage(partition)}`,
+  ].filter(Boolean).join("\n");
+}
+
+function DiskSummaryItem({
+  efi,
+  root,
+}: {
+  efi: DiskPartitionOverview | null;
+  root: DiskPartitionOverview | null;
+}) {
+  const rootUsage = partitionUsage(root);
+  const efiUsage = partitionUsage(efi);
+  return (
+    <span
+      aria-label={`磁盘 根分区 ${rootUsage} EFI 分区 ${efiUsage}`}
+      className="ssh-system-summary-item ssh-system-disk-item"
+      title={`${partitionDetail("根分区", root)}\n\n${partitionDetail("EFI 分区", efi)}`}
+    >
+      <Icon name="hard-drive" />
+      <strong>
+        <span><b>/</b>{rootUsage}</span>
+        <span className={efi ? "" : "unavailable"}><b>EFI</b>{efiUsage}</span>
+      </strong>
+    </span>
+  );
+}
+
+function NetworkSummaryItem({
+  direction,
+  title,
+  value,
+}: {
+  direction: "received" | "transmitted";
+  title: string;
+  value: string;
+}) {
+  const received = direction === "received";
+  return (
+    <span
+      aria-label={`${received ? "网络下载" : "网络上传"} ${value}`}
+      className={["ssh-system-summary-item", "ssh-system-network-item", direction].join(" ")}
+      title={title}
+    >
+      <Icon name="network" />
+      <strong><b aria-hidden="true">{received ? "↓" : "↑"}</b>{value}</strong>
     </span>
   );
 }
@@ -337,7 +403,8 @@ export function SshTerminalWorkspace({
   const overview = sessionKind === "wsl" ? wslOverview : sshOverview;
   const savedCommandValues = useMemo(() => new Set(savedCommands.map((item) => item.command)), [savedCommands]);
   const memoryPercent = percent(overview.data?.memoryUsedBytes ?? null, overview.data?.memoryTotalBytes ?? null);
-  const diskPercent = percent(overview.data?.diskUsedBytes ?? null, overview.data?.diskTotalBytes ?? null);
+  const rootPartition = overview.data?.diskPartitions?.find((partition) => partition.role === "root") ?? null;
+  const efiPartition = overview.data?.diskPartitions?.find((partition) => partition.role === "efi") ?? null;
   const cpuPercent = sessionKind === "wsl"
     ? wslOverview.data?.cpuUsagePercent === null || wslOverview.data?.cpuUsagePercent === undefined
       ? null
@@ -365,13 +432,18 @@ export function SshTerminalWorkspace({
     setEditingDraft("");
   };
 
-  const networkValue =
-    overview.receivedBytesPerSecond !== null && overview.transmittedBytesPerSecond !== null
-      ? `↓ ${formatBytes(overview.receivedBytesPerSecond)}/s · ↑ ${formatBytes(overview.transmittedBytesPerSecond)}/s`
-      : "等待速率采样";
-  const networkDetail = overview.data
-    ? `累计 ↓ ${formatBytes(overview.data.networkReceivedBytes)} · ↑ ${formatBytes(overview.data.networkTransmittedBytes)}`
-    : "网络数据不可用";
+  const networkReceivedValue = overview.receivedBytesPerSecond === null
+    ? "等待采样"
+    : `${formatBytes(overview.receivedBytesPerSecond)}/s`;
+  const networkTransmittedValue = overview.transmittedBytesPerSecond === null
+    ? "等待采样"
+    : `${formatBytes(overview.transmittedBytesPerSecond)}/s`;
+  const networkReceivedDetail = overview.data
+    ? `累计下载 ${formatBytes(overview.data.networkReceivedBytes)}`
+    : "网络下载数据不可用";
+  const networkTransmittedDetail = overview.data
+    ? `累计上传 ${formatBytes(overview.data.networkTransmittedBytes)}`
+    : "网络上传数据不可用";
   const sessionLabel = sessionKind === "wsl" ? "WSL" : "SSH";
   const filePanelLabel = sessionKind === "wsl" ? "WSL 文件栏" : "SFTP 栏";
 
@@ -541,17 +613,23 @@ export function SshTerminalWorkspace({
             <Icon name="server" />
             <strong>{overview.data?.hostname ?? (overview.loading ? "采集中…" : sessionKind === "wsl" ? distribution || "WSL" : "SSH 主机")}</strong>
           </span>
-          <SystemSummaryItem icon="activity" label="CPU" title={overview.data?.cpuCount ? `${overview.data.cpuCount} 核${sessionKind === "ssh" ? " · 1 分钟负载换算" : " · 实时占用"}` : "CPU 信息不可用"} value={cpuPercent === null ? "—" : `${cpuPercent}%`} />
-          <SystemSummaryItem icon="server" label="内存" title={overview.data ? `${formatBytes(overview.data.memoryUsedBytes)} / ${formatBytes(overview.data.memoryTotalBytes)}` : "内存信息不可用"} value={memoryPercent === null ? "—" : `${memoryPercent}%`} />
-          <SystemSummaryItem icon="hard-drive" label="磁盘" title={overview.data ? `${formatBytes(overview.data.diskUsedBytes)} / ${formatBytes(overview.data.diskTotalBytes)}` : "根分区信息不可用"} value={diskPercent === null ? "—" : `${diskPercent}%`} />
-          <SystemSummaryItem icon="network" label="网络" title={networkDetail} value={networkValue} />
+          <SystemSummaryItem className="ssh-system-cpu-item" icon="cpu" label="CPU" title={overview.data?.cpuCount ? `${overview.data.cpuCount} 核${sessionKind === "ssh" ? " · 1 分钟负载换算" : " · 实时占用"}` : "CPU 信息不可用"} value={cpuPercent === null ? "—" : `${cpuPercent}%`} />
+          <SystemSummaryItem
+            className="ssh-system-memory-item"
+            icon="server"
+            label="内存"
+            title={overview.data ? `已用 ${formatBytes(overview.data.memoryUsedBytes)} / 总量 ${formatBytes(overview.data.memoryTotalBytes)}${memoryPercent === null ? "" : ` · ${memoryPercent}%`}` : "内存信息不可用"}
+            value={overview.data ? `${formatBytes(overview.data.memoryUsedBytes)} / ${formatBytes(overview.data.memoryTotalBytes)}` : "—"}
+          />
+          <DiskSummaryItem efi={efiPartition} root={rootPartition} />
+          <NetworkSummaryItem direction="received" title={networkReceivedDetail} value={networkReceivedValue} />
+          <NetworkSummaryItem direction="transmitted" title={networkTransmittedDetail} value={networkTransmittedValue} />
           <SystemSummaryItem
             icon="activity"
             label="运行"
             title={overview.data?.kernelVersion ?? "运行时间不可用"}
             value={(sessionKind === "ssh" ? formatUptimeDays : formatUptime)(overview.data?.uptimeSeconds ?? null)}
           />
-            <IconButton aria-label="刷新系统信息" disabled={!terminalReady || overview.loading} icon="refresh-ccw" onClick={() => void overview.refresh()} size="sm" title="刷新系统信息" tone="muted" />
           </div>
         </Card>
       ) : null}

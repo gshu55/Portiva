@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::domain::connection::SshHostOverview;
+use crate::domain::connection::{DiskPartitionOverview, DiskPartitionRole, SshHostOverview};
 use crate::domain::file_transfer::{RemoteEntry, RemoteEntryKind};
 use crate::domain::profile::ConnectionProfile;
 use crate::domain::settings::NetworkProxySettings;
@@ -108,6 +108,16 @@ memory_buffers_kb=""
 memory_cached_kb=""
 disk_total_kb=""
 disk_used_kb=""
+root_disk_device=""
+root_disk_mount="/"
+root_disk_filesystem=""
+root_disk_available_kb=""
+efi_disk_device=""
+efi_disk_mount=""
+efi_disk_filesystem=""
+efi_disk_total_kb=""
+efi_disk_used_kb=""
+efi_disk_available_kb=""
 network_received_bytes=""
 network_transmitted_bytes=""
 uptime_seconds=""
@@ -144,10 +154,39 @@ if [ -r /proc/uptime ]; then
 fi
 
 if command -v df >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then
-  disk_values=$(df -Pk / 2>/dev/null | awk 'END {print $2 " " $3}')
+  disk_values=$(df -Pk / 2>/dev/null | awk 'END {print $1 " " $2 " " $3 " " $4 " " $6}')
   set -- $disk_values
-  disk_total_kb=${1:-}
-  disk_used_kb=${2:-}
+  root_disk_device=${1:-}
+  disk_total_kb=${2:-}
+  disk_used_kb=${3:-}
+  root_disk_available_kb=${4:-}
+  root_disk_mount=${5:-/}
+
+  if [ -r /proc/mounts ]; then
+    root_disk_filesystem=$(awk -v target="$root_disk_mount" '$2 == target {print $3; exit}' /proc/mounts)
+    efi_disk_mount=$(awk '$2 == "/boot/efi" || $2 == "/efi" || ($2 == "/boot" && $3 ~ /^(vfat|fat|msdos|exfat)$/) {print $2; exit}' /proc/mounts)
+  fi
+  if [ -z "$root_disk_filesystem" ] && command -v findmnt >/dev/null 2>&1; then
+    root_disk_filesystem=$(findmnt -n -o FSTYPE --target / 2>/dev/null | awk 'NR == 1 {print; exit}')
+  fi
+  if [ -z "$efi_disk_mount" ] && command -v findmnt >/dev/null 2>&1; then
+    efi_disk_mount=$(findmnt -rn -o TARGET,FSTYPE 2>/dev/null | awk '$1 == "/boot/efi" || $1 == "/efi" || ($1 == "/boot" && $2 ~ /^(vfat|fat|msdos|exfat)$/) {print $1; exit}')
+  fi
+
+  if [ -n "$efi_disk_mount" ]; then
+    efi_disk_values=$(df -Pk "$efi_disk_mount" 2>/dev/null | awk 'END {print $1 " " $2 " " $3 " " $4}')
+    set -- $efi_disk_values
+    efi_disk_device=${1:-}
+    efi_disk_total_kb=${2:-}
+    efi_disk_used_kb=${3:-}
+    efi_disk_available_kb=${4:-}
+    if [ -r /proc/mounts ]; then
+      efi_disk_filesystem=$(awk -v target="$efi_disk_mount" '$2 == target {print $3; exit}' /proc/mounts)
+    fi
+    if [ -z "$efi_disk_filesystem" ] && command -v findmnt >/dev/null 2>&1; then
+      efi_disk_filesystem=$(findmnt -n -o FSTYPE --target "$efi_disk_mount" 2>/dev/null | awk 'NR == 1 {print; exit}')
+    fi
+  fi
 fi
 
 if [ -r /proc/net/dev ] && command -v awk >/dev/null 2>&1; then
@@ -176,6 +215,16 @@ printf 'memoryTotalKb\t%s\n' "$memory_total_kb"
 printf 'memoryAvailableKb\t%s\n' "$memory_available_kb"
 printf 'diskTotalKb\t%s\n' "$disk_total_kb"
 printf 'diskUsedKb\t%s\n' "$disk_used_kb"
+printf 'rootDiskDevice\t%s\n' "$root_disk_device"
+printf 'rootDiskMount\t%s\n' "$root_disk_mount"
+printf 'rootDiskFilesystem\t%s\n' "$root_disk_filesystem"
+printf 'rootDiskAvailableKb\t%s\n' "$root_disk_available_kb"
+printf 'efiDiskDevice\t%s\n' "$efi_disk_device"
+printf 'efiDiskMount\t%s\n' "$efi_disk_mount"
+printf 'efiDiskFilesystem\t%s\n' "$efi_disk_filesystem"
+printf 'efiDiskTotalKb\t%s\n' "$efi_disk_total_kb"
+printf 'efiDiskUsedKb\t%s\n' "$efi_disk_used_kb"
+printf 'efiDiskAvailableKb\t%s\n' "$efi_disk_available_kb"
 printf 'networkReceivedBytes\t%s\n' "$network_received_bytes"
 printf 'networkTransmittedBytes\t%s\n' "$network_transmitted_bytes"
 printf 'uptimeSeconds\t%s\n' "$uptime_seconds"
@@ -1152,6 +1201,7 @@ fn parse_host_overview(output: &str, elapsed: Duration) -> Result<SshHostOvervie
         .map(|value| value.saturating_mul(1024));
     let disk_used_bytes =
         parse_optional_number::<u64>(&values, "diskUsedKb").map(|value| value.saturating_mul(1024));
+    let disk_partitions = parse_disk_partitions(&values, disk_used_bytes, disk_total_bytes);
 
     Ok(SshHostOverview {
         hostname: value_or_fallback(&values, "hostname", "未知主机"),
@@ -1163,11 +1213,64 @@ fn parse_host_overview(output: &str, elapsed: Duration) -> Result<SshHostOvervie
         memory_total_bytes,
         disk_used_bytes,
         disk_total_bytes,
+        disk_partitions,
         network_received_bytes: parse_optional_number::<u64>(&values, "networkReceivedBytes"),
         network_transmitted_bytes: parse_optional_number::<u64>(&values, "networkTransmittedBytes"),
         uptime_seconds: parse_optional_number::<u64>(&values, "uptimeSeconds"),
         latency_ms: elapsed.as_millis().clamp(1, u64::MAX as u128) as u64,
     })
+}
+
+fn parse_disk_partitions(
+    values: &HashMap<&str, &str>,
+    root_used_bytes: Option<u64>,
+    root_total_bytes: Option<u64>,
+) -> Vec<DiskPartitionOverview> {
+    let root_available_bytes = parse_optional_number::<u64>(values, "rootDiskAvailableKb")
+        .map(|value| value.saturating_mul(1024))
+        .or_else(|| {
+            root_total_bytes
+                .zip(root_used_bytes)
+                .map(|(total, used)| total.saturating_sub(used))
+        });
+    let mut partitions = Vec::new();
+
+    if root_total_bytes.is_some() || root_used_bytes.is_some() {
+        partitions.push(DiskPartitionOverview {
+            role: DiskPartitionRole::Root,
+            device: optional_value(values, "rootDiskDevice").unwrap_or_default(),
+            mount_point: optional_value(values, "rootDiskMount").unwrap_or_else(|| "/".to_string()),
+            file_system: optional_value(values, "rootDiskFilesystem"),
+            used_bytes: root_used_bytes,
+            available_bytes: root_available_bytes,
+            total_bytes: root_total_bytes,
+        });
+    }
+
+    let efi_mount = optional_value(values, "efiDiskMount");
+    let efi_total_bytes = parse_optional_number::<u64>(values, "efiDiskTotalKb")
+        .map(|value| value.saturating_mul(1024));
+    let efi_used_bytes = parse_optional_number::<u64>(values, "efiDiskUsedKb")
+        .map(|value| value.saturating_mul(1024));
+    if let Some(mount_point) = efi_mount {
+        partitions.push(DiskPartitionOverview {
+            role: DiskPartitionRole::Efi,
+            device: optional_value(values, "efiDiskDevice").unwrap_or_default(),
+            mount_point,
+            file_system: optional_value(values, "efiDiskFilesystem"),
+            used_bytes: efi_used_bytes,
+            available_bytes: parse_optional_number::<u64>(values, "efiDiskAvailableKb")
+                .map(|value| value.saturating_mul(1024))
+                .or_else(|| {
+                    efi_total_bytes
+                        .zip(efi_used_bytes)
+                        .map(|(total, used)| total.saturating_sub(used))
+                }),
+            total_bytes: efi_total_bytes,
+        });
+    }
+
+    partitions
 }
 
 fn parse_optional_number<T>(values: &HashMap<&str, &str>, key: &str) -> Option<T>
@@ -1184,6 +1287,14 @@ fn value_or_fallback(values: &HashMap<&str, &str>, key: &str, fallback: &str) ->
         .filter(|value| !value.is_empty())
         .unwrap_or(fallback)
         .to_string()
+}
+
+fn optional_value(values: &HashMap<&str, &str>, key: &str) -> Option<String> {
+    values
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 type DynamicAgentClient = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
@@ -2062,7 +2173,7 @@ mod tests {
     #[test]
     fn parses_linux_host_overview_output() {
         let overview = parse_host_overview(
-            "portivaOverviewVersion\t1\nhostname\tworker-01\noperatingSystem\tUbuntu 24.04.4 LTS\nkernelVersion\t6.8.0-63-generic\ncpuLoad1\t1.30\ncpuCount\t4\nmemoryTotalKb\t16384000\nmemoryAvailableKb\t8355840\ndiskTotalKb\t52428800\ndiskUsedKb\t20971520\nnetworkReceivedBytes\t123456789\nnetworkTransmittedBytes\t4567890\nuptimeSeconds\t421200\n",
+            "portivaOverviewVersion\t1\nhostname\tworker-01\noperatingSystem\tUbuntu 24.04.4 LTS\nkernelVersion\t6.8.0-63-generic\ncpuLoad1\t1.30\ncpuCount\t4\nmemoryTotalKb\t16384000\nmemoryAvailableKb\t8355840\ndiskTotalKb\t52428800\ndiskUsedKb\t20971520\nrootDiskDevice\t/dev/nvme0n1p2\nrootDiskMount\t/\nrootDiskFilesystem\text4\nrootDiskAvailableKb\t31457280\nefiDiskDevice\t/dev/nvme0n1p1\nefiDiskMount\t/boot/efi\nefiDiskFilesystem\tvfat\nefiDiskTotalKb\t524288\nefiDiskUsedKb\t65536\nefiDiskAvailableKb\t458752\nnetworkReceivedBytes\t123456789\nnetworkTransmittedBytes\t4567890\nuptimeSeconds\t421200\n",
             Duration::from_millis(62),
         )
         .unwrap();
@@ -2074,6 +2185,14 @@ mod tests {
         assert_eq!(overview.memory_used_bytes, Some(8_220_835_840));
         assert_eq!(overview.disk_total_bytes, Some(53_687_091_200));
         assert_eq!(overview.disk_used_bytes, Some(21_474_836_480));
+        assert_eq!(overview.disk_partitions.len(), 2);
+        assert_eq!(overview.disk_partitions[0].mount_point, "/");
+        assert_eq!(
+            overview.disk_partitions[0].file_system.as_deref(),
+            Some("ext4")
+        );
+        assert_eq!(overview.disk_partitions[1].mount_point, "/boot/efi");
+        assert_eq!(overview.disk_partitions[1].used_bytes, Some(67_108_864));
         assert_eq!(overview.network_received_bytes, Some(123_456_789));
         assert_eq!(overview.network_transmitted_bytes, Some(4_567_890));
         assert_eq!(overview.uptime_seconds, Some(421_200));

@@ -49,6 +49,8 @@
   color: var(--text-soft);
   text-align: left;
   box-shadow: none;
+  touch-action: none;
+  user-select: none;
 }
 
 .app-shell .tab {
@@ -57,7 +59,6 @@
 
 .tab.drag-over {
   border-color: var(--tab-hover-border);
-  transform: translateY(-1px);
 }
 
 .tab.active {
@@ -96,6 +97,20 @@ button.tab-main {
   color: var(--text-main);
   font-size: var(--app-font-size-12, 12px);
   font-weight: 700;
+}
+
+.tab.dragging {
+  opacity: 0.58;
+  transform: translateY(1px) scale(0.985);
+  cursor: grabbing;
+}
+
+.tab.drag-over-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.tab.drag-over-after {
+  box-shadow: inset -3px 0 0 var(--accent);
 }
 
 .tab-main .tab-title-line {
@@ -512,7 +527,27 @@ button.tab-main {
 .detached-shell .terminal-workspace {
   height: 100vh;
   height: 100dvh;
-  padding: var(--space-2, 8px);
+  padding: 0;
+}
+
+.tab-bar.with-window-controls {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-height: 44px;
+  overflow: hidden;
+}
+
+.detached-window-controls {
+  grid-column: 2;
+  height: 100%;
+  margin-left: 0;
+  border-left: 1px solid var(--border-faint);
+  -webkit-app-region: no-drag;
+}
+
+.detached-window-controls .window-control {
+  height: 100%;
+  min-height: 42px;
 }
 
 .detached-shell-macos .terminal-workspace > .tab-bar {

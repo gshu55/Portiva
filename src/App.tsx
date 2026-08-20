@@ -9,6 +9,7 @@ import { ProfileDialogHost } from "./app/ProfileDialogHost";
 import { SettingsTabPanel } from "./app/SettingsTabPanel";
 import { useKeyboardShortcuts } from "./app/useKeyboardShortcuts";
 import { usePortivaWorkspace } from "./app/usePortivaWorkspace";
+import { appendMissingTabIds, areTabOrdersEqual, moveTabId } from "./app/tabOrder";
 import { ConnectionList } from "./features/connections/ConnectionList";
 import { SimpleSftpPanel } from "./features/file-transfer/SimpleSftpPanel";
 import { WslFileTransferPanel } from "./features/file-transfer/WslFileTransferPanel";
@@ -91,6 +92,13 @@ function isMacDesktop() {
   const userAgent = navigator.userAgent.toLowerCase();
   return platform.includes("mac") || userAgent.includes("mac os");
 }
+
+function detachedWindowChromeOptions() {
+  return isMacDesktop()
+    ? { decorations: true, ...macosDetachedWindowChrome }
+    : { decorations: false };
+}
+
 const settingsSessionTab: WorkspaceSessionTab = {
   id: settingsTabId,
   kind: "settings",
@@ -171,36 +179,6 @@ function createWslFilesSessionTab(distribution: string): WorkspaceSessionTab {
     terminal: null,
     terminalSnapshot: null,
   };
-}
-
-function areStringArraysEqual(left: string[], right: string[]) {
-  return left.length === right.length && left.every((item, index) => item === right[index]);
-}
-
-function appendMissingTabIds(currentOrder: string[], availableIds: string[]) {
-  const availableIdSet = new Set(availableIds);
-  const retainedIds = currentOrder.filter((id) => availableIdSet.has(id));
-  const retainedIdSet = new Set(retainedIds);
-  return [...retainedIds, ...availableIds.filter((id) => !retainedIdSet.has(id))];
-}
-
-function moveTabIdBefore(currentOrder: string[], sourceTabId: string, targetTabId: string) {
-  if (sourceTabId === targetTabId) {
-    return currentOrder;
-  }
-
-  const sourceIndex = currentOrder.indexOf(sourceTabId);
-  const targetIndex = currentOrder.indexOf(targetTabId);
-
-  if (sourceIndex < 0 || targetIndex < 0) {
-    return currentOrder;
-  }
-
-  const nextOrder = [...currentOrder];
-  const [movedTabId] = nextOrder.splice(sourceIndex, 1);
-  const nextTargetIndex = nextOrder.indexOf(targetTabId);
-  nextOrder.splice(nextTargetIndex, 0, movedTabId);
-  return nextOrder;
 }
 
 type DetachedSessionTargetPayload = Omit<DetachedSessionReattachRequest, "sourceWindowLabel">;
@@ -819,6 +797,9 @@ function App() {
             return;
           }
 
+          if (!isMacDesktop()) {
+            await existingWindow.setDecorations(false);
+          }
           await existingWindow.setSizeConstraints({
             minHeight: detachedWindowMinHeight,
             minWidth: detachedWindowMinWidth,
@@ -833,12 +814,12 @@ function App() {
         }
 
         const webview = new WebviewWindow(label, {
-          decorations: true,
           height: 760,
-          ...(isMacDesktop() ? macosDetachedWindowChrome : {}),
+          ...detachedWindowChromeOptions(),
           minHeight: detachedWindowMinHeight,
           minWidth: detachedWindowMinWidth,
           resizable: true,
+          shadow: true,
           title: tab.connection.title,
           url,
           width: 1120,
@@ -1282,7 +1263,7 @@ function App() {
   useEffect(() => {
     setAppTabOrder((current) => {
       const nextOrder = appendMissingTabIds(current, appTabSourceIds);
-      return areStringArraysEqual(current, nextOrder) ? current : nextOrder;
+      return areTabOrdersEqual(current, nextOrder) ? current : nextOrder;
     });
   }, [appTabSourceIds]);
 
@@ -1415,16 +1396,19 @@ function App() {
         const existingWindow = await WebviewWindow.getByLabel(detachedPostWindowLabel);
 
         if (existingWindow) {
+          if (!isMacDesktop()) {
+            await existingWindow.setDecorations(false);
+          }
           await existingWindow.show();
           await existingWindow.setFocus();
         } else {
           const webview = new WebviewWindow(detachedPostWindowLabel, {
-            decorations: true,
             height: 760,
-            ...(isMacDesktop() ? macosDetachedWindowChrome : {}),
+            ...detachedWindowChromeOptions(),
             minHeight: detachedWindowMinHeight,
             minWidth: detachedWindowMinWidth,
             resizable: true,
+            shadow: true,
             title: "Post",
             url: `${window.location.pathname}?toolPage=post`,
             width: 1120,
@@ -1487,28 +1471,20 @@ function App() {
 
     reconnectSessionTab(tabId);
   };
-  const reorderAppSessionTabs = (sourceTabId: string, targetTabId: string) => {
-    if (
-      sourceTabId === settingsTabId ||
-      targetTabId === settingsTabId ||
-      sourceTabId === httpConsoleTabId ||
-      targetTabId === httpConsoleTabId ||
-      sourceTabId === networkScannerTabId ||
-      targetTabId === networkScannerTabId ||
-      sourceTabId === hostDashboardTabId ||
-      targetTabId === hostDashboardTabId ||
-      isWslFilesTabId(sourceTabId) ||
-      isWslFilesTabId(targetTabId)
-    ) {
-      return;
-    }
-
+  const reorderAppSessionTabs = (
+    sourceTabId: string,
+    targetTabId: string,
+    position: "before" | "after",
+  ) => {
     setAppTabOrder((current) => {
       const normalizedOrder = appendMissingTabIds(current, appTabSourceIds);
-      const nextOrder = moveTabIdBefore(normalizedOrder, sourceTabId, targetTabId);
-      return areStringArraysEqual(current, nextOrder) ? current : nextOrder;
+      const nextOrder = moveTabId(normalizedOrder, sourceTabId, targetTabId, position);
+      return areTabOrdersEqual(current, nextOrder) ? current : nextOrder;
     });
-    workspace.reorderSessionTabs(sourceTabId, targetTabId);
+    const workspaceTabIds = new Set(workspace.sessionTabs.map(getAppSessionTabId));
+    if (workspaceTabIds.has(sourceTabId) && workspaceTabIds.has(targetTabId)) {
+      workspace.reorderSessionTabs(sourceTabId, targetTabId, position);
+    }
   };
   const fileTransferPanel = (
     <ActiveFileTransferPanel
@@ -1652,7 +1628,9 @@ function App() {
   if (detachedToolPage === "post") {
     return (
       <main
-        className={`app-shell detached-shell${isMacDesktop() ? " detached-shell-macos" : ""}`}
+        className={`app-shell detached-shell${
+          isMacDesktop() ? " detached-shell-macos" : " detached-shell-frameless"
+        }`}
         data-background={appBackground.enabled ? "true" : "false"}
         data-theme={workspace.settings.theme.mode}
         style={themeStyle}
@@ -1706,7 +1684,9 @@ function App() {
   if (detachedSessionId) {
     return (
       <main
-        className={`app-shell detached-shell${isMacDesktop() ? " detached-shell-macos" : ""}`}
+        className={`app-shell detached-shell${
+          isMacDesktop() ? " detached-shell-macos" : " detached-shell-frameless"
+        }`}
         data-background={appBackground.enabled ? "true" : "false"}
         data-theme={workspace.settings.theme.mode}
         style={themeStyle}

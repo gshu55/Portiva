@@ -1,5 +1,4 @@
 import {
-  type DragEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
@@ -25,6 +24,10 @@ import type {
   WorkspaceSessionTab,
 } from "../../shared/types";
 import { Icon } from "../../shared/Icon";
+import {
+  detectWindowControlPlatform,
+  WindowControls,
+} from "../../shared/WindowControls";
 import {
   maximumSshTerminalPanes,
   resolveTerminalSplitLayout,
@@ -73,7 +76,11 @@ interface TerminalWorkspaceProps {
   onReconfigureSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
   onRefreshSerialPorts?: () => Promise<SerialPortInfo[]> | Promise<void> | SerialPortInfo[] | void;
   onReconnectSessionTab: (connectionId: string) => void;
-  onReorderSessionTabs: (sourceConnectionId: string, targetConnectionId: string) => void;
+  onReorderSessionTabs: (
+    sourceConnectionId: string,
+    targetConnectionId: string,
+    position: "before" | "after",
+  ) => void;
   onSessionDragStateChange?: (isDragging: boolean, tabId: string) => void;
   onSelectSessionTab: (connectionId: string) => void;
   onSplitSshTerminal: (
@@ -95,6 +102,18 @@ interface SftpSidePanelRenderProps {
 const getSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
 const closedTerminalPanelVisibility = { command: false, status: false } as const;
 const terminalActivityHoldMs = 700;
+const tabPointerDragThresholdPx = 6;
+
+interface TabPointerDragState {
+  active: boolean;
+  pointerId: number;
+  position: "before" | "after";
+  sourceTabId: string;
+  startX: number;
+  startY: number;
+  targetTabId: string | null;
+  selectOnRelease: boolean;
+}
 
 function resolveTabProtocolLabel(tab: WorkspaceSessionTab) {
   const kind = tab.kind ?? "terminal";
@@ -317,6 +336,7 @@ export function TerminalWorkspace({
 }: TerminalWorkspaceProps) {
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  const [dragOverPosition, setDragOverPosition] = useState<"before" | "after">("before");
   const [focusedSshTerminalByTab, setFocusedSshTerminalByTab] = useState<Record<string, string>>({});
   const [activeOutputTerminalIds, setActiveOutputTerminalIds] = useState<Set<string>>(() => new Set());
   const [pendingSshSplitByTab, setPendingSshSplitByTab] = useState<Record<string, string>>({});
@@ -330,17 +350,19 @@ export function TerminalWorkspace({
   const [commandHistoryByTab, setCommandHistoryByTab] = useState<Record<string, string[]>>({});
   const savedSshCommands = useSavedSshCommands();
   const tabBarRef = useRef<HTMLDivElement>(null);
+  const tabPointerDragRef = useRef<TabPointerDragState | null>(null);
+  const suppressTabClickRef = useRef<string | null>(null);
   const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
   const sftpLayoutRef = useRef<HTMLDivElement>(null);
-  const tabDropHandledRef = useRef(false);
   const autoClosedLocalShellTabIdsRef = useRef(new Set<string>());
-  const lastDragPositionRef = useRef<{ x: number; y: number } | null>(null);
   const [tabContextMenu, setTabContextMenu] = useState<{
     tabId: string;
     x: number;
     y: number;
   } | null>(null);
   const resolvedActiveTabId = activeTabId ?? connection?.id ?? sessionTabs[0]?.connection.id ?? null;
+  const showDetachedWindowControls =
+    isDetachedWindow && detectWindowControlPlatform() !== "macos";
   const activeTab = sessionTabs.find((tab) => getSessionTabId(tab) === resolvedActiveTabId);
   const activeCustomTabContent = activeTab ? customTabPanels?.[getSessionTabId(activeTab)] : null;
   const reportTerminalActivity = useCallback((terminalId: string) => {
@@ -491,11 +513,6 @@ export function TerminalWorkspace({
   const toggleSftpPanelSide = () => {
     setSftpPanelSide((current) => (current === "right" ? "left" : "right"));
   };
-  const updateLastDragPosition = (event: DragEvent<HTMLElement>) => {
-    if (event.clientX !== 0 || event.clientY !== 0) {
-      lastDragPositionRef.current = { x: event.clientX, y: event.clientY };
-    }
-  };
   const serialProfileForTab = (tab: WorkspaceSessionTab): SerialProfile | null => {
     if (tab.connection.transport?.kind !== "serial") {
       return null;
@@ -540,6 +557,7 @@ export function TerminalWorkspace({
       <TerminalPane
         isActive={isActivePane}
         reportSizeWhenVisible={reportSizeWhenVisible}
+        semanticHighlighting={tab.connection.transport?.kind === "ssh"}
         terminal={tab.terminal}
         terminalConfirmMultilinePaste={terminalConfirmMultilinePaste}
         terminalCopyRichText={terminalCopyRichText}
@@ -828,14 +846,10 @@ export function TerminalWorkspace({
     const showSftpPanel = sftpPanelAvailable && sshSftpPanelVisible;
     return renderWithSftpPanel(pageWorkspace, showSftpPanel);
   };
-  const isDragOutsideTabBar = (event: DragEvent<HTMLElement>) => {
+  const isPointerOutsideTabBar = (clientX: number, clientY: number) => {
     const tabBar = tabBarRef.current;
-    const position =
-      event.clientX !== 0 || event.clientY !== 0
-        ? { x: event.clientX, y: event.clientY }
-        : lastDragPositionRef.current;
 
-    if (!tabBar || !position) {
+    if (!tabBar) {
       return false;
     }
 
@@ -843,24 +857,181 @@ export function TerminalWorkspace({
     const detachThresholdPx = 18;
 
     return (
-      position.x < bounds.left - detachThresholdPx ||
-      position.x > bounds.right + detachThresholdPx ||
-      position.y < bounds.top - detachThresholdPx ||
-      position.y > bounds.bottom + detachThresholdPx
+      clientX < bounds.left - detachThresholdPx ||
+      clientX > bounds.right + detachThresholdPx ||
+      clientY < bounds.top - detachThresholdPx ||
+      clientY > bounds.bottom + detachThresholdPx
     );
   };
-  const finishTabDrag = (event: DragEvent<HTMLElement>, tabId: string) => {
-    const wasDroppedOnTab = tabDropHandledRef.current;
-    const shouldOpenWindow = !wasDroppedOnTab && isDragOutsideTabBar(event);
-    const draggedTab = sessionTabs.find((tab) => getSessionTabId(tab) === tabId) ?? null;
-    tabDropHandledRef.current = false;
-    lastDragPositionRef.current = null;
+  const resolveTabPointerTarget = (
+    sourceTabId: string,
+    clientX: number,
+    clientY: number,
+  ): { tabId: string; position: "before" | "after" } | null => {
+    const tabBar = tabBarRef.current;
+
+    if (!tabBar) {
+      return null;
+    }
+
+    const tabBarBounds = tabBar.getBoundingClientRect();
+    if (
+      clientX < tabBarBounds.left ||
+      clientX > tabBarBounds.right ||
+      clientY < tabBarBounds.top ||
+      clientY > tabBarBounds.bottom
+    ) {
+      return null;
+    }
+
+    const tabElements = Array.from(
+      tabBar.querySelectorAll<HTMLElement>("[data-session-tab-id]"),
+    ).filter((element) => element.dataset.sessionTabId !== sourceTabId);
+
+    if (tabElements.length === 0) {
+      return null;
+    }
+
+    for (const element of tabElements) {
+      const bounds = element.getBoundingClientRect();
+      if (clientX < bounds.left + bounds.width / 2) {
+        return {
+          position: "before",
+          tabId: element.dataset.sessionTabId ?? "",
+        };
+      }
+    }
+
+    const lastElement = tabElements[tabElements.length - 1];
+    return {
+      position: "after",
+      tabId: lastElement.dataset.sessionTabId ?? "",
+    };
+  };
+  const resetTabPointerDrag = (sourceTabId: string, notifyDragEnd: boolean) => {
+    tabPointerDragRef.current = null;
     setDraggedTabId(null);
     setDragOverTabId(null);
-    onSessionDragStateChange?.(false, tabId);
+    setDragOverPosition("before");
+
+    if (notifyDragEnd) {
+      onSessionDragStateChange?.(false, sourceTabId);
+    }
+  };
+  const startTabPointerDrag = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    sourceTabId: string,
+  ) => {
+    if (
+      event.button !== 0 ||
+      !event.isPrimary ||
+      (event.target instanceof Element && event.target.closest(".tab-close"))
+    ) {
+      return;
+    }
+
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    tabPointerDragRef.current = {
+      active: false,
+      pointerId: event.pointerId,
+      position: "before",
+      sourceTabId,
+      startX: event.clientX,
+      startY: event.clientY,
+      targetTabId: null,
+      selectOnRelease:
+        event.target instanceof Element && Boolean(event.target.closest(".tab-main")),
+    };
+  };
+  const updateTabPointerDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const dragState = tabPointerDragRef.current;
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (!dragState.active) {
+      const distance = Math.hypot(
+        event.clientX - dragState.startX,
+        event.clientY - dragState.startY,
+      );
+      if (distance < tabPointerDragThresholdPx) {
+        return;
+      }
+
+      dragState.active = true;
+      setDraggedTabId(dragState.sourceTabId);
+      onSessionDragStateChange?.(true, dragState.sourceTabId);
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const target = resolveTabPointerTarget(
+      dragState.sourceTabId,
+      event.clientX,
+      event.clientY,
+    );
+    dragState.targetTabId = target?.tabId || null;
+    dragState.position = target?.position ?? "before";
+    setDragOverTabId(dragState.targetTabId);
+    setDragOverPosition(dragState.position);
+  };
+  const finishTabPointerDrag = (
+    event: ReactPointerEvent<HTMLDivElement>,
+    sourceTabId: string,
+    cancelled = false,
+  ) => {
+    const dragState = tabPointerDragRef.current;
+
+    if (
+      !dragState ||
+      dragState.sourceTabId !== sourceTabId ||
+      dragState.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    const wasActive = dragState.active;
+    const targetTabId = dragState.targetTabId;
+    const position = dragState.position;
+    const shouldOpenWindow =
+      wasActive &&
+      !cancelled &&
+      !targetTabId &&
+      isPointerOutsideTabBar(event.clientX, event.clientY);
+    const draggedTab = sessionTabs.find(
+      (tab) => getSessionTabId(tab) === sourceTabId,
+    ) ?? null;
+
+    if (wasActive || (!cancelled && dragState.selectOnRelease)) {
+      event.preventDefault();
+      event.stopPropagation();
+      suppressTabClickRef.current = sourceTabId;
+      window.setTimeout(() => {
+        if (suppressTabClickRef.current === sourceTabId) {
+          suppressTabClickRef.current = null;
+        }
+      }, 0);
+    }
+
+    resetTabPointerDrag(sourceTabId, wasActive);
+
+    if (!wasActive && !cancelled && dragState.selectOnRelease) {
+      selectSessionTab(sourceTabId);
+      return;
+    }
+
+    if (wasActive && !cancelled && targetTabId) {
+      onReorderSessionTabs(sourceTabId, targetTabId, position);
+    }
 
     if (shouldOpenWindow && !isCustomTab(draggedTab)) {
-      (onDetachSessionTab ?? onOpenSessionWindow)(tabId);
+      (onDetachSessionTab ?? onOpenSessionWindow)(sourceTabId);
     }
   };
 
@@ -1047,52 +1218,19 @@ export function TerminalWorkspace({
         className={[
           "tab",
           tabId === resolvedActiveTabId ? "active" : "",
-          tabId === dragOverTabId ? "drag-over" : "",
+          tabId === draggedTabId ? "dragging" : "",
+          tabId === dragOverTabId ? `drag-over drag-over-${dragOverPosition}` : "",
           isFileTransferSessionTab ? "file-transfer-tab" : "",
           isCustomSessionTab ? "custom-page-tab" : "",
         ]
           .filter(Boolean)
           .join(" ")}
-        data-tauri-drag-region="false"
         data-session-tab-id={tabId}
-        draggable={!isCustomSessionTab}
         key={tabId}
-        onDrag={updateLastDragPosition}
-        onDragEnd={(event) => finishTabDrag(event, tabId)}
-        onDragEnter={() => {
-          if (draggedTabId && draggedTabId !== tabId) {
-            setDragOverTabId(tabId);
-          }
-        }}
-        onDragOver={(event) => {
-          if (draggedTabId && draggedTabId !== tabId) {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
-          }
-        }}
-        onDragStart={(event) => {
-          tabDropHandledRef.current = false;
-          updateLastDragPosition(event);
-          setDraggedTabId(tabId);
-          onSessionDragStateChange?.(true, tabId);
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData("text/plain", tabId);
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          tabDropHandledRef.current = true;
-          const sourceId = event.dataTransfer.getData("text/plain") || draggedTabId;
-
-          if (sourceId) {
-            onReorderSessionTabs(sourceId, tabId);
-
-            onSessionDragStateChange?.(false, sourceId);
-          }
-
-          setDraggedTabId(null);
-          setDragOverTabId(null);
-        }}
+        onPointerCancel={(event) => finishTabPointerDrag(event, tabId, true)}
+        onPointerDown={(event) => startTabPointerDrag(event, tabId)}
+        onPointerMove={updateTabPointerDrag}
+        onPointerUp={(event) => finishTabPointerDrag(event, tabId)}
         onContextMenu={(event) => {
           event.preventDefault();
           if (isCustomTab(tab) && (tab.kind ?? "terminal") !== "http-console") {
@@ -1102,6 +1240,10 @@ export function TerminalWorkspace({
           setTabContextMenu({ tabId, x: event.clientX, y: event.clientY });
         }}
         onMouseDown={(event) => {
+          if (event.button === 0) {
+            event.stopPropagation();
+            return;
+          }
           if (event.button !== 1) {
             return;
           }
@@ -1114,7 +1256,15 @@ export function TerminalWorkspace({
         <button
           aria-label={tabAriaLabel}
           className="tab-main"
-          onClick={() => selectSessionTab(tabId)}
+          onClick={(event) => {
+            if (suppressTabClickRef.current === tabId) {
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
+
+            selectSessionTab(tabId);
+          }}
           title={titleDescription}
           type="button"
         >
@@ -1144,16 +1294,24 @@ export function TerminalWorkspace({
     );
   };
   const tabBar = hasSessionTabs ? (
-        <div
-          className="tab-bar"
-          data-tauri-drag-region={isDetachedWindow ? "deep" : undefined}
-          ref={tabBarRef}
-        >
-          <nav className="tabs" aria-label="已打开会话" onWheel={scrollTabsHorizontally}>
-            {sessionTabs.map(renderSessionTab)}
-          </nav>
-        </div>
-      ) : null;
+    <div
+      className={`tab-bar${showDetachedWindowControls ? " with-window-controls" : ""}`}
+      data-tauri-drag-region={isDetachedWindow ? "deep" : undefined}
+      ref={tabBarRef}
+    >
+      <nav
+        aria-label="已打开会话"
+        className="tabs"
+        data-tauri-drag-region={isDetachedWindow ? "deep" : undefined}
+        onWheel={scrollTabsHorizontally}
+      >
+        {sessionTabs.map(renderSessionTab)}
+      </nav>
+      {showDetachedWindowControls ? (
+        <WindowControls className="detached-window-controls" />
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <section className={workspaceClassName}>
