@@ -2363,15 +2363,6 @@ export function usePortivaWorkspace() {
       heightPx: targetTerminal.size.heightPx === 720 ? 864 : 720,
     };
 
-    if (
-      targetTerminal.size.cols === nextSize.cols &&
-      targetTerminal.size.rows === nextSize.rows &&
-      targetTerminal.size.widthPx === nextSize.widthPx &&
-      targetTerminal.size.heightPx === nextSize.heightPx
-    ) {
-      return;
-    }
-
     try {
       const resizedTerminal = { ...targetTerminal, size: nextSize };
       await terminalResize(targetTerminal.id, nextSize);

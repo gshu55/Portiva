@@ -35,7 +35,7 @@ interface TerminalPaneProps {
   onCloseDisconnected?: () => void;
   onCommandSubmitted?: (command: string) => void;
   onReconnectDisconnected?: () => void;
-  onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
+  onResizeTerminal: (size?: TerminalSize, terminalId?: string) => Promise<void> | void;
   onSendData: (data: string, terminalId: string) => Promise<void> | void;
   onTitleChange?: (terminalId: string, title: string) => void;
   onWorkingDirectoryChange?: (terminalId: string, path: string) => void;
@@ -419,6 +419,7 @@ export function TerminalPane({
   const lastReportedSizeRef = useRef<TerminalSize | null>(null);
   const autoScrollRef = useRef(autoScroll);
   const resizeTerminalRef = useRef(onResizeTerminal);
+  const resizeQueueRef = useRef(Promise.resolve());
   const sendDataRef = useRef(onSendData);
   const inputQueueRef = useRef(Promise.resolve());
   const isActiveRef = useRef(isActive);
@@ -430,7 +431,7 @@ export function TerminalPane({
   const workingDirectoryChangeRef = useRef(onWorkingDirectoryChange);
   const openSearchRef = useRef<() => void>(() => undefined);
   const reportSizeWhenVisibleRef = useRef(reportSizeWhenVisible);
-  const reportSizeRef = useRef<(() => void) | null>(null);
+  const reportSizeRef = useRef<((force?: boolean) => void) | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
   const tuiReportedForegroundRef = useRef<RgbColor>(
     parseTerminalColor(terminalTheme.foreground) ?? [217, 226, 234],
@@ -533,6 +534,17 @@ export function TerminalPane({
         console.warn("终端输入发送失败", error);
       });
     return inputQueueRef.current;
+  };
+
+  const enqueueResize = (size: TerminalSize, terminalId: string) => {
+    // SSH window-change requests are asynchronous. Keep them ordered so an
+    // older measurement can never arrive after the latest one.
+    resizeQueueRef.current = resizeQueueRef.current
+      .catch(() => undefined)
+      .then(() => Promise.resolve(resizeTerminalRef.current(size, terminalId)))
+      .catch((error) => {
+        console.warn("终端尺寸调整失败", error);
+      });
   };
 
   const shouldKeepScrollAtBottom = (instance: Terminal) => {
@@ -825,10 +837,30 @@ export function TerminalPane({
       );
       return true;
     });
+    let activeBufferType = instance.buffer.active.type;
+    let alternateScreenResizeFrame: number | null = null;
     const syncAlternateScreenCli = () => {
-      const nextCli =
-        instance.buffer.active.type === "alternate" ? activeMainstreamCliRef.current : null;
+      const nextBufferType = instance.buffer.active.type;
+      const enteredAlternateScreen =
+        activeBufferType !== "alternate" && nextBufferType === "alternate";
+      activeBufferType = nextBufferType;
+      const nextCli = nextBufferType === "alternate" ? activeMainstreamCliRef.current : null;
       setAlternateScreenCli((current) => (current === nextCli ? current : nextCli));
+
+      if (enteredAlternateScreen) {
+        if (alternateScreenResizeFrame !== null) {
+          window.cancelAnimationFrame(alternateScreenResizeFrame);
+        }
+        alternateScreenResizeFrame = window.requestAnimationFrame(() => {
+          alternateScreenResizeFrame = null;
+          if (xtermRef.current === instance) {
+            // Full-screen TUIs calculate their whole layout from PTY rows.
+            // Re-send even an unchanged size so a missed/stale window-change
+            // cannot leave only the bottom portion visible.
+            reportSizeRef.current?.(true);
+          }
+        });
+      }
     };
     const setActiveMainstreamCli = (cli: MainstreamCli | null) => {
       if (activeMainstreamCliRef.current === cli) {
@@ -945,7 +977,7 @@ export function TerminalPane({
     replayingSnapshotRef.current = false;
     snapshotReplayRevisionRef.current += 1;
 
-    const reportSize = () => {
+    const reportSize = (force = false) => {
       const fitAddonInstance = fitAddonRef.current;
       const terminalInstance = xtermRef.current;
       const host = containerRef.current;
@@ -967,18 +999,25 @@ export function TerminalPane({
       };
       const previousSize = lastReportedSizeRef.current;
 
+      // Hidden panes still need to fit xterm's canvas, but their dimensions
+      // must not be marked as reported until a PTY resize was really queued.
+      if (!isActiveRef.current && !reportSizeWhenVisibleRef.current) {
+        return;
+      }
+
       if (
+        !force &&
         previousSize &&
         previousSize.cols === nextSize.cols &&
-        previousSize.rows === nextSize.rows
+        previousSize.rows === nextSize.rows &&
+        previousSize.widthPx === nextSize.widthPx &&
+        previousSize.heightPx === nextSize.heightPx
       ) {
         return;
       }
 
       lastReportedSizeRef.current = nextSize;
-      if (isActiveRef.current || reportSizeWhenVisibleRef.current) {
-        resizeTerminalRef.current(nextSize, terminal.id);
-      }
+      enqueueResize(nextSize, terminal.id);
     };
     reportSizeRef.current = reportSize;
 
@@ -1009,6 +1048,10 @@ export function TerminalPane({
       semanticScrollHandler.dispose();
       semanticHighlighter.dispose();
       activeMainstreamCliRef.current = null;
+      if (alternateScreenResizeFrame !== null) {
+        window.cancelAnimationFrame(alternateScreenResizeFrame);
+        alternateScreenResizeFrame = null;
+      }
       if (resizeTimerRef.current) {
         window.clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;
@@ -1140,9 +1183,26 @@ export function TerminalPane({
         lastBufferRef.current = terminalBuffer;
         return;
       }
+
+      // A full snapshot may arrive while the live terminal is already fully
+      // rendered (for example after an explicit snapshot refresh). Its latest
+      // chunk is still safe to append, while reset + replay would visibly
+      // clear an alternate-screen TUI and may replay a truncated ANSI stream.
+      if (terminalBuffer.endsWith(terminalOutputChunk)) {
+        enqueueOutput(terminalOutputChunk);
+        lastBufferRef.current = terminalBuffer;
+        return;
+      }
     }
 
     if (terminalBuffer !== previousBuffer) {
+      if (terminalStatus === "attached") {
+        // A snapshot without new output only synchronizes the retained raw
+        // buffer. The mounted xterm already owns the authoritative live screen.
+        lastBufferRef.current = terminalBuffer;
+        return;
+      }
+
       pendingOutputRef.current = "";
       if (outputFrameRef.current !== null) {
         window.cancelAnimationFrame(outputFrameRef.current);
@@ -1152,7 +1212,7 @@ export function TerminalPane({
       replaySnapshot(instance, terminalBuffer);
       lastBufferRef.current = terminalBuffer;
     }
-  }, [terminal?.id, terminalBuffer, terminalOutputChunk, terminalSnapshot]);
+  }, [terminal?.id, terminalBuffer, terminalOutputChunk, terminalSnapshot, terminalStatus]);
 
   useEffect(() => {
     if (lastClearRevisionRef.current === clearRevision) {

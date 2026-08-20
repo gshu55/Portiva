@@ -21,7 +21,7 @@ interface SerialTerminalPanelProps {
   terminalConfirmMultilinePaste?: boolean;
   terminalCopyRichText?: boolean;
   terminalRightClickBehavior?: TerminalRightClickBehavior;
-  onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
+  onResizeTerminal: (size?: TerminalSize, terminalId?: string) => Promise<void> | void;
   onCloseSerialTerminal: (terminalId: string) => Promise<void> | void;
   onOpenSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;
   onReconfigureSerialTerminal: (terminalId: string, profile: SerialProfile) => Promise<void> | void;

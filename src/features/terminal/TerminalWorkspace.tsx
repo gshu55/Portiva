@@ -64,7 +64,7 @@ interface TerminalWorkspaceProps {
   onSendTerminalData: (data: string, terminalId?: string) => Promise<void> | void;
   onTerminalTitleChange?: (terminalId: string, title: string) => void;
   onTerminalWorkingDirectoryChange?: (terminalId: string, path: string) => void;
-  onResizeTerminal: (size?: TerminalSize, terminalId?: string) => void;
+  onResizeTerminal: (size?: TerminalSize, terminalId?: string) => Promise<void> | void;
   onResizeSshTerminalSplit: (tabId: string, path: number[], ratio: number) => void;
   onCloseSessionTab: (connectionId: string) => void;
   onCloseSshTerminalPane: (tabId: string, terminalId: string) => Promise<void> | void;
