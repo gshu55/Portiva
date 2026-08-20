@@ -1542,6 +1542,7 @@ function App() {
     hostTrustRequest &&
     workspace.pendingKnownHost &&
     (hostTrustRequest.profile.type === "ssh" || hostTrustRequest.profile.type === "sftp") &&
+    hostTrustRequest.profile.id === workspace.pendingKnownHost.profileId &&
     hostTrustRequest.profile.host?.trim().toLowerCase() === workspace.pendingKnownHost.host.toLowerCase() &&
     (hostTrustRequest.profile.port ?? 22) === workspace.pendingKnownHost.port
       ? workspace.pendingKnownHost
@@ -1554,6 +1555,7 @@ function App() {
       fingerprint={pendingHostTrust.fingerprint}
       host={pendingHostTrust.host}
       hostKeyChanged={pendingHostTrust.hostKeyChanged}
+      profileName={activeHostTrustRequest.profile.name || activeHostTrustRequest.profile.id}
       onCancel={cancelHostTrust}
       onConfirm={() => void confirmHostTrust()}
     />

@@ -6,6 +6,7 @@ interface HostTrustDialogProps {
   fingerprint: string;
   host: string;
   hostKeyChanged: boolean;
+  profileName: string;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -16,6 +17,7 @@ export function HostTrustDialog({
   fingerprint,
   host,
   hostKeyChanged,
+  profileName,
   onCancel,
   onConfirm,
 }: HostTrustDialogProps) {
@@ -56,6 +58,10 @@ export function HostTrustDialog({
               : "请核对该主机指纹。确认后会写入 known_hosts，之后同一主机将自动校验。"}
           </p>
           <dl>
+            <div>
+              <dt>配置</dt>
+              <dd>{profileName}</dd>
+            </div>
             <div>
               <dt>主机</dt>
               <dd>{host}</dd>

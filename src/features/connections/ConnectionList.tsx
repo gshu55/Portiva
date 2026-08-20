@@ -101,7 +101,14 @@ export function ConnectionList({
   sessionTabs,
   wslDiscovery,
 }: ConnectionListProps) {
-  const savedProfiles = useMemo(() => uniqueProfilesByTarget(profiles), [profiles]);
+  const savedProfiles = useMemo(
+    () => [...profiles].sort(
+      (left, right) =>
+        right.createdAt.localeCompare(left.createdAt) ||
+        left.id.localeCompare(right.id),
+    ),
+    [profiles],
+  );
   const [query, setQuery] = useState("");
   const [overviewByProfile, setOverviewByProfile] = useState<Record<string, HostOverviewState>>({});
   const [wslOverviewByDistribution, setWslOverviewByDistribution] = useState<Record<string, WslOverviewState>>({});
@@ -1129,32 +1136,4 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
       },
     );
   });
-}
-
-function uniqueProfilesByTarget(profiles: ConnectionProfile[]) {
-  const unique = new Map<string, ConnectionProfile>();
-
-  for (const profile of profiles) {
-    const key = profileDedupKey(profile);
-    const current = unique.get(key);
-
-    if (!current || profile.updatedAt > current.updatedAt) {
-      unique.set(key, profile);
-    }
-  }
-
-  return [...unique.values()].sort(
-    (left, right) =>
-      right.createdAt.localeCompare(left.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
-}
-
-function profileDedupKey(profile: ConnectionProfile) {
-  if (profile.type === "serial") {
-    return `${profile.type}:${profile.portName.trim().toLowerCase()}`;
-  }
-
-  const username = "username" in profile ? profile.username ?? "" : "";
-  return `${profile.type}:${username.trim().toLowerCase()}@${profile.host.trim().toLowerCase()}:${profile.port}`;
 }

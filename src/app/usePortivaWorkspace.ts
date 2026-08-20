@@ -287,7 +287,7 @@ function serialTabTitleForPort(portName: string) {
 
 function newConnectionProfile(type: ConnectionProfile["type"]): ConnectionProfile {
   const now = new Date().toISOString();
-  const id = `${type}-${Date.now()}`;
+  const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const base = {
     id,
     name: "",
@@ -380,6 +380,7 @@ export function usePortivaWorkspace() {
     host: string;
     hostKeyChanged: boolean;
     port: number;
+    profileId: string;
   } | null>(null);
   const [knownHosts, setKnownHosts] = useState<KnownHostEntry[]>(sampleKnownHosts);
   const [serialPorts, setSerialPorts] = useState<SerialPortInfo[]>(sampleSerialPorts);
@@ -528,6 +529,7 @@ export function usePortivaWorkspace() {
             hostKeyChanged: result.hostKeyChanged,
             port: result.port,
             fingerprint: result.fingerprint,
+            profileId: profile.id,
           });
         }
         setWorkspaceMessage(result.message);
@@ -1920,18 +1922,13 @@ export function usePortivaWorkspace() {
   const saveProfile = useCallback(
     async (profile: ConnectionProfile, options: SaveProfileOptions = {}) => {
       const isExistingProfile = profiles.some((item) => item.id === profile.id);
-      const duplicateProfile = isExistingProfile
-        ? null
-        : profiles.find((item) => profileDedupKey(item) === profileDedupKey(profile));
       const updatedProfile = {
         ...profile,
-        id: duplicateProfile?.id ?? profile.id,
-        createdAt: duplicateProfile?.createdAt ?? profile.createdAt,
         updatedAt: new Date().toISOString(),
       } as ConnectionProfile;
 
       try {
-        if (isExistingProfile || duplicateProfile) {
+        if (isExistingProfile) {
           await profileUpdate(updatedProfile.id, updatedProfile);
         } else {
           await profileCreate(updatedProfile);
@@ -2034,6 +2031,7 @@ export function usePortivaWorkspace() {
           hostKeyChanged: result.hostKeyChanged,
           port: result.port,
           fingerprint: result.fingerprint,
+          profileId: profile.id,
         });
       } else {
         setPendingKnownHost(null);
@@ -2591,6 +2589,7 @@ export function usePortivaWorkspace() {
     try {
       const pending =
         pendingKnownHost &&
+        pendingKnownHost.profileId === profile.id &&
         pendingKnownHost.host.toLowerCase() === profile.host?.trim().toLowerCase() &&
         pendingKnownHost.port === (profile.port ?? 22)
           ? pendingKnownHost
@@ -3902,15 +3901,6 @@ function transferActionLabel(action: "pause" | "resume" | "retry" | "cancel" | "
   };
 
   return labels[action];
-}
-
-function profileDedupKey(profile: ConnectionProfile) {
-  if (profile.type === "serial") {
-    return `${profile.type}:${profile.portName.trim().toLowerCase()}`;
-  }
-
-  const username = "username" in profile ? profile.username ?? "" : "";
-  return `${profile.type}:${username.trim().toLowerCase()}@${profile.host.trim().toLowerCase()}:${profile.port}`;
 }
 
 function isRetryableSftpConnectionError(error: string) {
