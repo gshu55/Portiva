@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { formatBytes, formatUptime, formatUptimeDays } from "../../shared/format";
 import { Icon, type IconName } from "../../shared/Icon";
 import { sshCollectHostOverview, wslCollectHostOverview } from "../../shared/ipc/commands";
+import { exponentialBackoffDelay } from "../../shared/retryBackoff";
 import type { DiskPartitionOverview, SshHostOverview, WslHostOverview } from "../../shared/types";
 import { Card, ConfirmDialog, IconButton, SegmentedControl, TextInput, VirtualList } from "../../shared/ui";
 import type { SavedSshCommand } from "./useSavedSshCommands";
 import "./sshTerminalWorkspace.css";
 
 const sshOverviewRefreshIntervalMs = 1_000;
+const sshOverviewMaximumRetryIntervalMs = 30_000;
 const wslOverviewRefreshIntervalMs = 1_000;
 
 interface SshTerminalWorkspaceProps {
@@ -85,9 +87,9 @@ function useSshHostOverview(profileId: string, connectionId: string, enabled: bo
     };
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<boolean | null> => {
     if (!enabled || refreshingRef.current) {
-      return;
+      return null;
     }
 
     refreshingRef.current = true;
@@ -127,10 +129,12 @@ function useSshHostOverview(profileId: string, connectionId: string, enabled: bo
             : null,
         });
       }
+      return true;
     } catch (error) {
       if (mountedRef.current) {
         setState((current) => ({ ...current, error: overviewError(error), loading: false }));
       }
+      return false;
     } finally {
       refreshingRef.current = false;
     }
@@ -142,9 +146,36 @@ function useSshHostOverview(profileId: string, connectionId: string, enabled: bo
       return;
     }
 
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), sshOverviewRefreshIntervalMs);
-    return () => window.clearInterval(timer);
+    let disposed = false;
+    let timer: number | null = null;
+    let consecutiveFailures = 0;
+    const poll = async () => {
+      const succeeded = await refresh();
+      if (disposed) {
+        return;
+      }
+
+      if (succeeded === true) {
+        consecutiveFailures = 0;
+      } else if (succeeded === false) {
+        consecutiveFailures += 1;
+      }
+
+      const delay = exponentialBackoffDelay(
+        consecutiveFailures,
+        sshOverviewRefreshIntervalMs,
+        sshOverviewMaximumRetryIntervalMs,
+      );
+      timer = window.setTimeout(() => void poll(), delay);
+    };
+
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    };
   }, [connectionId, enabled, profileId, refresh]);
 
   return state;

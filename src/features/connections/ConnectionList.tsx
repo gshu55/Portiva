@@ -4,6 +4,7 @@ import { protocolLabel } from "../../shared/labels";
 import { Icon, type IconName } from "../../shared/Icon";
 import { formatBytes, formatUptimeDays } from "../../shared/format";
 import { requiresSavedCredentialRecovery } from "../../shared/credentials";
+import { exponentialBackoffDelay } from "../../shared/retryBackoff";
 import type {
   ConnectionProfile,
   SshHostOverview,
@@ -60,7 +61,14 @@ const profileIcons: Record<ConnectionProfile["type"], IconName> = {
 const AUTO_REFRESH_DELAY_MS = 500;
 const AUTO_REFRESH_TIMEOUT_MS = 60_000;
 const HOST_OVERVIEW_REFRESH_INTERVAL_MS = 10_000;
+const HOST_OVERVIEW_MAXIMUM_RETRY_INTERVAL_MS = 5 * 60_000;
 const SSH_OVERVIEW_CONCURRENCY = 4;
+
+interface HostOverviewRetryState {
+  consecutiveFailures: number;
+  contextKey: string;
+  retryAt: number;
+}
 
 async function runWithConcurrency<T>(
   items: readonly T[],
@@ -117,6 +125,7 @@ export function ConnectionList({
   const [wslRefreshing, setWslRefreshing] = useState(false);
   const [wslRefreshError, setWslRefreshError] = useState<string | null>(null);
   const refreshingProfileIds = useRef(new Set<string>());
+  const overviewRetryByProfileRef = useRef(new Map<string, HostOverviewRetryState>());
   const automaticRefreshRunningRef = useRef(false);
   const automaticCredentialPromptRef = useRef<string | null>(null);
   const refreshingWslDistributions = useRef(new Set<string>());
@@ -220,9 +229,26 @@ export function ConnectionList({
             refreshedAt: Date.now(),
           },
         }));
+        overviewRetryByProfileRef.current.delete(profile.id);
         return null;
       } catch (error) {
         const message = hostOverviewErrorMessage(error);
+        const session = sessionsByProfile.get(profile.id);
+        const contextKey = hostOverviewRetryContext(profile, session);
+        const previousRetry = overviewRetryByProfileRef.current.get(profile.id);
+        const consecutiveFailures =
+          previousRetry?.contextKey === contextKey
+            ? previousRetry.consecutiveFailures + 1
+            : 1;
+        overviewRetryByProfileRef.current.set(profile.id, {
+          consecutiveFailures,
+          contextKey,
+          retryAt: Date.now() + exponentialBackoffDelay(
+            consecutiveFailures,
+            HOST_OVERVIEW_REFRESH_INTERVAL_MS,
+            HOST_OVERVIEW_MAXIMUM_RETRY_INTERVAL_MS,
+          ),
+        });
         if (!mountedRef.current) {
           return message;
         }
@@ -363,6 +389,15 @@ export function ConnectionList({
           const missingIds = new Set(missingCredentialProfiles.map((profile) => profile.id));
           profilesToRefresh = sshProfiles.filter((profile) => !missingIds.has(profile.id));
         }
+
+        const now = Date.now();
+        profilesToRefresh = profilesToRefresh.filter((profile) => {
+          const retry = overviewRetryByProfileRef.current.get(profile.id);
+          const session = sessionsByProfile.get(profile.id);
+          return !retry ||
+            retry.contextKey !== hostOverviewRetryContext(profile, session) ||
+            retry.retryAt <= now;
+        });
       }
 
       let stopScheduling = false;
@@ -1120,6 +1155,17 @@ function hostOverviewErrorMessage(error: unknown) {
     return "SSH 请求超时";
   }
   return message || "未知错误";
+}
+
+function hostOverviewRetryContext(
+  profile: ConnectionProfile,
+  session: WorkspaceSessionTab | undefined,
+) {
+  return [
+    profile.updatedAt,
+    session?.connection.id ?? "",
+    session?.connection.transport?.authenticated ? "authenticated" : "pending",
+  ].join(":");
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
