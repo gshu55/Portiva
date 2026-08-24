@@ -8,6 +8,7 @@ import { HostTrustDialog } from "./app/HostTrustDialog";
 import { ProfileDialogHost } from "./app/ProfileDialogHost";
 import { SettingsTabPanel } from "./app/SettingsTabPanel";
 import { useKeyboardShortcuts } from "./app/useKeyboardShortcuts";
+import { useAppUpdate } from "./app/useAppUpdate";
 import { usePortivaWorkspace } from "./app/usePortivaWorkspace";
 import { appendMissingTabIds, areTabOrdersEqual, moveTabId } from "./app/tabOrder";
 import { ConnectionList } from "./features/connections/ConnectionList";
@@ -228,6 +229,7 @@ function isSessionWindowLabel(label: string) {
 
 function App() {
   const workspace = usePortivaWorkspace();
+  const appUpdate = useAppUpdate();
   const [profileDialog, setProfileDialog] = useState<{
     forceSecretEntry?: boolean;
     mode: "create" | "edit";
@@ -1824,7 +1826,7 @@ function App() {
                   <NetworkScannerPanel onCreateProfile={openDiscoveredProfileDialog} />
                 </Suspense>
               ),
-              [settingsTabId]: <SettingsTabPanel workspace={workspace} />,
+              [settingsTabId]: <SettingsTabPanel appUpdate={appUpdate} workspace={workspace} />,
               ...Object.fromEntries(wslFileDistributions.map((distribution) => [
                 wslFilesTabId(distribution),
                 <WslFileTransferPanel

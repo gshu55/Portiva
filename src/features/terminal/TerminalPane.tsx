@@ -227,6 +227,21 @@ function createXtermTheme(theme: TerminalColorPalette, emphasizeSelection = fals
 }
 
 type SearchStatus = "idle" | "found" | "empty" | "error";
+type ReportTerminalSize = (force?: boolean, requestRedraw?: boolean) => void;
+
+const terminalResizeRetryBaseDelayMs = 250;
+const terminalResizeRetryMaximumDelayMs = 4_000;
+const terminalResizeRetryMaximumAttempts = 5;
+
+function terminalSizesEqual(left: TerminalSize | null, right: TerminalSize) {
+  return Boolean(
+    left &&
+      left.cols === right.cols &&
+      left.rows === right.rows &&
+      left.widthPx === right.widthPx &&
+      left.heightPx === right.heightPx,
+  );
+}
 
 const wordSeparators = " ~!@#$%^&*()+`-=[]{}|\\;:\"',./<>?\r\n\t";
 const alternateBufferWheelScrollSpeed = 3;
@@ -416,7 +431,13 @@ export function TerminalPane({
   const lastClearRevisionRef = useRef(clearRevision);
   const pendingOutputRef = useRef("");
   const outputFrameRef = useRef<number | null>(null);
+  const outputTimerRef = useRef<number | null>(null);
   const lastReportedSizeRef = useRef<TerminalSize | null>(null);
+  const lastRequestedSizeRef = useRef<TerminalSize | null>(null);
+  const resizeRequestRevisionRef = useRef(0);
+  const resizeRetryAttemptRef = useRef(0);
+  const resizeRetryTimerRef = useRef<number | null>(null);
+  const truncatedHistoryRecoveryPendingRef = useRef(false);
   const autoScrollRef = useRef(autoScroll);
   const resizeTerminalRef = useRef(onResizeTerminal);
   const resizeQueueRef = useRef(Promise.resolve());
@@ -431,7 +452,7 @@ export function TerminalPane({
   const workingDirectoryChangeRef = useRef(onWorkingDirectoryChange);
   const openSearchRef = useRef<() => void>(() => undefined);
   const reportSizeWhenVisibleRef = useRef(reportSizeWhenVisible);
-  const reportSizeRef = useRef<((force?: boolean) => void) | null>(null);
+  const reportSizeRef = useRef<ReportTerminalSize | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
   const tuiReportedForegroundRef = useRef<RgbColor>(
     parseTerminalColor(terminalTheme.foreground) ?? [217, 226, 234],
@@ -536,15 +557,19 @@ export function TerminalPane({
     return inputQueueRef.current;
   };
 
-  const enqueueResize = (size: TerminalSize, terminalId: string) => {
+  const enqueueResize = (sizes: TerminalSize[], terminalId: string) => {
     // SSH window-change requests are asynchronous. Keep them ordered so an
     // older measurement can never arrive after the latest one.
-    resizeQueueRef.current = resizeQueueRef.current
+    const request = resizeQueueRef.current
       .catch(() => undefined)
-      .then(() => Promise.resolve(resizeTerminalRef.current(size, terminalId)))
-      .catch((error) => {
-        console.warn("终端尺寸调整失败", error);
+      .then(async () => {
+        for (const size of sizes) {
+          await Promise.resolve(resizeTerminalRef.current(size, terminalId));
+        }
       });
+
+    resizeQueueRef.current = request.catch(() => undefined);
+    return request;
   };
 
   const shouldKeepScrollAtBottom = (instance: Terminal) => {
@@ -565,7 +590,7 @@ export function TerminalPane({
     });
   };
 
-  const replaySnapshot = (instance: Terminal, output: string) => {
+  const replaySnapshot = (instance: Terminal, output: string, onParsed?: () => void) => {
     snapshotReplayRevisionRef.current += 1;
     const revision = snapshotReplayRevisionRef.current;
     // 历史 ANSI 数据可能包含设备状态查询；重放只用于恢复画面，不能再次回写远端。
@@ -573,12 +598,14 @@ export function TerminalPane({
     writeOutput(instance, output, () => {
       if (xtermRef.current === instance && snapshotReplayRevisionRef.current === revision) {
         replayingSnapshotRef.current = false;
+        onParsed?.();
       }
     });
   };
 
   const flushPendingOutput = () => {
     outputFrameRef.current = null;
+    outputTimerRef.current = null;
     const instance = xtermRef.current;
     const output = pendingOutputRef.current;
 
@@ -590,18 +617,44 @@ export function TerminalPane({
     writeOutput(instance, output);
   };
 
+  const schedulePendingOutputFlush = () => {
+    if (outputFrameRef.current !== null || outputTimerRef.current !== null) {
+      return;
+    }
+
+    if (document.visibilityState === "hidden") {
+      outputTimerRef.current = window.setTimeout(flushPendingOutput, 16);
+      return;
+    }
+
+    outputFrameRef.current = window.requestAnimationFrame(flushPendingOutput);
+  };
+
   const enqueueOutput = (output: string) => {
     if (!output) {
       return;
     }
 
     pendingOutputRef.current += output;
-    if (outputFrameRef.current !== null) {
-      return;
-    }
-
-    outputFrameRef.current = window.requestAnimationFrame(flushPendingOutput);
+    schedulePendingOutputFlush();
   };
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "hidden" || outputFrameRef.current === null) {
+        return;
+      }
+
+      window.cancelAnimationFrame(outputFrameRef.current);
+      outputFrameRef.current = null;
+      if (pendingOutputRef.current) {
+        schedulePendingOutputFlush();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
 
   const openSearch = () => {
     closeContextMenu();
@@ -752,7 +805,8 @@ export function TerminalPane({
     }
 
     window.requestAnimationFrame(() => {
-      reportSizeRef.current?.();
+      const requestRedraw = truncatedHistoryRecoveryPendingRef.current;
+      reportSizeRef.current?.(requestRedraw, requestRedraw);
       xtermRef.current?.focus();
     });
   }, [isActive, terminal?.id]);
@@ -770,6 +824,15 @@ export function TerminalPane({
     commandDraftRef.current = "";
     activeMainstreamCliRef.current = null;
     setAlternateScreenCli(null);
+    resizeRequestRevisionRef.current += 1;
+    resizeRetryAttemptRef.current = 0;
+    lastReportedSizeRef.current = null;
+    lastRequestedSizeRef.current = null;
+    truncatedHistoryRecoveryPendingRef.current = false;
+    if (resizeRetryTimerRef.current !== null) {
+      window.clearTimeout(resizeRetryTimerRef.current);
+      resizeRetryTimerRef.current = null;
+    }
 
     if (!terminal || !container) {
       xtermRef.current?.dispose();
@@ -786,12 +849,14 @@ export function TerminalPane({
     const instance = new Terminal({
       allowProposedApi: true,
       allowTransparency: true,
+      cols: Math.max(2, terminal.size.cols),
       cursorBlink: true,
       cursorStyle: "bar",
       cursorWidth: 2,
       disableStdin: false,
       fontFamily: resolvedTerminalFontFamily,
       fontSize: resolvedTerminalFontSize,
+      rows: Math.max(1, terminal.size.rows),
       scrollback: resolvedScrollbackLines,
       theme: createXtermTheme(terminalTheme),
     });
@@ -977,12 +1042,21 @@ export function TerminalPane({
     replayingSnapshotRef.current = false;
     snapshotReplayRevisionRef.current += 1;
 
-    const reportSize = (force = false) => {
+    const reportSize: ReportTerminalSize = (force = false, requestRedraw = false) => {
       const fitAddonInstance = fitAddonRef.current;
       const terminalInstance = xtermRef.current;
       const host = containerRef.current;
 
       if (!fitAddonInstance || !terminalInstance || !host) {
+        return;
+      }
+
+      // A hidden tab can be collapsed to a 1x1 layout placeholder. Fitting
+      // xterm in that state would reduce its buffer to roughly 2x1 while the
+      // remote PTY keeps its previous dimensions. Full-screen TUIs would then
+      // overwrite almost their entire screen before the tab becomes visible.
+      // Preserve both sides at their last synchronized size until activation.
+      if (!isActiveRef.current && !reportSizeWhenVisibleRef.current) {
         return;
       }
 
@@ -997,27 +1071,83 @@ export function TerminalPane({
         widthPx: Math.round(host.clientWidth),
         heightPx: Math.round(host.clientHeight),
       };
-      const previousSize = lastReportedSizeRef.current;
-
-      // Hidden panes still need to fit xterm's canvas, but their dimensions
-      // must not be marked as reported until a PTY resize was really queued.
-      if (!isActiveRef.current && !reportSizeWhenVisibleRef.current) {
-        return;
-      }
+      const redrawRequested =
+        requestRedraw || truncatedHistoryRecoveryPendingRef.current;
 
       if (
         !force &&
-        previousSize &&
-        previousSize.cols === nextSize.cols &&
-        previousSize.rows === nextSize.rows &&
-        previousSize.widthPx === nextSize.widthPx &&
-        previousSize.heightPx === nextSize.heightPx
+        !redrawRequested &&
+        (terminalSizesEqual(lastRequestedSizeRef.current, nextSize) ||
+          terminalSizesEqual(lastReportedSizeRef.current, nextSize))
       ) {
         return;
       }
 
-      lastReportedSizeRef.current = nextSize;
-      enqueueResize(nextSize, terminal.id);
+      if (resizeRetryTimerRef.current !== null) {
+        window.clearTimeout(resizeRetryTimerRef.current);
+        resizeRetryTimerRef.current = null;
+      }
+
+      const resizeSequence = [nextSize];
+      if (redrawRequested) {
+        const nudgeRows = nextSize.rows > 2 ? nextSize.rows - 1 : nextSize.rows + 1;
+        resizeSequence.unshift({
+          ...nextSize,
+          rows: nudgeRows,
+          heightPx: Math.max(1, Math.round((nextSize.heightPx * nudgeRows) / nextSize.rows)),
+        });
+      }
+
+      const requestRevision = resizeRequestRevisionRef.current + 1;
+      resizeRequestRevisionRef.current = requestRevision;
+      lastRequestedSizeRef.current = nextSize;
+
+      void enqueueResize(resizeSequence, terminal.id)
+        .then(() => {
+          if (
+            xtermRef.current !== terminalInstance ||
+            resizeRequestRevisionRef.current !== requestRevision
+          ) {
+            return;
+          }
+
+          lastReportedSizeRef.current = nextSize;
+          lastRequestedSizeRef.current = nextSize;
+          resizeRetryAttemptRef.current = 0;
+          if (redrawRequested) {
+            truncatedHistoryRecoveryPendingRef.current = false;
+          }
+        })
+        .catch((error) => {
+          if (
+            xtermRef.current !== terminalInstance ||
+            resizeRequestRevisionRef.current !== requestRevision
+          ) {
+            return;
+          }
+
+          console.warn("终端尺寸调整失败", error);
+          lastReportedSizeRef.current = null;
+          lastRequestedSizeRef.current = null;
+
+          const retryAttempt = resizeRetryAttemptRef.current;
+          if (retryAttempt >= terminalResizeRetryMaximumAttempts) {
+            return;
+          }
+
+          resizeRetryAttemptRef.current = retryAttempt + 1;
+          const retryDelay = Math.min(
+            terminalResizeRetryMaximumDelayMs,
+            terminalResizeRetryBaseDelayMs * 2 ** retryAttempt,
+          );
+          resizeRetryTimerRef.current = window.setTimeout(() => {
+            resizeRetryTimerRef.current = null;
+            reportSizeRef.current?.(
+              true,
+              redrawRequested || truncatedHistoryRecoveryPendingRef.current,
+            );
+          }, retryDelay);
+        });
     };
     reportSizeRef.current = reportSize;
 
@@ -1056,10 +1186,19 @@ export function TerminalPane({
         window.clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;
       }
+      if (resizeRetryTimerRef.current !== null) {
+        window.clearTimeout(resizeRetryTimerRef.current);
+        resizeRetryTimerRef.current = null;
+      }
+      resizeRequestRevisionRef.current += 1;
       instance.dispose();
       if (outputFrameRef.current !== null) {
         window.cancelAnimationFrame(outputFrameRef.current);
         outputFrameRef.current = null;
+      }
+      if (outputTimerRef.current !== null) {
+        window.clearTimeout(outputTimerRef.current);
+        outputTimerRef.current = null;
       }
       pendingOutputRef.current = "";
       if (xtermRef.current === instance) {
@@ -1073,6 +1212,8 @@ export function TerminalPane({
         replayingSnapshotRef.current = false;
         snapshotReplayRevisionRef.current += 1;
         lastReportedSizeRef.current = null;
+        lastRequestedSizeRef.current = null;
+        truncatedHistoryRecoveryPendingRef.current = false;
         reportSizeRef.current = null;
         inputQueueRef.current = Promise.resolve();
       }
@@ -1165,7 +1306,21 @@ export function TerminalPane({
     }
 
     if (!renderInitializedRef.current) {
-      replaySnapshot(instance, terminalBuffer);
+      const recoverTruncatedHistory = Boolean(
+        terminalSnapshot?.historyTruncated && terminalStatus === "attached",
+      );
+      truncatedHistoryRecoveryPendingRef.current = recoverTruncatedHistory;
+      replaySnapshot(instance, terminalBuffer, () => {
+        if (!recoverTruncatedHistory || xtermRef.current !== instance) {
+          return;
+        }
+
+        window.requestAnimationFrame(() => {
+          if (xtermRef.current === instance) {
+            reportSizeRef.current?.(true, true);
+          }
+        });
+      });
       lastBufferRef.current = terminalBuffer;
       renderInitializedRef.current = true;
       return;
@@ -1208,6 +1363,10 @@ export function TerminalPane({
         window.cancelAnimationFrame(outputFrameRef.current);
         outputFrameRef.current = null;
       }
+      if (outputTimerRef.current !== null) {
+        window.clearTimeout(outputTimerRef.current);
+        outputTimerRef.current = null;
+      }
       instance.reset();
       replaySnapshot(instance, terminalBuffer);
       lastBufferRef.current = terminalBuffer;
@@ -1224,6 +1383,10 @@ export function TerminalPane({
     if (outputFrameRef.current !== null) {
       window.cancelAnimationFrame(outputFrameRef.current);
       outputFrameRef.current = null;
+    }
+    if (outputTimerRef.current !== null) {
+      window.clearTimeout(outputTimerRef.current);
+      outputTimerRef.current = null;
     }
     xtermRef.current?.reset();
     lastBufferRef.current = terminalBuffer;

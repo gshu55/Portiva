@@ -29,6 +29,7 @@ struct TerminalOutputEvent {
     status: TerminalSessionStatus,
     buffered_bytes: usize,
     buffer_preview: String,
+    history_truncated: bool,
     render_policy: TerminalRenderPolicy,
     output_chunk: String,
 }
@@ -792,6 +793,7 @@ fn emit_terminal_snapshot(app_handle: &AppHandle, terminal_id: &str, output: &st
                 status: metadata.status,
                 buffered_bytes: metadata.buffered_bytes,
                 buffer_preview: String::new(),
+                history_truncated: metadata.history_truncated,
                 render_policy: metadata.render_policy,
                 output_chunk: output.to_string(),
             },
@@ -817,6 +819,7 @@ fn emit_terminal_disconnected(app_handle: &AppHandle, terminal_id: &str, reason:
                 status: snapshot.status,
                 buffered_bytes: snapshot.buffered_bytes,
                 buffer_preview: snapshot.buffer_preview,
+                history_truncated: snapshot.history_truncated,
                 render_policy: snapshot.render_policy,
                 output_chunk: output,
             },

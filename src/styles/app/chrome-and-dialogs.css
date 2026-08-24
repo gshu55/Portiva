@@ -65,6 +65,11 @@
 
 .app-titlebar-tab-slot .tabs {
   padding: var(--space-1, 4px) 5px 3px;
+  -webkit-app-region: drag;
+}
+
+.app-titlebar-tab-slot .tab,
+.app-titlebar.window-controls-macos .tabs {
   -webkit-app-region: no-drag;
 }
 

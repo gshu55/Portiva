@@ -8,13 +8,20 @@ use crate::domain::terminal::{
 pub struct TerminalOutputMetadata {
     pub status: TerminalSessionStatus,
     pub buffered_bytes: usize,
+    pub history_truncated: bool,
     pub render_policy: TerminalRenderPolicy,
+}
+
+#[derive(Default)]
+struct TerminalBuffer {
+    content: String,
+    history_truncated: bool,
 }
 
 #[derive(Default)]
 pub struct TerminalService {
     sessions: Mutex<HashMap<String, TerminalSession>>,
-    buffers: Mutex<HashMap<String, String>>,
+    buffers: Mutex<HashMap<String, TerminalBuffer>>,
     next_sequence: Mutex<u64>,
 }
 
@@ -62,7 +69,7 @@ impl TerminalService {
             .lock()
             .map_err(|_| "terminal buffer lock poisoned".to_string())?;
         let buffer = buffers.entry(terminal_id.to_string()).or_default();
-        buffer.push_str(data);
+        buffer.content.push_str(data);
         truncate_terminal_buffer(buffer);
         Ok(())
     }
@@ -163,12 +170,13 @@ impl TerminalService {
             .lock()
             .map_err(|_| "terminal buffer lock poisoned".to_string())?;
         let buffer = buffers.entry(terminal_id.to_string()).or_default();
-        buffer.push_str(output);
+        buffer.content.push_str(output);
         truncate_terminal_buffer(buffer);
 
         Ok(TerminalOutputMetadata {
             status,
-            buffered_bytes: buffer.len(),
+            buffered_bytes: buffer.content.len(),
+            history_truncated: buffer.history_truncated,
             render_policy,
         })
     }
@@ -213,31 +221,33 @@ impl TerminalService {
             .lock()
             .map_err(|_| "terminal buffer lock poisoned".to_string())?
             .get(terminal_id)
-            .cloned()
+            .map(|buffer| (buffer.content.clone(), buffer.history_truncated))
             .unwrap_or_default();
 
         Ok(TerminalSnapshot {
             terminal_id: terminal_id.to_string(),
             status: session.status.clone(),
-            buffered_bytes: buffer.len(),
-            buffer_preview: buffer,
+            buffered_bytes: buffer.0.len(),
+            buffer_preview: buffer.0,
+            history_truncated: buffer.1,
             render_policy: session.render_policy.clone(),
         })
     }
 }
 
-fn truncate_terminal_buffer(buffer: &mut String) {
+fn truncate_terminal_buffer(buffer: &mut TerminalBuffer) {
     const MAX_BUFFER_BYTES: usize = 256 * 1024;
 
-    if buffer.len() <= MAX_BUFFER_BYTES {
+    if buffer.content.len() <= MAX_BUFFER_BYTES {
         return;
     }
 
-    let mut split_at = buffer.len().saturating_sub(MAX_BUFFER_BYTES);
-    while split_at < buffer.len() && !buffer.is_char_boundary(split_at) {
+    let mut split_at = buffer.content.len().saturating_sub(MAX_BUFFER_BYTES);
+    while split_at < buffer.content.len() && !buffer.content.is_char_boundary(split_at) {
         split_at += 1;
     }
-    buffer.drain(..split_at);
+    buffer.content.drain(..split_at);
+    buffer.history_truncated = true;
 }
 
 pub fn terminal_disconnect_notice(reason: &str) -> String {
@@ -301,6 +311,31 @@ mod tests {
             service.snapshot(&session.id).unwrap().buffer_preview,
             "hello"
         );
+        assert!(!service.snapshot(&session.id).unwrap().history_truncated);
+    }
+
+    #[test]
+    fn marks_terminal_history_after_buffer_truncation() {
+        let service = TerminalService::default();
+        let session = service
+            .attach(
+                "connection-1".to_string(),
+                TerminalSize {
+                    cols: 80,
+                    rows: 24,
+                    width_px: 800,
+                    height_px: 600,
+                },
+            )
+            .unwrap();
+
+        service
+            .write(&session.id, &"x".repeat(256 * 1024 + 1))
+            .unwrap();
+
+        let snapshot = service.snapshot(&session.id).unwrap();
+        assert_eq!(snapshot.buffered_bytes, 256 * 1024);
+        assert!(snapshot.history_truncated);
     }
 
     #[test]

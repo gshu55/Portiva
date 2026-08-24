@@ -284,6 +284,7 @@ export interface TerminalSnapshot {
   status: TerminalSession["status"];
   bufferedBytes: number;
   bufferPreview: string;
+  historyTruncated?: boolean;
   renderPolicy: TerminalRenderPolicy;
   outputChunk?: string;
 }

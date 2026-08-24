@@ -61,6 +61,7 @@ pub struct TerminalSnapshot {
     pub status: TerminalSessionStatus,
     pub buffered_bytes: usize,
     pub buffer_preview: String,
+    pub history_truncated: bool,
     pub render_policy: TerminalRenderPolicy,
 }
 

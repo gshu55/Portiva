@@ -260,10 +260,13 @@ function mergeTerminalSnapshot(
   previous: TerminalSnapshot | null | undefined,
   incoming: TerminalSnapshot,
 ): TerminalSnapshot {
+  const historyTruncated = Boolean(previous?.historyTruncated || incoming.historyTruncated);
+
   if (incoming.bufferPreview) {
     return {
       ...incoming,
       bufferPreview: truncateTerminalPreview(incoming.bufferPreview),
+      historyTruncated,
     };
   }
 
@@ -271,12 +274,14 @@ function mergeTerminalSnapshot(
     return {
       ...incoming,
       bufferPreview: previous?.bufferPreview ?? "",
+      historyTruncated,
     };
   }
 
   return {
     ...incoming,
     bufferPreview: truncateTerminalPreview(`${previous?.bufferPreview ?? ""}${incoming.outputChunk}`),
+    historyTruncated,
   };
 }
 
@@ -396,6 +401,7 @@ export function usePortivaWorkspace() {
   const activeTerminalIdRef = useRef<string | null>(null);
   const pendingTerminalSnapshotsRef = useRef<Map<string, TerminalSnapshot>>(new Map());
   const terminalSnapshotFrameRef = useRef<number | null>(null);
+  const terminalSnapshotTimerRef = useRef<number | null>(null);
   const closingTerminalIdsRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef<AppSettings>(defaultSettings);
   const settingsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -939,26 +945,31 @@ export function usePortivaWorkspace() {
         return incoming;
       }
 
+      const historyTruncated = Boolean(previous.historyTruncated || incoming.historyTruncated);
+
       if (incoming.bufferPreview) {
-        return incoming;
+        return { ...incoming, historyTruncated };
       }
 
       if (previous.bufferPreview) {
         return {
           ...incoming,
           bufferPreview: truncateTerminalPreview(`${previous.bufferPreview}${incoming.outputChunk ?? ""}`),
+          historyTruncated,
           outputChunk: `${previous.outputChunk ?? ""}${incoming.outputChunk ?? ""}`,
         };
       }
 
       return {
         ...incoming,
+        historyTruncated,
         outputChunk: `${previous.outputChunk ?? ""}${incoming.outputChunk ?? ""}`,
       };
     };
 
     const flushPendingSnapshots = () => {
       terminalSnapshotFrameRef.current = null;
+      terminalSnapshotTimerRef.current = null;
       const pendingSnapshots = pendingTerminalSnapshotsRef.current;
       if (pendingSnapshots.size === 0) {
         return;
@@ -1025,6 +1036,37 @@ export function usePortivaWorkspace() {
       }
     };
 
+    const schedulePendingSnapshotFlush = () => {
+      if (
+        terminalSnapshotFrameRef.current !== null ||
+        terminalSnapshotTimerRef.current !== null
+      ) {
+        return;
+      }
+
+      if (document.visibilityState === "hidden") {
+        terminalSnapshotTimerRef.current = window.setTimeout(flushPendingSnapshots, 16);
+        return;
+      }
+
+      terminalSnapshotFrameRef.current = window.requestAnimationFrame(flushPendingSnapshots);
+    };
+
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState !== "hidden" ||
+        terminalSnapshotFrameRef.current === null
+      ) {
+        return;
+      }
+
+      window.cancelAnimationFrame(terminalSnapshotFrameRef.current);
+      terminalSnapshotFrameRef.current = null;
+      schedulePendingSnapshotFlush();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     void listen<TerminalSnapshot>(terminalSnapshotEvent, (event) => {
       const incomingSnapshot = event.payload;
       const pendingSnapshots = pendingTerminalSnapshotsRef.current;
@@ -1033,9 +1075,7 @@ export function usePortivaWorkspace() {
         mergePendingSnapshot(pendingSnapshots.get(incomingSnapshot.terminalId), incomingSnapshot),
       );
 
-      if (terminalSnapshotFrameRef.current === null) {
-        terminalSnapshotFrameRef.current = window.requestAnimationFrame(flushPendingSnapshots);
-      }
+      schedulePendingSnapshotFlush();
     })
       .then((dispose) => {
         if (disposed) {
@@ -1051,9 +1091,14 @@ export function usePortivaWorkspace() {
 
     return () => {
       disposed = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (terminalSnapshotFrameRef.current !== null) {
         window.cancelAnimationFrame(terminalSnapshotFrameRef.current);
         terminalSnapshotFrameRef.current = null;
+      }
+      if (terminalSnapshotTimerRef.current !== null) {
+        window.clearTimeout(terminalSnapshotTimerRef.current);
+        terminalSnapshotTimerRef.current = null;
       }
       pendingTerminalSnapshotsRef.current.clear();
       if (unlisten) {
@@ -2347,11 +2392,13 @@ export function usePortivaWorkspace() {
       : activeTerminal;
 
     if (!targetTerminal) {
-      setWorkspaceMessage(
-        terminalId
-          ? `终端会话不存在，无法调整尺寸：${terminalId}。`
-          : "请先打开连接再调整终端尺寸。",
-      );
+      const message = terminalId
+        ? `终端会话不存在，无法调整尺寸：${terminalId}。`
+        : "请先打开连接再调整终端尺寸。";
+      setWorkspaceMessage(message);
+      if (terminalId) {
+        throw new Error(message);
+      }
       return;
     }
 
@@ -2394,6 +2441,7 @@ export function usePortivaWorkspace() {
       }
     } catch (error) {
       setWorkspaceMessage(`终端尺寸调整失败：${String(error)}`);
+      throw error;
     }
   }, [activeTerminal, sessionTabs]);
 

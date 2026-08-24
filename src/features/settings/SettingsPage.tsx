@@ -4,6 +4,7 @@ import { SettingsPanel, type SettingsSectionId } from "./SettingsPanel";
 import type { IconName } from "../../shared/Icon";
 import { Button } from "../../shared/ui";
 import type { AppSettings } from "../../shared/types";
+import type { AppUpdateController } from "../../app/useAppUpdate";
 
 type ApplicationMenuId = "about";
 type SettingsMenuId = SettingsSectionId | ApplicationMenuId;
@@ -16,11 +17,13 @@ const menuItems: Array<{ id: SettingsMenuId; icon: IconName; label: string; desc
 ];
 
 interface SettingsPageProps {
+  appUpdate: AppUpdateController;
   settings: AppSettings;
   onSaveSettings: (settings: AppSettings) => void;
 }
 
 export function SettingsPage({
+  appUpdate,
   onSaveSettings,
   settings,
 }: SettingsPageProps) {
@@ -46,7 +49,7 @@ export function SettingsPage({
         </nav>
         <div className="settings-content">
           {activeMenu === "about" ? (
-            <ApplicationSettings />
+            <ApplicationSettings appUpdate={appUpdate} />
           ) : (
             <SettingsPanel
               section={activeMenu}

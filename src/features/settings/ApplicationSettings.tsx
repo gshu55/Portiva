@@ -1,38 +1,13 @@
-import { useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { appUpdateCheck, appUpdateDownloadAndInstall } from "../../shared/ipc/commands";
+import type { AppUpdateController, AppUpdateState } from "../../app/useAppUpdate";
 import { Button } from "../../shared/ui";
 import { useAppMetadata } from "../../shared/useAppMetadata";
 import { SettingsSectionHeader } from "./SettingsSection";
 
-type UpdatePhase = "available" | "checking" | "current" | "downloading" | "error" | "idle" | "installing";
-
-interface UpdateState {
-  attempt: number | null;
-  maxAttempts: number | null;
-  message: string | null;
-  phase: UpdatePhase;
-  progress: number | null;
-  version: string | null;
+interface ApplicationSettingsProps {
+  appUpdate: AppUpdateController;
 }
-
-interface UpdateProgressEvent {
-  kind: "started" | "progress" | "finished";
-  attempt: number;
-  chunkLength: number;
-  contentLength: number | null;
-  maxAttempts: number;
-}
-
-const initialUpdateState: UpdateState = {
-  attempt: null,
-  maxAttempts: null,
-  message: null,
-  phase: "idle",
-  progress: null,
-  version: null,
-};
 
 const legalResources: Array<{
   title: string;
@@ -52,117 +27,10 @@ const legalResources: Array<{
   },
 ];
 
-export function ApplicationSettings() {
+export function ApplicationSettings({ appUpdate }: ApplicationSettingsProps) {
   const { loading, metadata } = useAppMetadata();
-  const availableUpdateRef = useRef<string | null>(null);
-  const downloadedBytesRef = useRef(0);
-  const totalBytesRef = useRef<number | null>(null);
   const [externalLinkError, setExternalLinkError] = useState("");
-  const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState);
-  const updateBusy = updateState.phase === "checking" || updateState.phase === "downloading" || updateState.phase === "installing";
-
-  const checkForUpdates = async () => {
-    if (updateBusy) {
-      return;
-    }
-
-    setUpdateState({ ...initialUpdateState, phase: "checking" });
-
-    try {
-      availableUpdateRef.current = null;
-      const update = await appUpdateCheck();
-
-      if (!update) {
-        setUpdateState({ ...initialUpdateState, phase: "current" });
-        return;
-      }
-
-      availableUpdateRef.current = update.version;
-      setUpdateState({
-        ...initialUpdateState,
-        phase: "available",
-        version: update.version,
-      });
-    } catch (error) {
-      setUpdateState({
-        ...initialUpdateState,
-        message: formatUpdateError(error, "检查更新失败，请稍后重试。"),
-        phase: "error",
-      });
-    }
-  };
-
-  const installAvailableUpdate = async () => {
-    const updateVersion = availableUpdateRef.current;
-
-    if (!updateVersion || updateBusy) {
-      return;
-    }
-
-    downloadedBytesRef.current = 0;
-    totalBytesRef.current = null;
-    setUpdateState((current) => ({
-      ...current,
-      phase: "downloading",
-      progress: null,
-    }));
-
-    try {
-      const unlisten = await listen<UpdateProgressEvent>("portiva://update-progress", (event) => {
-        if (event.payload.kind === "started") {
-          downloadedBytesRef.current = 0;
-          totalBytesRef.current = event.payload.contentLength ?? null;
-          setUpdateState((current) => ({
-            ...current,
-            attempt: event.payload.attempt,
-            maxAttempts: event.payload.maxAttempts,
-            message: null,
-            phase: "downloading",
-            progress: null,
-          }));
-          return;
-        }
-
-        if (event.payload.kind === "progress") {
-          if (event.payload.contentLength) {
-            totalBytesRef.current = event.payload.contentLength;
-          }
-          downloadedBytesRef.current += event.payload.chunkLength;
-          const totalBytes = totalBytesRef.current;
-          const progress = totalBytes ? Math.min(100, Math.round((downloadedBytesRef.current / totalBytes) * 100)) : null;
-
-          setUpdateState((current) => {
-            if (current.progress === progress) {
-              return current;
-            }
-            return { ...current, progress };
-          });
-          return;
-        }
-
-        setUpdateState((current) => ({
-          ...current,
-          attempt: event.payload.attempt,
-          maxAttempts: event.payload.maxAttempts,
-          phase: "installing",
-          progress: 100,
-        }));
-      });
-      try {
-        await appUpdateDownloadAndInstall();
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        await relaunch();
-      } finally {
-        unlisten();
-      }
-    } catch (error) {
-      setUpdateState((current) => ({
-        ...current,
-        message: formatUpdateError(error, "更新下载或安装失败，请稍后重试。"),
-        phase: "error",
-      }));
-    }
-  };
+  const { busy: updateBusy, checkForUpdates, installAvailableUpdate, state: updateState } = appUpdate;
 
   const openExternalResource = async (url: string) => {
     setExternalLinkError("");
@@ -224,7 +92,7 @@ export function ApplicationSettings() {
   );
 }
 
-function getUpdateButtonLabel(state: UpdateState) {
+function getUpdateButtonLabel(state: AppUpdateState) {
   switch (state.phase) {
     case "checking":
       return "正在检查";
@@ -245,14 +113,4 @@ function getUpdateButtonLabel(state: UpdateState) {
     default:
       return "检查更新";
   }
-}
-
-function formatUpdateError(error: unknown, fallback: string) {
-  if (typeof error === "string" && error.trim()) {
-    return error.trim();
-  }
-  if (error instanceof Error && error.message.trim()) {
-    return error.message.trim();
-  }
-  return fallback;
 }
