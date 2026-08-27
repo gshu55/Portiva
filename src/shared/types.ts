@@ -287,6 +287,8 @@ export interface TerminalSnapshot {
   historyTruncated?: boolean;
   renderPolicy: TerminalRenderPolicy;
   outputChunk?: string;
+  /** Output intentionally skipped by the renderer's overload protection. */
+  droppedOutputCharacters?: number;
 }
 
 export type TerminalSplitOrientation = "columns" | "rows";

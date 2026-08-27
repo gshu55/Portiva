@@ -83,6 +83,7 @@ import {
 } from "../shared/mockData";
 import { defaultTerminalColors } from "../shared/terminalThemes";
 import { defaultAppBackground } from "../shared/appBackgrounds";
+import { appendBoundedTerminalOutput } from "../shared/terminalOutputBuffer";
 import {
   findTerminalPane,
   maximumSshTerminalPanes,
@@ -942,28 +943,49 @@ export function usePortivaWorkspace() {
 
     const mergePendingSnapshot = (previous: TerminalSnapshot | undefined, incoming: TerminalSnapshot) => {
       if (!previous) {
-        return incoming;
+        const boundedOutput = appendBoundedTerminalOutput("", incoming.outputChunk ?? "");
+        return {
+          ...incoming,
+          droppedOutputCharacters:
+            (incoming.droppedOutputCharacters ?? 0) + boundedOutput.droppedCharacters || undefined,
+          outputChunk: boundedOutput.value,
+        };
       }
 
       const historyTruncated = Boolean(previous.historyTruncated || incoming.historyTruncated);
+      const boundedOutput = appendBoundedTerminalOutput(
+        previous.outputChunk ?? "",
+        incoming.outputChunk ?? "",
+      );
+      const droppedOutputCharacters =
+        (previous.droppedOutputCharacters ?? 0)
+        + (incoming.droppedOutputCharacters ?? 0)
+        + boundedOutput.droppedCharacters;
 
       if (incoming.bufferPreview) {
-        return { ...incoming, historyTruncated };
+        return {
+          ...incoming,
+          droppedOutputCharacters: droppedOutputCharacters || undefined,
+          historyTruncated,
+          outputChunk: boundedOutput.value,
+        };
       }
 
       if (previous.bufferPreview) {
         return {
           ...incoming,
           bufferPreview: truncateTerminalPreview(`${previous.bufferPreview}${incoming.outputChunk ?? ""}`),
+          droppedOutputCharacters: droppedOutputCharacters || undefined,
           historyTruncated,
-          outputChunk: `${previous.outputChunk ?? ""}${incoming.outputChunk ?? ""}`,
+          outputChunk: boundedOutput.value,
         };
       }
 
       return {
         ...incoming,
+        droppedOutputCharacters: droppedOutputCharacters || undefined,
         historyTruncated,
-        outputChunk: `${previous.outputChunk ?? ""}${incoming.outputChunk ?? ""}`,
+        outputChunk: boundedOutput.value,
       };
     };
 

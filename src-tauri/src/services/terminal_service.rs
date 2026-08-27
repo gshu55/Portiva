@@ -257,28 +257,40 @@ pub fn terminal_disconnect_notice(reason: &str) -> String {
 }
 
 pub fn drain_utf8_terminal_output(pending_bytes: &mut Vec<u8>, force: bool) -> String {
+    drain_utf8_terminal_output_chunk(pending_bytes, usize::MAX, force)
+}
+
+pub fn drain_utf8_terminal_output_chunk(
+    pending_bytes: &mut Vec<u8>,
+    maximum_bytes: usize,
+    force: bool,
+) -> String {
     if pending_bytes.is_empty() {
         return String::new();
     }
 
-    match std::str::from_utf8(pending_bytes) {
+    if force {
+        let bytes = std::mem::take(pending_bytes);
+        return String::from_utf8_lossy(&bytes).to_string();
+    }
+
+    let candidate_length = pending_bytes.len().min(maximum_bytes.max(1));
+    match std::str::from_utf8(&pending_bytes[..candidate_length]) {
         Ok(output) => {
             let output = output.to_string();
-            pending_bytes.clear();
+            pending_bytes.drain(..candidate_length);
             output
         }
-        Err(error) if !force && error.error_len().is_none() => {
+        Err(error) if error.valid_up_to() > 0 => {
             let valid_up_to = error.valid_up_to();
-            if valid_up_to == 0 {
-                return String::new();
-            }
-
             let output = String::from_utf8_lossy(&pending_bytes[..valid_up_to]).to_string();
             pending_bytes.drain(..valid_up_to);
             output
         }
-        Err(_) => {
-            let bytes = std::mem::take(pending_bytes);
+        Err(error) if error.error_len().is_none() => String::new(),
+        Err(error) => {
+            let invalid_length = error.error_len().unwrap_or(1).min(candidate_length);
+            let bytes = pending_bytes.drain(..invalid_length).collect::<Vec<_>>();
             String::from_utf8_lossy(&bytes).to_string()
         }
     }
@@ -286,7 +298,7 @@ pub fn drain_utf8_terminal_output(pending_bytes: &mut Vec<u8>, force: bool) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::{drain_utf8_terminal_output, TerminalService};
+    use super::{drain_utf8_terminal_output, drain_utf8_terminal_output_chunk, TerminalService};
     use crate::domain::terminal::{TerminalSessionStatus, TerminalSize};
 
     #[test]
@@ -441,6 +453,40 @@ mod tests {
         let mut pending = vec![0xe4, 0xb8];
 
         assert_eq!(drain_utf8_terminal_output(&mut pending, true), "�");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn utf8_terminal_output_chunk_respects_limit_and_character_boundaries() {
+        let mut pending = "ab中文cd".as_bytes().to_vec();
+
+        assert_eq!(
+            drain_utf8_terminal_output_chunk(&mut pending, 4, false),
+            "ab"
+        );
+        assert_eq!(
+            drain_utf8_terminal_output_chunk(&mut pending, 6, false),
+            "中文"
+        );
+        assert_eq!(
+            drain_utf8_terminal_output_chunk(&mut pending, 2, false),
+            "cd"
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn utf8_terminal_output_chunk_makes_progress_after_invalid_byte() {
+        let mut pending = vec![0xff, b'o', b'k'];
+
+        assert_eq!(
+            drain_utf8_terminal_output_chunk(&mut pending, 32, false),
+            "�"
+        );
+        assert_eq!(
+            drain_utf8_terminal_output_chunk(&mut pending, 32, false),
+            "ok"
+        );
         assert!(pending.is_empty());
     }
 }

@@ -13,6 +13,7 @@ import type {
 } from "../../shared/types";
 import { readClipboardText, writeClipboardHtml, writeClipboardText } from "../../shared/clipboard";
 import { Icon } from "../../shared/Icon";
+import { appendBoundedTerminalOutput } from "../../shared/terminalOutputBuffer";
 import { parseOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "../../shared/terminalFonts";
 import { TerminalSemanticHighlighter } from "./terminalSemanticHighlighter";
@@ -430,6 +431,9 @@ export function TerminalPane({
   const snapshotReplayRevisionRef = useRef(0);
   const lastClearRevisionRef = useRef(clearRevision);
   const pendingOutputRef = useRef("");
+  const outputWriteInProgressRef = useRef(false);
+  const outputWriteRevisionRef = useRef(0);
+  const droppedOutputCharactersRef = useRef(0);
   const outputFrameRef = useRef<number | null>(null);
   const outputTimerRef = useRef<number | null>(null);
   const lastReportedSizeRef = useRef<TerminalSize | null>(null);
@@ -474,6 +478,8 @@ export function TerminalPane({
   const [copiedScrollbackFixFor, setCopiedScrollbackFixFor] = useState<string | null>(null);
   const terminalBuffer = terminalSnapshot?.bufferPreview ?? "";
   const terminalOutputChunk = terminalSnapshot?.outputChunk ?? "";
+  const terminalDroppedOutputCharacters = terminalSnapshot?.droppedOutputCharacters ?? 0;
+  const terminalHistoryTruncated = Boolean(terminalSnapshot?.historyTruncated);
   const terminalStatus = terminal?.status ?? terminalSnapshot?.status ?? null;
   const normalizedSearchQuery = searchQuery.trim();
   const searchMatchCount = useMemo(
@@ -607,18 +613,64 @@ export function TerminalPane({
     outputFrameRef.current = null;
     outputTimerRef.current = null;
     const instance = xtermRef.current;
-    const output = pendingOutputRef.current;
+    let output = pendingOutputRef.current;
 
-    if (!instance || !output) {
+    if (!instance || outputWriteInProgressRef.current || !output) {
       return;
     }
 
     pendingOutputRef.current = "";
-    writeOutput(instance, output);
+    const droppedOutputCharacters = droppedOutputCharactersRef.current;
+    const recoverOverloadedAlternateScreen =
+      droppedOutputCharacters > 0 && instance.buffer.active.type === "alternate";
+    droppedOutputCharactersRef.current = 0;
+
+    if (droppedOutputCharacters > 0) {
+      // CAN aborts a partially received ANSI escape sequence without resetting
+      // terminal modes. Full-screen TUIs are asked to repaint via PTY resize.
+      output = recoverOverloadedAlternateScreen
+        ? `\x18${output}`
+        : `\x18\r\n\x1b[33m[Portiva] 输出速度超过界面处理能力，已跳过约 ${droppedOutputCharacters.toLocaleString()} 个字符以保护会话。\x1b[0m\r\n${output}`;
+    }
+
+    outputWriteInProgressRef.current = true;
+    const writeRevision = outputWriteRevisionRef.current + 1;
+    outputWriteRevisionRef.current = writeRevision;
+
+    try {
+      writeOutput(instance, output, () => {
+        if (outputWriteRevisionRef.current !== writeRevision) {
+          return;
+        }
+
+        outputWriteInProgressRef.current = false;
+        if (recoverOverloadedAlternateScreen) {
+          truncatedHistoryRecoveryPendingRef.current = true;
+          window.requestAnimationFrame(() => {
+            if (xtermRef.current === instance) {
+              reportSizeRef.current?.(true, true);
+            }
+          });
+        }
+        if (pendingOutputRef.current) {
+          schedulePendingOutputFlush();
+        }
+      });
+    } catch (error) {
+      outputWriteInProgressRef.current = false;
+      console.warn("终端输出渲染失败", error);
+      if (pendingOutputRef.current) {
+        schedulePendingOutputFlush();
+      }
+    }
   };
 
   const schedulePendingOutputFlush = () => {
-    if (outputFrameRef.current !== null || outputTimerRef.current !== null) {
+    if (
+      outputWriteInProgressRef.current
+      || outputFrameRef.current !== null
+      || outputTimerRef.current !== null
+    ) {
       return;
     }
 
@@ -635,7 +687,9 @@ export function TerminalPane({
       return;
     }
 
-    pendingOutputRef.current += output;
+    const boundedOutput = appendBoundedTerminalOutput(pendingOutputRef.current, output);
+    pendingOutputRef.current = boundedOutput.value;
+    droppedOutputCharactersRef.current += boundedOutput.droppedCharacters;
     schedulePendingOutputFlush();
   };
 
@@ -1041,6 +1095,10 @@ export function TerminalPane({
     renderInitializedRef.current = false;
     replayingSnapshotRef.current = false;
     snapshotReplayRevisionRef.current += 1;
+    pendingOutputRef.current = "";
+    outputWriteInProgressRef.current = false;
+    outputWriteRevisionRef.current += 1;
+    droppedOutputCharactersRef.current = 0;
 
     const reportSize: ReportTerminalSize = (force = false, requestRedraw = false) => {
       const fitAddonInstance = fitAddonRef.current;
@@ -1201,6 +1259,9 @@ export function TerminalPane({
         outputTimerRef.current = null;
       }
       pendingOutputRef.current = "";
+      outputWriteInProgressRef.current = false;
+      outputWriteRevisionRef.current += 1;
+      droppedOutputCharactersRef.current = 0;
       if (xtermRef.current === instance) {
         xtermRef.current = null;
         fitAddonRef.current = null;
@@ -1306,9 +1367,7 @@ export function TerminalPane({
     }
 
     if (!renderInitializedRef.current) {
-      const recoverTruncatedHistory = Boolean(
-        terminalSnapshot?.historyTruncated && terminalStatus === "attached",
-      );
+      const recoverTruncatedHistory = terminalHistoryTruncated && terminalStatus === "attached";
       truncatedHistoryRecoveryPendingRef.current = recoverTruncatedHistory;
       replaySnapshot(instance, terminalBuffer, () => {
         if (!recoverTruncatedHistory || xtermRef.current !== instance) {
@@ -1327,6 +1386,9 @@ export function TerminalPane({
     }
 
     const previousBuffer = lastBufferRef.current;
+    if (terminalDroppedOutputCharacters > 0) {
+      droppedOutputCharactersRef.current += terminalDroppedOutputCharacters;
+    }
     if (terminalOutputChunk) {
       const appendedBuffer = `${previousBuffer}${terminalOutputChunk}`;
       // 预览缓冲区会从头部截断；只要新预览仍是累计输出的后缀，就可以安全地增量解析。
@@ -1350,6 +1412,10 @@ export function TerminalPane({
       }
     }
 
+    if (terminalDroppedOutputCharacters > 0) {
+      enqueueOutput("\x18");
+    }
+
     if (terminalBuffer !== previousBuffer) {
       if (terminalStatus === "attached") {
         // A snapshot without new output only synchronizes the retained raw
@@ -1371,7 +1437,14 @@ export function TerminalPane({
       replaySnapshot(instance, terminalBuffer);
       lastBufferRef.current = terminalBuffer;
     }
-  }, [terminal?.id, terminalBuffer, terminalOutputChunk, terminalSnapshot, terminalStatus]);
+  }, [
+    terminal?.id,
+    terminalBuffer,
+    terminalDroppedOutputCharacters,
+    terminalHistoryTruncated,
+    terminalOutputChunk,
+    terminalStatus,
+  ]);
 
   useEffect(() => {
     if (lastClearRevisionRef.current === clearRevision) {

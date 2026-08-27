@@ -24,7 +24,7 @@ use crate::security::fingerprint::display_fingerprint;
 use crate::services::known_hosts_store::{KnownHostDecision, KnownHostsStore};
 use crate::services::network_proxy_service::connect_tcp;
 use crate::services::terminal_service::{
-    drain_utf8_terminal_output, terminal_disconnect_notice, TerminalService,
+    drain_utf8_terminal_output_chunk, terminal_disconnect_notice, TerminalService,
 };
 use crate::utils::remote_path::{join_remote_path, normalize_remote_path};
 
@@ -1674,6 +1674,22 @@ fn spawn_pty_output_reader(
         let mut disconnect_reason = "SSH 终端通道已关闭".to_string();
 
         loop {
+            if pending_bytes.len() >= TERMINAL_OUTPUT_MAX_CHUNK_BYTES {
+                let remaining_delay =
+                    TERMINAL_OUTPUT_FLUSH_INTERVAL.saturating_sub(last_flush.elapsed());
+                if !remaining_delay.is_zero() {
+                    tokio::time::sleep(remaining_delay).await;
+                }
+                flush_terminal_output(
+                    &app_handle,
+                    &terminal_id,
+                    &mut pending_bytes,
+                    &mut last_flush,
+                    false,
+                );
+                continue;
+            }
+
             tokio::select! {
                 message = read_half.wait() => {
                     let Some(message) = message else {
@@ -1683,9 +1699,7 @@ fn spawn_pty_output_reader(
                     match message {
                         ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
                             pending_bytes.extend_from_slice(&data);
-                            if pending_bytes.len() >= TERMINAL_OUTPUT_MAX_CHUNK_BYTES
-                                || last_flush.elapsed() >= TERMINAL_OUTPUT_FLUSH_INTERVAL
-                            {
+                            if last_flush.elapsed() >= TERMINAL_OUTPUT_FLUSH_INTERVAL {
                                 flush_terminal_output(
                                     &app_handle,
                                     &terminal_id,
@@ -1742,7 +1756,8 @@ fn flush_terminal_output(
         return;
     }
 
-    let output = drain_utf8_terminal_output(pending_bytes, force);
+    let output =
+        drain_utf8_terminal_output_chunk(pending_bytes, TERMINAL_OUTPUT_MAX_CHUNK_BYTES, force);
     if output.is_empty() {
         return;
     }
