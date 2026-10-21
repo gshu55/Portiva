@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { SftpProfile, SshProfile } from "../../../shared/types";
-import { IconButton, Select, TextInput, Toggle } from "../../../shared/ui";
+import { Button, IconButton, Select, TextInput, Toggle } from "../../../shared/ui";
 
 type SshCredentialProfile = SshProfile | SftpProfile;
 
@@ -28,6 +29,8 @@ export function SshProfileForm({
   secretLoading = false,
 }: SshProfileFormProps) {
   const [secretVisible, setSecretVisible] = useState(false);
+  const [privateKeySelectionError, setPrivateKeySelectionError] = useState<string | null>(null);
+  const [selectingPrivateKey, setSelectingPrivateKey] = useState(false);
   const update = (patch: Partial<SshCredentialProfile>) =>
     onChange({ ...profile, ...patch } as SshCredentialProfile);
 
@@ -40,6 +43,36 @@ export function SshProfileForm({
       setSecretVisible(false);
     }
   }, [secret]);
+
+  useEffect(() => {
+    setPrivateKeySelectionError(null);
+    setSelectingPrivateKey(false);
+  }, [profile.authType, profile.id]);
+
+  const selectPrivateKey = async () => {
+    if (selectingPrivateKey) {
+      return;
+    }
+
+    setSelectingPrivateKey(true);
+    setPrivateKeySelectionError(null);
+
+    try {
+      const selectedPath = await openDialog({
+        directory: false,
+        multiple: false,
+        title: "选择 SSH 私钥文件",
+      });
+
+      if (typeof selectedPath === "string") {
+        update({ privateKeyPath: selectedPath });
+      }
+    } catch (error) {
+      setPrivateKeySelectionError(`无法选择私钥文件：${String(error)}`);
+    } finally {
+      setSelectingPrivateKey(false);
+    }
+  };
 
   const passwordPlaceholder = secretLoading
     ? "正在读取已保存密码…"
@@ -123,10 +156,32 @@ export function SshProfileForm({
         <>
           <label>
             私钥路径
-            <TextInput
-              value={profile.privateKeyPath ?? ""}
-              onChange={(event) => update({ privateKeyPath: event.target.value })}
-            />
+            <span className="private-key-field-control">
+              <TextInput
+                aria-label="私钥路径"
+                placeholder="选择或输入私钥文件路径"
+                value={profile.privateKeyPath ?? ""}
+                onChange={(event) => {
+                  setPrivateKeySelectionError(null);
+                  update({ privateKeyPath: event.target.value });
+                }}
+              />
+              <Button
+                className="private-key-select-button"
+                disabled={selectingPrivateKey}
+                icon="folder-open"
+                size="sm"
+                title="选择 SSH 私钥文件"
+                onClick={() => void selectPrivateKey()}
+              >
+                {selectingPrivateKey ? "选择中" : "选择文件"}
+              </Button>
+            </span>
+            {privateKeySelectionError ? (
+              <span className="private-key-selection-error" role="alert">
+                {privateKeySelectionError}
+              </span>
+            ) : null}
           </label>
           {secretInput("密钥口令", "off")}
         </>

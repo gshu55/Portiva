@@ -769,6 +769,29 @@
   min-width: 0;
 }
 
+.profile-dialog .private-key-field-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1-5, 6px);
+  align-items: center;
+  min-width: 0;
+}
+
+.profile-dialog .private-key-field-control .ui-field {
+  min-width: 0;
+}
+
+.profile-dialog .private-key-select-button.ui-button {
+  min-width: 92px;
+  white-space: nowrap;
+}
+
+.profile-dialog .private-key-selection-error {
+  color: var(--danger);
+  font-size: var(--app-font-size-11, 11px);
+  line-height: 1.35;
+}
+
 .profile-dialog .secret-field-visibility.ui-button {
   --icon-button-size: 30px;
   border: 1px solid var(--border-subtle);

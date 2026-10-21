@@ -157,6 +157,7 @@ pub fn run() {
     let tray_available_for_setup = Arc::clone(&tray_available);
     let tray_available_for_window = Arc::clone(&tray_available);
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
