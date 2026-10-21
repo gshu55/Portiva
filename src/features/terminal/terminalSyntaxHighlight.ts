@@ -257,6 +257,8 @@ function addMatches(text: string, pattern: RegExp, tone: TerminalSyntaxTone, spa
     if (!overlapsAny(start, end, blocked)) {
       spans.push({ end, start, tone });
     }
+    // Non-global patterns always return the same match; they are single-match rules.
+    if (!pattern.global && !pattern.sticky) break;
     if (match[0].length === 0) pattern.lastIndex += 1;
   }
 }
