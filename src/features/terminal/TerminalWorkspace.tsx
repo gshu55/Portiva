@@ -37,6 +37,7 @@ import { SerialTerminalPanel } from "./SerialTerminalPanel";
 import { SshTerminalGrid } from "./SshTerminalGrid";
 import { SshTerminalWorkspace } from "./SshTerminalWorkspace";
 import { useSavedSshCommands } from "./useSavedSshCommands";
+import { useTerminalPanelPreferences } from "./useTerminalPanelPreferences";
 import { TabContextMenu } from "./TabContextMenu";
 import { TerminalPane } from "./TerminalPane";
 
@@ -100,7 +101,6 @@ interface SftpSidePanelRenderProps {
 }
 
 const getSessionTabId = (tab: WorkspaceSessionTab) => tab.id ?? tab.connection.id;
-const closedTerminalPanelVisibility = { command: false, status: false } as const;
 const terminalActivityHoldMs = 700;
 const tabPointerDragThresholdPx = 6;
 
@@ -342,11 +342,22 @@ export function TerminalWorkspace({
   const [pendingSshSplitByTab, setPendingSshSplitByTab] = useState<Record<string, string>>({});
   const [sftpPanelRatio, setSftpPanelRatio] = useState(0.22);
   const [sftpPanelSide, setSftpPanelSide] = useState<"left" | "right">("left");
-  const [sshSftpPanelVisible, setSshSftpPanelVisible] = useState(true);
+  const [panelPreferences, setPanelPreferences] = useTerminalPanelPreferences();
+  const sshSftpPanelVisible = panelPreferences.sftp;
   const [terminalPanelVisibilityByTab, setTerminalPanelVisibilityByTab] = useState<Record<
     string,
     { command: boolean; status: boolean }
   >>({});
+  const toggleTerminalPanel = (tabId: string, panel: "command" | "status") => {
+    const current = terminalPanelVisibilityByTab[tabId] ?? panelPreferences;
+    const visible = !current[panel];
+    setTerminalPanelVisibilityByTab((tabs) => ({
+      ...tabs,
+      [tabId]: { command: current.command, status: current.status, [panel]: visible },
+    }));
+    // Remember defaults across sessions without persisting temporary tab IDs.
+    setPanelPreferences((preferences) => ({ ...preferences, [panel]: visible }));
+  };
   const [commandHistoryByTab, setCommandHistoryByTab] = useState<Record<string, string[]>>({});
   const savedSshCommands = useSavedSshCommands();
   const tabBarRef = useRef<HTMLDivElement>(null);
@@ -661,7 +672,7 @@ export function TerminalWorkspace({
     const isWslTerminal = tab.connection.transport?.kind === "wsl";
     // SSH 分屏共享一组页面级面板开关；面板只挂载在当前聚焦的终端上。
     const panelStateId = isSshTerminal ? ownerTabId : tabId;
-    const panelVisibility = terminalPanelVisibilityByTab[panelStateId] ?? closedTerminalPanelVisibility;
+    const panelVisibility = terminalPanelVisibilityByTab[panelStateId] ?? panelPreferences;
     const renderSharedPanels = !isSshTerminal || isActivePane;
     const sftpPanelAvailable = Boolean(sftpSidePanel && isActivePane && sftpAllowed);
     const showSftpPanel = sftpPanelAvailable && sshSftpPanelVisible && embedSftpPanel;
@@ -692,21 +703,9 @@ export function TerminalWorkspace({
           recordCommand(tabId, command);
           void onSendTerminalData(`${command}\r`, tab.terminal.id);
         }}
-        onToggleCommandPanel={() => setTerminalPanelVisibilityByTab((current) => ({
-          ...current,
-          [panelStateId]: {
-            command: !(current[panelStateId]?.command ?? false),
-            status: current[panelStateId]?.status ?? false,
-          },
-        }))}
-        onToggleSftpPanel={() => setSshSftpPanelVisible((current) => !current)}
-        onToggleStatusPanel={() => setTerminalPanelVisibilityByTab((current) => ({
-          ...current,
-          [panelStateId]: {
-            command: current[panelStateId]?.command ?? false,
-            status: !(current[panelStateId]?.status ?? false),
-          },
-        }))}
+        onToggleCommandPanel={() => toggleTerminalPanel(panelStateId, "command")}
+        onToggleSftpPanel={() => setPanelPreferences((current) => ({ ...current, sftp: !current.sftp }))}
+        onToggleStatusPanel={() => toggleTerminalPanel(panelStateId, "status")}
         onUpdateSavedCommand={savedSshCommands.updateCommand}
       >
         {terminalPane}
@@ -736,7 +735,7 @@ export function TerminalWorkspace({
       ? rememberedTerminalId
       : panes[0].terminal.id;
     const activeTerminalPane = panes.find((pane) => pane.terminal.id === activeTerminalId) ?? panes[0];
-    const panelVisibility = terminalPanelVisibilityByTab[tabId] ?? closedTerminalPanelVisibility;
+    const panelVisibility = terminalPanelVisibilityByTab[tabId] ?? panelPreferences;
     const pendingTerminalId = pendingSshSplitByTab[tabId] ?? null;
 
     const terminalGrid = (
@@ -823,21 +822,9 @@ export function TerminalWorkspace({
           recordCommand(tabId, command);
           void onSendTerminalData(`${command}\r`, activeTerminalId);
         }}
-        onToggleCommandPanel={() => setTerminalPanelVisibilityByTab((current) => ({
-          ...current,
-          [tabId]: {
-            command: !(current[tabId]?.command ?? false),
-            status: current[tabId]?.status ?? false,
-          },
-        }))}
-        onToggleSftpPanel={() => setSshSftpPanelVisible((current) => !current)}
-        onToggleStatusPanel={() => setTerminalPanelVisibilityByTab((current) => ({
-          ...current,
-          [tabId]: {
-            command: current[tabId]?.command ?? false,
-            status: !(current[tabId]?.status ?? false),
-          },
-        }))}
+        onToggleCommandPanel={() => toggleTerminalPanel(tabId, "command")}
+        onToggleSftpPanel={() => setPanelPreferences((current) => ({ ...current, sftp: !current.sftp }))}
+        onToggleStatusPanel={() => toggleTerminalPanel(tabId, "status")}
         onUpdateSavedCommand={savedSshCommands.updateCommand}
       >
         {terminalGrid}
