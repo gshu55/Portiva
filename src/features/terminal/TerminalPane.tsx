@@ -17,6 +17,7 @@ import { appendBoundedTerminalOutput } from "../../shared/terminalOutputBuffer";
 import { parseOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "../../shared/terminalFonts";
 import { TerminalSemanticHighlighter } from "./terminalSemanticHighlighter";
+import { installTerminalIme } from "./terminalIme";
 
 interface TerminalPaneProps {
   autoScroll?: boolean;
@@ -922,6 +923,7 @@ export function TerminalPane({
     instance.loadAddon(searchAddon);
     instance.loadAddon(serializeAddon);
     instance.open(container);
+    const disposeIme = installTerminalIme(instance);
     const workingDirectoryHandler = instance.parser.registerOscHandler(7, (data) => {
       const path = parseOsc7WorkingDirectory(data);
 
@@ -1005,6 +1007,10 @@ export function TerminalPane({
     });
     const semanticScrollHandler = instance.onScroll(() => semanticHighlighter.schedule());
     instance.attachCustomKeyEventHandler((event) => {
+      if (event.isComposing || event.keyCode === 229) {
+        return true;
+      }
+
       if (event.type === "keydown" && isTerminalSearchShortcut(event)) {
         event.preventDefault();
         openSearchRef.current();
@@ -1227,6 +1233,7 @@ export function TerminalPane({
 
     return () => {
       resizeObserver.disconnect();
+      disposeIme();
       workingDirectoryHandler.dispose();
       foregroundQueryHandler.dispose();
       backgroundQueryHandler.dispose();

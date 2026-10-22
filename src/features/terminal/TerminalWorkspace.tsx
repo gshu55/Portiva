@@ -1028,7 +1028,7 @@ export function TerminalWorkspace({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
         onToggleFullscreen();
       }

@@ -18,6 +18,10 @@ export function useKeyboardShortcuts(settings: AppSettings, handlers: ShortcutHa
     const keymap = settings.keymap;
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) {
+        return;
+      }
+
       if (isBrowserReloadShortcut(event)) {
         if (isTerminalCtrlR(event)) {
           return;
