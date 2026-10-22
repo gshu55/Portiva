@@ -1050,6 +1050,32 @@
 
 }
 
+.terminal-clipboard-error {
+  position: absolute;
+  right: var(--space-2-5, 10px);
+  bottom: var(--space-2, 8px);
+  z-index: 31;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  max-width: calc(100% - var(--space-5, 20px));
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--control-radius);
+  background: var(--panel-bg);
+  color: var(--text-strong);
+  font-size: var(--app-font-size-12, 12px);
+}
+
+.terminal-clipboard-error button {
+  display: grid;
+  place-items: center;
+  padding: var(--space-1, 4px);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
 .terminal-context-menu {
   position: fixed;
   z-index: 30;

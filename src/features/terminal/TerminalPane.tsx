@@ -18,6 +18,12 @@ import { parseOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "../../shared/terminalFonts";
 import { TerminalSemanticHighlighter } from "./terminalSemanticHighlighter";
 import { installTerminalIme } from "./terminalIme";
+import {
+  captureTerminalCopy,
+  isTerminalCopyShortcut,
+  writeTerminalCopy,
+  type TerminalCopyPayload,
+} from "./terminalClipboard";
 
 interface TerminalPaneProps {
   autoScroll?: boolean;
@@ -296,20 +302,6 @@ function isTerminalSearchShortcut(event: KeyboardEvent) {
   return event.metaKey || (event.ctrlKey && event.shiftKey);
 }
 
-function readTerminalPlainText(instance: Terminal | null) {
-  if (!instance) {
-    return "";
-  }
-
-  const buffer = instance.buffer.active;
-  const lines: string[] = [];
-  for (let index = 0; index < buffer.length; index += 1) {
-    lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
-  }
-
-  return lines.join("\n");
-}
-
 function isWholeWordMatch(source: string, index: number, termLength: number) {
   const before = index === 0 ? "" : source[index - 1];
   const afterIndex = index + termLength;
@@ -456,6 +448,9 @@ export function TerminalPane({
   const titleChangeRef = useRef(onTitleChange);
   const workingDirectoryChangeRef = useRef(onWorkingDirectoryChange);
   const openSearchRef = useRef<() => void>(() => undefined);
+  const copySelectionRef = useRef<() => void>(() => undefined);
+  const rightClickCopyRef = useRef<TerminalCopyPayload | null>(null);
+  const rightClickCapturedRef = useRef(false);
   const reportSizeWhenVisibleRef = useRef(reportSizeWhenVisible);
   const reportSizeRef = useRef<ReportTerminalSize | null>(null);
   const resizeTimerRef = useRef<number | null>(null);
@@ -467,6 +462,7 @@ export function TerminalPane({
   );
   const activeMainstreamCliRef = useRef<MainstreamCli | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [clipboardError, setClipboardError] = useState<string | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
@@ -877,6 +873,10 @@ export function TerminalPane({
     const container = containerRef.current;
 
     commandDraftRef.current = "";
+    rightClickCopyRef.current = null;
+    rightClickCapturedRef.current = false;
+    setContextMenu(null);
+    setClipboardError(null);
     activeMainstreamCliRef.current = null;
     setAlternateScreenCli(null);
     resizeRequestRevisionRef.current += 1;
@@ -1009,6 +1009,13 @@ export function TerminalPane({
     instance.attachCustomKeyEventHandler((event) => {
       if (event.isComposing || event.keyCode === 229) {
         return true;
+      }
+
+      if (isTerminalCopyShortcut(event, instance.hasSelection())) {
+        event.preventDefault();
+        event.stopPropagation();
+        copySelectionRef.current();
+        return false;
       }
 
       if (event.type === "keydown" && isTerminalSearchShortcut(event)) {
@@ -1472,74 +1479,40 @@ export function TerminalPane({
     lastBufferRef.current = terminalBuffer;
   }, [clearRevision, terminalBuffer]);
 
-  const closeContextMenu = () => setContextMenu(null);
+  const closeContextMenu = () => {
+    setContextMenu(null);
+    rightClickCopyRef.current = null;
+    rightClickCapturedRef.current = false;
+  };
 
-  const copyTerminalText = async () => {
-    const selection = xtermRef.current?.getSelection() ?? "";
-    const text = selection || readTerminalPlainText(xtermRef.current);
+  const captureCopy = (includeBuffer = false) => captureTerminalCopy(
+    xtermRef.current,
+    serializeAddonRef.current,
+    { includeBuffer, richText: terminalCopyRichText },
+  );
 
-    if (!text) {
-      closeContextMenu();
-      return;
-    }
-
+  const copyCapturedText = async (payload: TerminalCopyPayload | null) => {
+    closeContextMenu();
+    if (!payload) return;
+    setClipboardError(null);
     try {
-      if (terminalCopyRichText) {
-        const html = serializeAddonRef.current?.serializeAsHTML({
-          includeGlobalBackground: true,
-          onlySelection: Boolean(selection),
-        });
-
-        if (html) {
-          await writeClipboardHtml(html, text);
-          return;
-        }
-      }
-
-      await writeClipboardText(text);
+      await writeTerminalCopy(payload, { writeText: writeClipboardText, writeHtml: writeClipboardHtml });
     } catch (error) {
       console.warn("复制终端内容失败", error);
-    } finally {
-      closeContextMenu();
+      setClipboardError("复制失败，请稍后重试。");
     }
   };
 
-  const copySelectedTerminalText = async (selection: string) => {
-    try {
-      if (terminalCopyRichText) {
-        const html = serializeAddonRef.current?.serializeAsHTML({
-          includeGlobalBackground: true,
-          onlySelection: true,
-        });
+  const copyTerminalText = () => copyCapturedText(rightClickCopyRef.current ?? captureCopy(true));
 
-        if (html) {
-          await writeClipboardHtml(html, selection);
-          return;
-        }
-      }
-
-      await writeClipboardText(selection);
-    } catch (error) {
-      console.warn("复制终端选中内容失败", error);
-    } finally {
-      closeContextMenu();
-    }
+  const copyTerminalPlainText = () => {
+    const payload = rightClickCopyRef.current ?? captureCopy(true);
+    return copyCapturedText(payload ? { text: payload.text } : null);
   };
 
-  const copyTerminalPlainText = async () => {
-    const selection = xtermRef.current?.getSelection() ?? "";
-    const text = selection || readTerminalPlainText(xtermRef.current);
-
-    try {
-      if (text) {
-        await writeClipboardText(text);
-      }
-    } catch (error) {
-      console.warn("复制终端内容失败", error);
-    } finally {
-      closeContextMenu();
-    }
-  };
+  useEffect(() => {
+    copySelectionRef.current = () => void copyCapturedText(captureCopy());
+  });
 
   const pasteClipboardText = async () => {
     if (!terminal || terminalStatus === "closed") {
@@ -1558,10 +1531,10 @@ export function TerminalPane({
   };
 
   const handleSmartCopyOrPaste = async () => {
-    const selection = xtermRef.current?.getSelection() ?? "";
+    const selection = rightClickCopyRef.current;
 
     if (selection) {
-      await copySelectedTerminalText(selection);
+      await copyCapturedText(selection);
       return;
     }
 
@@ -1595,7 +1568,7 @@ export function TerminalPane({
       onClick={(event) => {
         if (
           (event.target as HTMLElement).closest(
-            ".terminal-search-bar, .terminal-paste-confirm, .terminal-tui-scrollback-hint",
+            ".terminal-search-bar, .terminal-paste-confirm, .terminal-tui-scrollback-hint, .terminal-context-menu, .terminal-clipboard-error",
           )
         ) {
           return;
@@ -1607,20 +1580,47 @@ export function TerminalPane({
       onMouseDownCapture={(event) => {
         if (
           (event.target as HTMLElement).closest(
-            ".terminal-search-bar, .terminal-paste-confirm, .terminal-tui-scrollback-hint",
+            ".terminal-search-bar, .terminal-paste-confirm, .terminal-tui-scrollback-hint, .terminal-context-menu, .terminal-clipboard-error",
           )
         ) {
           return;
         }
 
+        if (event.button === 2 && terminalRightClickBehavior !== "disabled") {
+          rightClickCopyRef.current = captureCopy(terminalRightClickBehavior === "context-menu");
+          rightClickCapturedRef.current = true;
+          // SGR mouse reports are user input to xterm and clear its selection.
+          // A right click owned by Portiva must never reach the foreground TUI.
+          event.preventDefault();
+          event.stopPropagation();
+        }
         xtermRef.current?.focus();
       }}
-      onContextMenu={(event) => {
+      onMouseUpCapture={(event) => {
+        if (event.button === 2 && terminalRightClickBehavior !== "disabled") {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+      onMouseMoveCapture={(event) => {
+        if (event.buttons === 0 && xtermRef.current?.hasSelection()) {
+          // Any-motion mouse mode also clears selection on hover, before a
+          // right click can capture it. Keep selected text available to copy.
+          event.stopPropagation();
+        }
+      }}
+      onContextMenuCapture={(event) => {
         event.preventDefault();
+        event.stopPropagation();
         if (terminalRightClickBehavior === "disabled") {
           closeContextMenu();
           return;
         }
+
+        if (!rightClickCapturedRef.current) {
+          rightClickCopyRef.current = captureCopy(terminalRightClickBehavior === "context-menu");
+        }
+        rightClickCapturedRef.current = false;
 
         if (terminalRightClickBehavior === "paste") {
           void pasteClipboardText();
@@ -1636,6 +1636,14 @@ export function TerminalPane({
       }}
     >
       <div className="xterm-host" ref={containerRef} />
+      {clipboardError ? (
+        <div className="terminal-clipboard-error" role="alert">
+          <span>{clipboardError}</span>
+          <button aria-label="关闭复制提示" onClick={() => setClipboardError(null)} type="button">
+            <Icon name="x" />
+          </button>
+        </div>
+      ) : null}
       {showTuiScrollbackHint && terminal ? (
         <aside className="terminal-tui-scrollback-hint" role="status">
           <span aria-hidden="true" className="terminal-tui-scrollback-hint-indicator" />
