@@ -606,20 +606,36 @@ button > .icon:only-child {
   min-height: 480px;
 }
 
+.global-notices,
 .global-notice {
   position: fixed;
   right: 14px;
   bottom: 14px;
   z-index: 140;
+  width: min(420px, calc(100vw - 28px));
+}
+
+.global-notices {
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.global-notice {
   display: grid;
   grid-template-columns: 4px minmax(0, 1fr) auto;
   align-items: stretch;
-  width: min(420px, calc(100vw - 28px));
   min-height: 42px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border-panel) 88%, transparent);
   background: color-mix(in srgb, var(--panel-bg) 94%, var(--workspace-bg));
   box-shadow: 0 18px 54px rgba(0, 0, 0, 0.38);
+  pointer-events: auto;
+}
+
+.global-notices > .global-notice {
+  position: static;
+  width: auto;
 }
 
 .global-notice-mark {

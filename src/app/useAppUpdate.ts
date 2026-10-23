@@ -14,7 +14,6 @@ export type AppUpdatePhase =
 export interface AppUpdateState {
   attempt: number | null;
   maxAttempts: number | null;
-  message: string | null;
   phase: AppUpdatePhase;
   progress: number | null;
   version: string | null;
@@ -40,13 +39,12 @@ const updateProgressEvent = "portiva://update-progress";
 const initialUpdateState: AppUpdateState = {
   attempt: null,
   maxAttempts: null,
-  message: null,
   phase: "idle",
   progress: null,
   version: null,
 };
 
-export function useAppUpdate(): AppUpdateController {
+export function useAppUpdate(onNotice: (message: string) => void): AppUpdateController {
   const availableUpdateRef = useRef<string | null>(null);
   const downloadedBytesRef = useRef(0);
   const operationRef = useRef<"checking" | "updating" | null>(null);
@@ -66,7 +64,6 @@ export function useAppUpdate(): AppUpdateController {
           ...current,
           attempt: progressEvent.attempt,
           maxAttempts: progressEvent.maxAttempts,
-          message: null,
           phase: "downloading",
           progress: null,
         }));
@@ -117,12 +114,14 @@ export function useAppUpdate(): AppUpdateController {
 
     operationRef.current = "checking";
     setState({ ...initialUpdateState, phase: "checking" });
+    onNotice("正在检查更新…");
 
     try {
       availableUpdateRef.current = null;
       const update = await appUpdateCheck();
       if (!update) {
         setState({ ...initialUpdateState, phase: "current" });
+        onNotice("当前已是最新版本。");
         return;
       }
 
@@ -132,16 +131,17 @@ export function useAppUpdate(): AppUpdateController {
         phase: "available",
         version: update.version,
       });
+      onNotice(`发现新版本 v${update.version}，可点击更新按钮安装。`);
     } catch (error) {
       setState({
         ...initialUpdateState,
-        message: formatUpdateError(error, "检查更新失败，请稍后重试。"),
         phase: "error",
       });
+      onNotice(formatUpdateError(error, "检查更新失败，请稍后重试。"));
     } finally {
       operationRef.current = null;
     }
-  }, []);
+  }, [onNotice]);
 
   const installAvailableUpdate = useCallback(async () => {
     const updateVersion = availableUpdateRef.current;
@@ -154,7 +154,6 @@ export function useAppUpdate(): AppUpdateController {
     totalBytesRef.current = null;
     setState((current) => ({
       ...current,
-      message: null,
       phase: "downloading",
       progress: null,
     }));
@@ -166,13 +165,13 @@ export function useAppUpdate(): AppUpdateController {
     } catch (error) {
       setState((current) => ({
         ...current,
-        message: formatUpdateError(error, "更新下载或安装失败，请稍后重试。"),
         phase: "error",
       }));
+      onNotice(formatUpdateError(error, "更新下载或安装失败，请稍后重试。"));
     } finally {
       operationRef.current = null;
     }
-  }, []);
+  }, [onNotice]);
 
   const busy = state.phase === "checking" || state.phase === "downloading" || state.phase === "installing";
 

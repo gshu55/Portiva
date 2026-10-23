@@ -4,16 +4,17 @@ import { Icon } from "../shared/Icon";
 interface GlobalNoticeProps {
   message: string;
   durationMs?: number;
+  showInfo?: boolean;
 }
 
 function noticeTone(message: string) {
   return /失败|错误|不可用|无法|需要|未找到|denied|error|failed/i.test(message) ? "error" : "info";
 }
 
-export function GlobalNotice({ durationMs = 3600, message }: GlobalNoticeProps) {
+export function GlobalNotice({ durationMs = 3600, message, showInfo = false }: GlobalNoticeProps) {
   const [visible, setVisible] = useState(Boolean(message));
   const tone = useMemo(() => noticeTone(message), [message]);
-  const shouldShow = tone === "error";
+  const shouldShow = showInfo || tone === "error";
 
   useEffect(() => {
     if (!message || !shouldShow) {

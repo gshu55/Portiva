@@ -229,7 +229,11 @@ function isSessionWindowLabel(label: string) {
 
 function App() {
   const workspace = usePortivaWorkspace();
-  const appUpdate = useAppUpdate();
+  const [updateNotice, setUpdateNotice] = useState({ id: 0, message: "" });
+  const reportUpdateNotice = useCallback((message: string) => {
+    setUpdateNotice((current) => ({ id: current.id + 1, message }));
+  }, []);
+  const appUpdate = useAppUpdate(reportUpdateNotice);
   const [profileDialog, setProfileDialog] = useState<{
     forceSecretEntry?: boolean;
     mode: "create" | "edit";
@@ -1880,7 +1884,10 @@ function App() {
 	          />
 	        </div>
 	      </section>
-	      <GlobalNotice message={workspace.workspaceMessage} />
+	      <div className="global-notices">
+	        <GlobalNotice message={workspace.workspaceMessage} />
+	        <GlobalNotice key={updateNotice.id} message={updateNotice.message} showInfo />
+	      </div>
 	      <ProfileDialogHost
         dialog={profileDialog}
         reconnectTabId={reconnectTabId}

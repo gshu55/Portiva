@@ -46,7 +46,6 @@ export function ApplicationSettings({ appUpdate }: ApplicationSettingsProps) {
   const updateAction = updateState.phase === "available" || canRetryDownload
     ? installAvailableUpdate
     : checkForUpdates;
-  const updateDisabled = updateBusy || updateState.phase === "current";
 
   return (
     <section className="settings-panel application-settings">
@@ -57,20 +56,15 @@ export function ApplicationSettings({ appUpdate }: ApplicationSettingsProps) {
             {loading || metadata?.version ? <span>{loading ? "…" : `v${metadata?.version}`}</span> : null}
           </div>
           <Button
-            aria-live="polite"
+            aria-busy={updateBusy}
             className="application-update-button"
-            disabled={updateDisabled}
+            disabled={updateBusy}
             onClick={() => void updateAction()}
             tone={updateState.phase === "available" || canRetryDownload ? "primary" : "muted"}
           >
             {updateButtonLabel}
           </Button>
         </div>
-        {updateState.message ? (
-          <p className="application-update-error profile-dialog-note danger" role="alert">
-            {updateState.message}
-          </p>
-        ) : null}
       </section>
       <section className="settings-block application-settings-block application-resources-block">
         <SettingsSectionHeader title="相关声明" />
@@ -94,10 +88,6 @@ export function ApplicationSettings({ appUpdate }: ApplicationSettingsProps) {
 
 function getUpdateButtonLabel(state: AppUpdateState) {
   switch (state.phase) {
-    case "checking":
-      return "正在检查";
-    case "current":
-      return "已是最新";
     case "available":
       return state.version ? `更新至 v${state.version}` : "安装更新";
     case "downloading":
@@ -109,7 +99,7 @@ function getUpdateButtonLabel(state: AppUpdateState) {
     case "installing":
       return "正在安装";
     case "error":
-      return state.version ? "重试下载" : "重试检查";
+      return state.version ? "重试下载" : "检查更新";
     default:
       return "检查更新";
   }
