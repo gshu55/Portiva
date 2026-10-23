@@ -31,11 +31,6 @@ jobs:
             target: aarch64-apple-darwin
             args: --bundles app,dmg --target aarch64-apple-darwin
             updaterArtifact: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
-          - name: macOS Intel
-            platform: macos-latest
-            target: x86_64-apple-darwin
-            args: --bundles app,dmg --target x86_64-apple-darwin
-            updaterArtifact: src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
 
     runs-on: ${{ matrix.platform }}
 
