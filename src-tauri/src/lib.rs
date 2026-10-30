@@ -3,6 +3,8 @@ mod domain;
 mod protocol;
 mod security;
 mod services;
+#[cfg(any(test, target_os = "linux", target_os = "macos"))]
+mod single_instance_guard;
 mod utils;
 
 use std::sync::{
@@ -156,7 +158,14 @@ pub fn run() {
     let tray_available = Arc::new(AtomicBool::new(false));
     let tray_available_for_setup = Arc::clone(&tray_available);
     let tray_available_for_window = Arc::clone(&tray_available);
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // This plugin must be registered before other plugins and application setup.
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        show_portiva_windows(app);
+    }));
+
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -181,6 +190,9 @@ pub fn run() {
         .manage(services::tunnel_service::TunnelService::default())
         .manage(services::serial_service::SerialService::default())
         .setup(move |app| {
+            // Keep one process even if the platform plugin cannot enforce it.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            single_instance_guard::acquire_or_exit(app)?;
             match setup_system_tray(app) {
                 Ok(()) => tray_available_for_setup.store(true, Ordering::Release),
                 Err(error) => eprintln!("failed to create Portiva system tray: {error}"),
@@ -308,6 +320,10 @@ pub fn run() {
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
             destroy_detached_terminal_windows(app_handle);
+        }
+        #[cfg(target_os = "macos")]
+        if matches!(event, tauri::RunEvent::Reopen { .. }) {
+            show_portiva_windows(app_handle);
         }
     });
 }
