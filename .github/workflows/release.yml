@@ -110,3 +110,32 @@ jobs:
             throw "Updater artifact was not generated: $env:UPDATER_ARTIFACT_GLOB"
           }
           $artifacts | ForEach-Object { Write-Host "Verified updater artifact: $($_.Name)" }
+
+  finalize-updater:
+    name: Finalize updater manifest
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Use direct release downloads in updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+            echo "Release tag does not match package version" >&2
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/release.json"
+          mkdir -p "$RUNNER_TEMP/updater"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir "$RUNNER_TEMP/updater"
+          node scripts/normalize-updater-manifest.mjs "$RUNNER_TEMP/updater/latest.json" "$RUNNER_TEMP/release.json" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/latest.json"
+          gh release upload "$TAG" "$RUNNER_TEMP/latest.json" --repo "$GITHUB_REPOSITORY" --clobber
