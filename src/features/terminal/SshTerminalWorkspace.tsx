@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { formatBytes, formatUptime, formatUptimeDays } from "../../shared/format";
 import { Icon, type IconName } from "../../shared/Icon";
-import { sshCollectHostOverview, wslCollectHostOverview } from "../../shared/ipc/commands";
+import { sshCollectHostOverview, terminalX11Available, wslCollectHostOverview } from "../../shared/ipc/commands";
 import { exponentialBackoffDelay } from "../../shared/retryBackoff";
 import type { DiskPartitionOverview, SshHostOverview, WslHostOverview } from "../../shared/types";
 import { Card, ConfirmDialog, IconButton, SegmentedControl, TextInput, VirtualList } from "../../shared/ui";
@@ -27,10 +27,13 @@ interface SshTerminalWorkspaceProps {
   sftpPanelAvailable: boolean;
   sftpPanelVisible: boolean;
   statusPanelVisible: boolean;
+  terminalId?: string;
   terminalReady: boolean;
+  x11Forwarding?: boolean;
   onAddSavedCommand: (command: string) => void;
   onRemoveSavedCommand: (commandId: string) => void;
   onRunCommand: (command: string) => void;
+  onSetX11Forwarding?: (enabled: boolean) => Promise<void>;
   onToggleCommandPanel: () => void;
   onToggleSftpPanel: () => void;
   onToggleStatusPanel: () => void;
@@ -408,10 +411,13 @@ export function SshTerminalWorkspace({
   sftpPanelAvailable,
   sftpPanelVisible,
   statusPanelVisible,
+  terminalId,
   terminalReady,
+  x11Forwarding = false,
   onAddSavedCommand,
   onRemoveSavedCommand,
   onRunCommand,
+  onSetX11Forwarding,
   onToggleCommandPanel,
   onToggleSftpPanel,
   onToggleStatusPanel,
@@ -422,6 +428,48 @@ export function SshTerminalWorkspace({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<SavedSshCommand | null>(null);
+  const [x11Confirmation, setX11Confirmation] = useState<boolean | null>(null);
+  const [changingX11, setChangingX11] = useState(false);
+  const [x11Error, setX11Error] = useState<string | null>(null);
+  const [x11Available, setX11Available] = useState(false);
+  const canToggleX11 = Boolean(onSetX11Forwarding);
+  useEffect(() => {
+    setX11Available(false);
+    if (sessionKind !== "ssh" || !isActive || !terminalReady || !canToggleX11) {
+      return;
+    }
+
+    let disposed = false;
+    let checking = false;
+    const refresh = async () => {
+      if (checking) {
+        return;
+      }
+      checking = true;
+      try {
+        const available = await terminalX11Available();
+        if (!disposed) {
+          setX11Available(available);
+        }
+      } catch {
+        if (!disposed) {
+          setX11Available(false);
+        }
+      } finally {
+        checking = false;
+      }
+    };
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [canToggleX11, isActive, sessionKind, terminalReady]);
+  useEffect(() => {
+    setX11Confirmation(null);
+    setX11Error(null);
+  }, [sessionKind, terminalId]);
   const sshOverview = useSshHostOverview(
     profileId,
     connectionId,
@@ -521,8 +569,23 @@ export function SshTerminalWorkspace({
               title={statusPanelVisible ? "隐藏底部状态" : "显示底部状态"}
               tone="muted"
             />
+            {sessionKind === "ssh" && onSetX11Forwarding && (x11Available || x11Forwarding) ? (
+              <IconButton
+                aria-label={x11Forwarding ? "关闭 X11 转发" : "开启 X11 转发"}
+                aria-busy={changingX11}
+                aria-pressed={x11Forwarding}
+                className="ssh-x11-toggle"
+                disabled={!terminalReady || changingX11}
+                icon="monitor"
+                onClick={() => setX11Confirmation(!x11Forwarding)}
+                size="sm"
+                title={changingX11 ? "正在切换 X11 转发…" : x11Forwarding ? "关闭 X11 转发" : "开启 X11 转发"}
+                tone="muted"
+              />
+            ) : null}
           </div>
         ) : null}
+        {x11Error ? <div className="ssh-x11-error" role="alert">{x11Error}</div> : null}
       </div>
       {commandPanelVisible ? (
         <Card
@@ -665,6 +728,27 @@ export function SshTerminalWorkspace({
         </Card>
       ) : null}
 
+      <ConfirmDialog
+        confirmLabel={x11Confirmation ? "重开并启用" : "重开并关闭"}
+        description={x11Confirmation
+          ? "确认后将重开当前聚焦的 SSH 终端，工作目录将重置，运行中的任务可能结束。图形程序将在本机独立窗口显示。Windows 需要已安装 VcXsrv，macOS / Linux 需要运行本机 X Server。"
+          : "确认后将重开当前聚焦的 SSH 终端，工作目录将重置，运行中的任务可能结束。该终端打开的 X11 图形窗口也会关闭。"}
+        open={x11Confirmation !== null}
+        title={x11Confirmation ? "启用 X11 转发？" : "关闭 X11 转发？"}
+        onCancel={() => setX11Confirmation(null)}
+        onConfirm={() => {
+          if (x11Confirmation === null || !onSetX11Forwarding || changingX11) {
+            return;
+          }
+          const enabled = x11Confirmation;
+          setX11Confirmation(null);
+          setX11Error(null);
+          setChangingX11(true);
+          void onSetX11Forwarding(enabled)
+            .catch((error) => setX11Error(String(error).replace(/^Error:\s*/i, "")))
+            .finally(() => setChangingX11(false));
+        }}
+      />
       <ConfirmDialog
         confirmLabel="删除命令"
         description={deleteTarget ? <code>{deleteTarget.command}</code> : null}

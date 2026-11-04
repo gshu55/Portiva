@@ -271,6 +271,7 @@ export interface TerminalSession {
   size: TerminalSize;
   status: "attached" | "closed";
   renderPolicy: TerminalRenderPolicy;
+  x11Forwarding?: boolean;
 }
 
 export interface TerminalRenderPolicy {

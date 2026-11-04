@@ -1,6 +1,6 @@
 [package]
 name = "portiva"
-version = "1.14.4"
+version = "1.15.0"
 description = "A Tauri App"
 authors = ["gshu"]
 license = "Apache-2.0"
@@ -33,7 +33,7 @@ reqwest-updater = { package = "reqwest", version = "0.13", default-features = fa
 rusqlite = { version = "0.32", features = ["bundled"] }
 russh = { version = "0.60.2", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.1.2"
-tokio = { version = "1", features = ["fs", "io-util", "net", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "net", "process", "time"] }
 portable-pty = "0.9.0"
 serial2 = "0.2.37"
 arboard = "3.6.1"
@@ -54,6 +54,8 @@ windows = { version = "0.61.3", features = [
 ] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
     "Win32_Networking_WinSock",

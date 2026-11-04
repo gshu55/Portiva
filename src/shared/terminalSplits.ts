@@ -98,6 +98,20 @@ export function removeTerminalFromLayout(
     : { ...layout, first, second };
 }
 
+export function replaceTerminalInLayout(
+  layout: TerminalSplitLayout,
+  terminalId: string,
+  replacementId: string,
+): TerminalSplitLayout {
+  if (layout.type === "terminal") {
+    return layout.terminalId === terminalId ? { ...layout, terminalId: replacementId } : layout;
+  }
+
+  const first = replaceTerminalInLayout(layout.first, terminalId, replacementId);
+  const second = replaceTerminalInLayout(layout.second, terminalId, replacementId);
+  return first === layout.first && second === layout.second ? layout : { ...layout, first, second };
+}
+
 export function updateTerminalSplitRatio(
   layout: TerminalSplitLayout,
   path: number[],

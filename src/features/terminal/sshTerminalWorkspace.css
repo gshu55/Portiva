@@ -71,6 +71,24 @@
   opacity: 0.34;
 }
 
+.ssh-terminal-panel-controls .ssh-x11-toggle[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.ssh-x11-error {
+  position: absolute;
+  z-index: 3;
+  top: 38px;
+  right: 18px;
+  max-width: min(460px, calc(100% - 36px));
+  padding: 10px 12px;
+  border: 1px solid var(--border-faint);
+  border-radius: var(--control-radius, 6px);
+  background: var(--panel-solid-bg);
+  color: var(--text-strong);
+  font-size: 12px;
+}
+
 .ssh-terminal-panel-controls .icon {
   width: 13px;
   height: 13px;

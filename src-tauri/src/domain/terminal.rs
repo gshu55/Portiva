@@ -17,6 +17,8 @@ pub struct TerminalSession {
     pub size: TerminalSize,
     pub status: TerminalSessionStatus,
     pub render_policy: TerminalRenderPolicy,
+    #[serde(default)]
+    pub x11_forwarding: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,7 +69,18 @@ pub struct TerminalSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::TerminalRenderPolicy;
+    use super::{TerminalRenderPolicy, TerminalSession};
+
+    #[test]
+    fn legacy_terminal_sessions_default_to_x11_disabled() {
+        let session: TerminalSession = serde_json::from_value(serde_json::json!({
+            "id": "terminal-old", "connectionId": "connection-1",
+            "size": { "cols": 80, "rows": 24, "widthPx": 800, "heightPx": 600 },
+            "status": "attached", "renderPolicy": TerminalRenderPolicy::default()
+        }))
+        .unwrap();
+        assert!(!session.x11_forwarding);
+    }
 
     #[test]
     fn sanitizes_render_policy_bounds() {

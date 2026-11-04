@@ -88,6 +88,7 @@ import {
   findTerminalPane,
   maximumSshTerminalPanes,
   removeTerminalFromLayout,
+  replaceTerminalInLayout,
   resolveTerminalSplitLayout,
   splitTerminalLayout,
   terminalPanesForTab,
@@ -500,8 +501,12 @@ export function usePortivaWorkspace() {
     }
   }, [activeConnection]);
 
-  const attachTerminalWithSnapshot = useCallback(async (connectionId: string) => {
-    const terminal = await terminalAttach(connectionId, defaultTerminalSize);
+  const attachTerminalWithSnapshot = useCallback(async (
+    connectionId: string,
+    x11Forwarding = false,
+    size = defaultTerminalSize,
+  ) => {
+    const terminal = await terminalAttach(connectionId, size, x11Forwarding);
     let snapshot: TerminalSnapshot | null = null;
 
     try {
@@ -2467,6 +2472,71 @@ export function usePortivaWorkspace() {
     }
   }, [activeTerminal, sessionTabs]);
 
+  const setSshX11Forwarding = useCallback(async (tabId: string, terminalId: string, enabled: boolean) => {
+    const tab = sessionTabsRef.current.find((item) => (item.id ?? item.connection.id) === tabId);
+    const pane = tab && terminalPanesForTab(tab).find((item) => item.terminal.id === terminalId);
+    if (!tab || tab.connection.transport?.kind !== "ssh" || pane?.terminal.status !== "attached") {
+      throw new Error("请在已连接的 SSH 终端中切换 X11。");
+    }
+    if (Boolean(pane.terminal.x11Forwarding) === enabled) {
+      return terminalId;
+    }
+
+    let replacementId: string | null = null;
+    try {
+      const attached = await attachTerminalWithSnapshot(tab.connection.id, enabled, pane.terminal.size);
+      replacementId = attached.terminal.id;
+      if (attached.terminal.status !== "attached") {
+        throw new Error("新终端已断开，请检查 SSH 服务后重试。");
+      }
+      const latestTab = sessionTabsRef.current.find((item) => (item.id ?? item.connection.id) === tabId);
+      if (!latestTab || latestTab.connection.id !== tab.connection.id ||
+        !terminalPanesForTab(latestTab).some((item) => item.terminal.id === terminalId)) {
+        await terminalClose(replacementId);
+        replacementId = null;
+        return;
+      }
+
+      closingTerminalIdsRef.current.add(terminalId);
+      await terminalClose(terminalId);
+      const replacement = {
+        terminal: attached.terminal,
+        terminalSnapshot: attached.snapshot,
+        terminalTitle: null,
+        terminalWorkingDirectory: null,
+      };
+      setSessionTabs((current) => current.map((item) => {
+        if ((item.id ?? item.connection.id) !== tabId) {
+          return item;
+        }
+        const layout = resolveTerminalSplitLayout(item);
+        return {
+          ...item,
+          ...(item.terminal?.id === terminalId ? replacement : {}),
+          additionalTerminals: item.additionalTerminals?.map((other) =>
+            other.terminal.id === terminalId ? replacement : other,
+          ),
+          terminalLayout: layout ? replaceTerminalInLayout(layout, terminalId, attached.terminal.id) : null,
+        };
+      }));
+      setActiveTerminal((current) => current?.id === terminalId ? attached.terminal : current);
+      if (activeTerminalIdRef.current === terminalId) {
+        setTerminalSnapshotState(attached.snapshot);
+      }
+      replacementId = null;
+      setWorkspaceMessage(enabled ? "X11 转发已开启，远程图形程序将在本机独立窗口显示。" : "X11 转发已关闭。");
+      return attached.terminal.id;
+    } catch (error) {
+      if (replacementId) {
+        await terminalClose(replacementId).catch(() => undefined);
+      }
+      setWorkspaceMessage(`切换 X11 转发失败：${String(error)}`);
+      throw error;
+    } finally {
+      closingTerminalIdsRef.current.delete(terminalId);
+    }
+  }, [attachTerminalWithSnapshot]);
+
   const splitSshTerminal = useCallback(async (
     tabId: string,
     targetTerminalId: string,
@@ -3940,6 +4010,7 @@ export function usePortivaWorkspace() {
     setRemotePath: changeRemotePath,
     setSelectedRemoteEntry,
     setSshPassword,
+    setSshX11Forwarding,
     setTerminalSearchQuery,
     switchSessionTab,
     testProfile,

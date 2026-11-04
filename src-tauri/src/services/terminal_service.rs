@@ -43,6 +43,7 @@ impl TerminalService {
             size,
             status: TerminalSessionStatus::Attached,
             render_policy: TerminalRenderPolicy::default().sanitized(),
+            x11_forwarding: false,
         };
 
         self.sessions
@@ -72,6 +73,22 @@ impl TerminalService {
         buffer.content.push_str(data);
         truncate_terminal_buffer(buffer);
         Ok(())
+    }
+
+    pub fn set_x11_forwarding(
+        &self,
+        terminal_id: &str,
+        enabled: bool,
+    ) -> Result<TerminalSession, String> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "terminal service lock poisoned")?;
+        let session = sessions
+            .get_mut(terminal_id)
+            .ok_or_else(|| format!("terminal not found: {terminal_id}"))?;
+        session.x11_forwarding = enabled;
+        Ok(session.clone())
     }
 
     pub fn resize(&self, terminal_id: &str, size: TerminalSize) -> Result<(), String> {
@@ -365,6 +382,11 @@ mod tests {
         let second = service.attach("connection-1".to_string(), size).unwrap();
 
         assert_ne!(first.id, second.id);
+        assert!(!first.x11_forwarding);
+        assert!(!second.x11_forwarding);
+        service.set_x11_forwarding(&first.id, true).unwrap();
+        assert!(service.session(&first.id).unwrap().x11_forwarding);
+        assert!(!service.session(&second.id).unwrap().x11_forwarding);
         assert_eq!(service.close_by_connection("connection-1").unwrap(), 2);
     }
 

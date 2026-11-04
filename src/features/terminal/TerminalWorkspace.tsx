@@ -90,6 +90,7 @@ interface TerminalWorkspaceProps {
     orientation: TerminalSplitOrientation,
   ) => Promise<void> | void;
   onToggleFullscreen: () => void;
+  onSetSshX11Forwarding?: (tabId: string, terminalId: string, enabled: boolean) => Promise<string | void>;
   reattachHintActive?: boolean;
   isDetachedWindow?: boolean;
   isFullscreen: boolean;
@@ -327,6 +328,7 @@ export function TerminalWorkspace({
   onSendTerminalBytes,
   onSendTerminalData,
   onSplitSshTerminal,
+  onSetSshX11Forwarding,
   onTerminalTitleChange,
   onTerminalWorkingDirectoryChange,
   onToggleFullscreen,
@@ -690,6 +692,11 @@ export function TerminalWorkspace({
         sftpPanelAvailable={sftpPanelAvailable}
         sftpPanelVisible={sshSftpPanelVisible}
         statusPanelVisible={renderSharedPanels && panelVisibility.status}
+        terminalId={tab.terminal?.id}
+        x11Forwarding={Boolean(tab.terminal?.x11Forwarding)}
+        onSetX11Forwarding={isSshTerminal && tab.terminal && onSetSshX11Forwarding
+          ? (enabled) => onSetSshX11Forwarding(ownerTabId, tab.terminal!.id, enabled).then(() => undefined)
+          : undefined}
         terminalReady={Boolean(
           tab.terminal?.status === "attached" &&
           (isWslTerminal || tab.connection.transport?.authenticated)
@@ -810,6 +817,14 @@ export function TerminalWorkspace({
         sftpPanelAvailable={sftpPanelAvailable}
         sftpPanelVisible={sshSftpPanelVisible}
         statusPanelVisible={panelVisibility.status}
+        terminalId={activeTerminalId}
+        x11Forwarding={Boolean(activeTerminalPane.terminal.x11Forwarding)}
+        onSetX11Forwarding={onSetSshX11Forwarding ? async (enabled) => {
+          const replacementId = await onSetSshX11Forwarding(tabId, activeTerminalId, enabled);
+          if (replacementId) {
+            setFocusedSshTerminalByTab((current) => ({ ...current, [tabId]: replacementId }));
+          }
+        } : undefined}
         terminalReady={Boolean(
           activeTerminalPane.terminal.status === "attached" && tab.connection.transport?.authenticated
         )}

@@ -4019,7 +4019,7 @@ dependencies = [
 
 [[package]]
 name = "portiva"
-version = "1.14.4"
+version = "1.15.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -6153,6 +6153,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

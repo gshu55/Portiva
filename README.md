@@ -20,6 +20,9 @@ Portiva 是一个基于 Tauri v2、React、TypeScript、xterm.js 和 Rust 构建
 - 支持 known_hosts 校验：首次连接需要确认 fingerprint，host key 变化会阻止连接。
 - 支持 PTY 终端、输入输出转发、窗口 resize、断开状态提示。
 - 终端渲染基于 xterm.js，并支持快照恢复和输出事件推送。
+- 支持 X11 转发，默认关闭，开关位于命令栏、SFTP 栏的面板控制区域。确认后重开当前聚焦的终端并立即生效，图形程序在本机独立窗口显示。
+- Windows 需安装 VcXsrv，启用时按需启动独立显示进程。macOS / Linux 使用本机 `DISPLAY` 和 `xauth`，macOS 可使用 XQuartz。远端需允许 `X11Forwarding` 并安装 `xauth`。
+- macOS / Linux 会检测本机显示服务的连接和认证，检测通过后显示 X11 开关。切换到 SSH 页面或应用重新获得焦点时会刷新检测结果。
 
 ### SFTP 文件管理
 

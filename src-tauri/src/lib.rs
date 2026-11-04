@@ -239,6 +239,7 @@ pub fn run() {
             commands::terminal::wsl_collect_host_overview,
             commands::terminal::wsl_shell_open,
             commands::terminal::terminal_attach,
+            commands::terminal::terminal_x11_available,
             commands::terminal::terminal_session,
             commands::terminal::terminal_write,
             commands::terminal::terminal_write_bytes,

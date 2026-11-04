@@ -26,6 +26,11 @@ pub struct LocalShellOpenResult {
 }
 
 #[tauri::command]
+pub async fn terminal_x11_available() -> bool {
+    crate::services::x11_forwarding::is_available().await
+}
+
+#[tauri::command]
 pub fn local_shell_open(
     size: TerminalSize,
     app_handle: AppHandle,
@@ -126,6 +131,7 @@ pub fn wsl_shell_open(
 pub async fn terminal_attach(
     connection_id: String,
     size: TerminalSize,
+    x11_forwarding: Option<bool>,
     app_handle: AppHandle,
     connection_manager: State<'_, ConnectionManager>,
     local_shells: State<'_, LocalShellService>,
@@ -161,16 +167,27 @@ pub async fn terminal_attach(
         );
     }
 
-    let terminal = terminal_service.attach(connection_id.clone(), size.clone())?;
+    let x11_forwarding = x11_forwarding.unwrap_or(false);
+    if x11_forwarding && !is_ssh_transport {
+        return Err("X11 转发仅支持 SSH 终端。".to_string());
+    }
+    let mut terminal = terminal_service.attach(connection_id.clone(), size.clone())?;
     if is_ssh_transport {
         if let Err(error) = ssh_sessions
-            .open_pty(&connection_id, &terminal.id, &size, app_handle)
+            .open_pty(
+                &connection_id,
+                &terminal.id,
+                &size,
+                app_handle,
+                x11_forwarding,
+            )
             .await
         {
             let _ = terminal_service.close(&terminal.id);
             return Err(error);
         }
         let _ = connection_manager.mark_terminal_channel_ready(&connection_id)?;
+        terminal = terminal_service.set_x11_forwarding(&terminal.id, x11_forwarding)?;
     } else if is_local_shell_transport {
         if let Err(error) = local_shells.open(&connection_id, &terminal.id, &size, app_handle) {
             let _ = terminal_service.close(&terminal.id);

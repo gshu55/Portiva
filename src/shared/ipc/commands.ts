@@ -61,6 +61,7 @@ export const commandNames = {
   knownHostsList: "known_hosts_list",
   knownHostDelete: "known_host_delete",
   terminalAttach: "terminal_attach",
+  terminalX11Available: "terminal_x11_available",
   terminalSession: "terminal_session",
   terminalWrite: "terminal_write",
   terminalWriteBytes: "terminal_write_bytes",
@@ -364,8 +365,12 @@ export function fileTransferList(sessionId: string, remotePath: string) {
   return invoke<RemoteEntry[]>(commandNames.fileTransferList, { sessionId, remotePath });
 }
 
-export function terminalAttach(connectionId: string, size: TerminalSize) {
-  return invoke<TerminalSession>(commandNames.terminalAttach, { connectionId, size });
+export function terminalAttach(connectionId: string, size: TerminalSize, x11Forwarding = false) {
+  return invoke<TerminalSession>(commandNames.terminalAttach, { connectionId, size, x11Forwarding });
+}
+
+export function terminalX11Available() {
+  return invoke<boolean>(commandNames.terminalX11Available);
 }
 
 export function localShellOpen(size: TerminalSize) {

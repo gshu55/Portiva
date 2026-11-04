@@ -26,6 +26,7 @@ use crate::services::network_proxy_service::connect_tcp;
 use crate::services::terminal_service::{
     drain_utf8_terminal_output_chunk, terminal_disconnect_notice, TerminalService,
 };
+use crate::services::x11_forwarding::{X11Forwarding, X11Registration};
 use crate::utils::remote_path::{join_remote_path, normalize_remote_path};
 
 const TERMINAL_SNAPSHOT_EVENT: &str = "portiva://terminal-snapshot";
@@ -81,6 +82,7 @@ pub struct SshSessionService {
 
 struct SshRuntimeSession {
     handle: Arc<AsyncMutex<client::Handle<SshRuntimeHandler>>>,
+    x11: Arc<X11Forwarding>,
     host: String,
     port: u16,
     username: String,
@@ -91,6 +93,7 @@ struct SshRuntimeSession {
 
 struct SshPtySession {
     write_half: Arc<AsyncMutex<ChannelWriteHalf<client::Msg>>>,
+    _x11: Option<X11Registration>,
 }
 
 struct SshCommandOutput {
@@ -304,6 +307,7 @@ impl SshSessionService {
                 connection_id.to_string(),
                 SshRuntimeSession {
                     handle: Arc::new(AsyncMutex::new(opened.handle)),
+                    x11: opened.x11,
                     host: opened.host.clone(),
                     port: opened.port,
                     username: opened.username,
@@ -366,6 +370,7 @@ impl SshSessionService {
                 connection_id,
                 SshRuntimeSession {
                     handle: Arc::new(AsyncMutex::new(opened.handle)),
+                    x11: opened.x11,
                     host: opened.host.clone(),
                     port: opened.port,
                     username: opened.username,
@@ -816,11 +821,54 @@ impl SshSessionService {
         terminal_id: &str,
         size: &TerminalSize,
         app_handle: AppHandle,
+        x11_forwarding: bool,
     ) -> Result<(), String> {
-        let mut session = self.take_session(connection_id)?;
-        let result = open_pty_with_session(&mut session, terminal_id, size, app_handle).await;
-        self.put_session(connection_id, session)?;
-        result
+        let (handle, x11) = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "SSH session service lock poisoned")?;
+            let session = sessions
+                .get(connection_id)
+                .ok_or_else(|| format!("SSH runtime session not found: {connection_id}"))?;
+            if session.ptys.contains_key(terminal_id) {
+                return Ok(());
+            }
+            (Arc::clone(&session.handle), Arc::clone(&session.x11))
+        };
+        // Keep the existing transport available while probing the local display.
+        let registration = if x11_forwarding {
+            Some(x11.prepare().await?)
+        } else {
+            None
+        };
+        let (pty, read_half, initial_output) =
+            open_pty_channel(&handle, size, registration).await?;
+        let write_half = Arc::clone(&pty.write_half);
+        let inserted = {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "SSH session service lock poisoned")?;
+            match sessions.get_mut(connection_id) {
+                Some(session) if Arc::ptr_eq(&session.handle, &handle) => {
+                    session.ptys.insert(terminal_id.to_string(), pty);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !inserted {
+            let _ = write_half.lock().await.close().await;
+            return Err("SSH 连接已关闭，请重新连接后重试。".to_string());
+        }
+        spawn_pty_output_reader(
+            app_handle,
+            terminal_id.to_string(),
+            read_half,
+            initial_output,
+        );
+        Ok(())
     }
 
     pub async fn write_pty(
@@ -879,9 +927,15 @@ impl SshSessionService {
     }
 
     pub async fn close_pty(&self, connection_id: &str, terminal_id: &str) -> Result<bool, String> {
-        let mut session = self.take_session(connection_id)?;
-        let pty = session.ptys.remove(terminal_id);
-        let result = match pty {
+        let pty = self
+            .sessions
+            .lock()
+            .map_err(|_| "SSH session service lock poisoned")?
+            .get_mut(connection_id)
+            .ok_or_else(|| format!("SSH runtime session not found: {connection_id}"))?
+            .ptys
+            .remove(terminal_id);
+        match pty {
             Some(pty) => {
                 let write_half = Arc::clone(&pty.write_half);
                 let write_half = write_half.lock().await;
@@ -889,24 +943,26 @@ impl SshSessionService {
                 Ok(true)
             }
             None => Ok(false),
-        };
-        self.put_session(connection_id, session)?;
-        result
+        }
     }
 
     pub async fn close_ptys_by_connection(&self, connection_id: &str) -> Result<usize, String> {
-        let mut session = match self.take_session(connection_id) {
-            Ok(session) => session,
-            Err(_) => return Ok(0),
+        let ptys = {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "SSH session service lock poisoned")?;
+            let Some(session) = sessions.get_mut(connection_id) else {
+                return Ok(0);
+            };
+            std::mem::take(&mut session.ptys)
         };
-        let ptys = std::mem::take(&mut session.ptys);
         let count = ptys.len();
         for (_, pty) in ptys {
             let write_half = Arc::clone(&pty.write_half);
             let write_half = write_half.lock().await;
             let _ = write_half.close().await;
         }
-        self.put_session(connection_id, session)?;
         Ok(count)
     }
 
@@ -1071,6 +1127,7 @@ impl SshSessionService {
 struct OpenedSshHandle {
     fingerprint: String,
     handle: client::Handle<SshRuntimeHandler>,
+    x11: Arc<X11Forwarding>,
     host: String,
     port: u16,
     username: String,
@@ -1098,8 +1155,10 @@ async fn open_ssh_handle(
         .to_string();
     let timeout = Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS);
     let fingerprint = Arc::new(Mutex::new(None));
+    let x11 = Arc::new(X11Forwarding::default());
     let handler = SshRuntimeHandler {
         fingerprint: Arc::clone(&fingerprint),
+        x11: Arc::clone(&x11),
     };
     let config = Arc::new(ssh_client_config());
 
@@ -1117,6 +1176,7 @@ async fn open_ssh_handle(
     Ok(OpenedSshHandle {
         fingerprint,
         handle,
+        x11,
         host,
         port,
         username,
@@ -1428,10 +1488,22 @@ async fn authenticate_with_agent(
 
 struct SshRuntimeHandler {
     fingerprint: Arc<Mutex<Option<String>>>,
+    x11: Arc<X11Forwarding>,
 }
 
 impl client::Handler for SshRuntimeHandler {
     type Error = russh::Error;
+
+    async fn server_channel_open_x11(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        self.x11.forward(channel);
+        Ok(())
+    }
 
     async fn check_server_key(
         &mut self,
@@ -1593,21 +1665,17 @@ fn is_sftp_session_closed_error(error: &str) -> bool {
         || normalized.contains("transport closed")
 }
 
-async fn open_pty_with_session(
-    session: &mut SshRuntimeSession,
-    terminal_id: &str,
+async fn open_pty_channel(
+    handle: &Arc<AsyncMutex<client::Handle<SshRuntimeHandler>>>,
     size: &TerminalSize,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    if session.ptys.contains_key(terminal_id) {
-        return Ok(());
-    }
-
-    let handle = session.handle.lock().await;
-    let channel = handle
-        .channel_open_session()
+    registration: Option<X11Registration>,
+) -> Result<(SshPtySession, ChannelReadHalf, Vec<u8>), String> {
+    let handle = handle.lock().await;
+    let mut channel = tokio::time::timeout(Duration::from_secs(10), handle.channel_open_session())
         .await
+        .map_err(|_| "创建 SSH 终端通道超时。".to_string())?
         .map_err(|error| format!("failed to open SSH PTY channel: {error}"))?;
+    drop(handle);
     let terminal_modes = [
         (Pty::VINTR, 3),
         (Pty::VQUIT, 28),
@@ -1635,41 +1703,105 @@ async fn open_pty_with_session(
         (Pty::TTY_OP_OSPEED, 38_400),
     ];
 
-    channel
-        .request_pty(
-            true,
-            "xterm-256color",
-            size.cols as u32,
-            size.rows as u32,
-            size.width_px as u32,
-            size.height_px as u32,
-            &terminal_modes,
+    let mut initial_output = Vec::new();
+    let setup = async {
+        if let Some(registration) = &registration {
+            channel
+                .request_x11(
+                    true,
+                    false,
+                    "MIT-MAGIC-COOKIE-1",
+                    registration.cookie_hex(),
+                    registration.screen(),
+                )
+                .await
+                .map_err(|error| format!("请求 X11 转发失败：{error}"))?;
+            wait_for_pty_request(
+                &mut channel,
+                &mut initial_output,
+                "服务器拒绝 X11 转发，请检查 X11Forwarding 和 xauth 配置。",
+            )
+            .await?;
+        }
+        channel
+            .request_pty(
+                true,
+                "xterm-256color",
+                size.cols as u32,
+                size.rows as u32,
+                size.width_px as u32,
+                size.height_px as u32,
+                &terminal_modes,
+            )
+            .await
+            .map_err(|error| format!("failed to request SSH PTY: {error}"))?;
+        wait_for_pty_request(
+            &mut channel,
+            &mut initial_output,
+            "服务器拒绝创建 SSH 终端。",
+        )
+        .await?;
+        channel
+            .request_shell(true)
+            .await
+            .map_err(|error| format!("failed to start SSH shell: {error}"))?;
+        wait_for_pty_request(
+            &mut channel,
+            &mut initial_output,
+            "服务器拒绝启动 SSH shell。",
         )
         .await
-        .map_err(|error| format!("failed to request SSH PTY: {error}"))?;
-    channel
-        .request_shell(true)
-        .await
-        .map_err(|error| format!("failed to start SSH shell: {error}"))?;
+    };
+    if let Err(error) = setup.await {
+        let _ = channel.close().await;
+        return Err(error);
+    }
 
     let (read_half, write_half) = channel.split();
-    spawn_pty_output_reader(app_handle, terminal_id.to_string(), read_half);
-    session.ptys.insert(
-        terminal_id.to_string(),
+    Ok((
         SshPtySession {
             write_half: Arc::new(AsyncMutex::new(write_half)),
+            _x11: registration,
         },
-    );
-    Ok(())
+        read_half,
+        initial_output,
+    ))
+}
+
+async fn wait_for_pty_request(
+    channel: &mut russh::Channel<client::Msg>,
+    initial_output: &mut Vec<u8>,
+    failure: &str,
+) -> Result<(), String> {
+    let wait = async {
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Success) => return Ok(()),
+                Some(ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. }) => {
+                    if initial_output.len() + data.len() > 256 * 1024 {
+                        return Err("SSH 启动输出超出缓冲限制。".to_string());
+                    }
+                    initial_output.extend_from_slice(&data);
+                }
+                Some(ChannelMsg::Failure | ChannelMsg::Close | ChannelMsg::Eof) | None => {
+                    return Err(failure.to_string())
+                }
+                _ => {}
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), wait)
+        .await
+        .map_err(|_| format!("SSH 请求响应超时。{failure}"))?
 }
 
 fn spawn_pty_output_reader(
     app_handle: AppHandle,
     terminal_id: String,
     mut read_half: ChannelReadHalf,
+    mut pending_bytes: Vec<u8>,
 ) {
     tauri::async_runtime::spawn(async move {
-        let mut pending_bytes = Vec::new();
         let mut last_flush = Instant::now();
         let mut disconnect_reason = "SSH 终端通道已关闭".to_string();
 
@@ -2117,6 +2249,125 @@ mod tests {
         remote_entry_name, remote_transfer_temp_path, ssh_client_config, SshSessionService,
         SSH_KEEPALIVE_INTERVAL_SECS, SSH_KEEPALIVE_MAX_MISSES,
     };
+
+    struct PtyTestServer {
+        reject_pty: bool,
+    }
+
+    impl russh::server::Handler for PtyTestServer {
+        type Error = russh::Error;
+
+        async fn auth_none(&mut self, _user: &str) -> Result<russh::server::Auth, Self::Error> {
+            Ok(russh::server::Auth::Accept)
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            _channel: russh::Channel<russh::server::Msg>,
+            _session: &mut russh::server::Session,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+
+        async fn pty_request(
+            &mut self,
+            channel: russh::ChannelId,
+            _term: &str,
+            _cols: u32,
+            _rows: u32,
+            _width: u32,
+            _height: u32,
+            _modes: &[(russh::Pty, u32)],
+            session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            if self.reject_pty {
+                session.channel_failure(channel)
+            } else {
+                session.channel_success(channel)
+            }
+        }
+
+        async fn shell_request(
+            &mut self,
+            channel: russh::ChannelId,
+            session: &mut russh::server::Session,
+        ) -> Result<(), Self::Error> {
+            session.data(channel, b"welcome before acknowledgement".to_vec())?;
+            session.channel_success(channel)
+        }
+    }
+
+    #[test]
+    fn pty_setup_preserves_early_output_and_detects_server_rejection() {
+        use russh::keys::ssh_key;
+        use std::sync::{Arc, Mutex};
+        use tokio::sync::Mutex as AsyncMutex;
+
+        tauri::async_runtime::block_on(async {
+            for reject_pty in [false, true] {
+                let key = ssh_key::PrivateKey::new(
+                    ssh_key::private::KeypairData::Ed25519(
+                        ssh_key::private::Ed25519Keypair::from_seed(&[7; 32]),
+                    ),
+                    "test-only",
+                )
+                .unwrap();
+                let config = Arc::new(russh::server::Config {
+                    keys: vec![key],
+                    ..Default::default()
+                });
+                let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+                let server_task = tokio::spawn(async move {
+                    let session = russh::server::run_stream(
+                        config,
+                        server_stream,
+                        PtyTestServer { reject_pty },
+                    )
+                    .await
+                    .unwrap();
+                    session.await.unwrap();
+                });
+                let x11 = Arc::new(super::X11Forwarding::default());
+                let handler = super::SshRuntimeHandler {
+                    fingerprint: Arc::new(Mutex::new(None)),
+                    x11,
+                };
+                let mut handle = russh::client::connect_stream(
+                    Arc::new(ssh_client_config()),
+                    client_stream,
+                    handler,
+                )
+                .await
+                .unwrap();
+                assert!(handle.authenticate_none("test").await.unwrap().success());
+                let handle = Arc::new(AsyncMutex::new(handle));
+                let size = crate::domain::terminal::TerminalSize {
+                    cols: 80,
+                    rows: 24,
+                    width_px: 800,
+                    height_px: 600,
+                };
+                let result = super::open_pty_channel(&handle, &size, None).await;
+                if reject_pty {
+                    assert!(matches!(result, Err(error) if error.contains("拒绝创建")));
+                } else {
+                    let (pty, _, initial_output) = result.unwrap();
+                    assert_eq!(initial_output, b"welcome before acknowledgement");
+                    pty.write_half.lock().await.close().await.unwrap();
+                }
+                handle
+                    .lock()
+                    .await
+                    .disconnect(russh::Disconnect::ByApplication, "test complete", "en")
+                    .await
+                    .unwrap();
+                tokio::time::timeout(Duration::from_secs(5), server_task)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        });
+    }
 
     #[test]
     fn reports_missing_session() {

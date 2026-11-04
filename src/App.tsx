@@ -1740,6 +1740,7 @@ function App() {
           onResizeSshTerminalSplit={workspace.resizeSshTerminalSplit}
           onSelectSessionTab={workspace.switchSessionTab}
           onSplitSshTerminal={workspace.splitSshTerminal}
+          onSetSshX11Forwarding={workspace.setSshX11Forwarding}
           onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
 	        />
 	        <GlobalNotice message={workspace.workspaceMessage} />
@@ -1880,6 +1881,7 @@ function App() {
             onResizeSshTerminalSplit={workspace.resizeSshTerminalSplit}
             onSelectSessionTab={selectAppSessionTab}
             onSplitSshTerminal={workspace.splitSshTerminal}
+            onSetSshX11Forwarding={workspace.setSshX11Forwarding}
             onToggleFullscreen={() => setTerminalFullscreen((current) => !current)}
 	          />
 	        </div>
