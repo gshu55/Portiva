@@ -282,6 +282,7 @@ fn query_wsl_home(distribution: &str) -> Result<String, String> {
         use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+        crate::services::wsl_service::ensure_wsl_distribution_available(distribution)?;
         let output = Command::new("wsl.exe")
             .args(["--distribution", distribution, "--exec", "printenv", "HOME"])
             .creation_flags(CREATE_NO_WINDOW)

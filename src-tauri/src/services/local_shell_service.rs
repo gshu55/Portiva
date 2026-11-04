@@ -81,6 +81,9 @@ impl LocalShellService {
         app_handle: AppHandle,
     ) -> Result<LocalShellInfo, String> {
         let candidate = wsl_shell_candidate(distribution)?;
+        if !self.has_pty(connection_id, terminal_id)? {
+            crate::services::wsl_service::ensure_wsl_distribution_available(distribution)?;
+        }
         let existing_label = candidate.label.clone();
         self.open_candidates(
             connection_id,

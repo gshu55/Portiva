@@ -206,6 +206,12 @@ pub fn collect_wsl_host_overview(distribution: &str) -> Result<WslHostOverview, 
     collect_wsl_host_overview_for_platform(distribution)
 }
 
+pub fn ensure_wsl_distribution_available(distribution: &str) -> Result<(), String> {
+    let distribution = validate_distribution_name(distribution)?;
+    let discovery = discover_wsl();
+    find_distribution(&discovery, distribution).map(|_| ())
+}
+
 fn validate_distribution_name(distribution: &str) -> Result<&str, String> {
     let distribution = distribution.trim();
     if distribution.is_empty() {
@@ -221,6 +227,17 @@ fn ensure_distribution_is_running(
     discovery: &WslDiscovery,
     distribution: &str,
 ) -> Result<(), String> {
+    let found = find_distribution(discovery, distribution)?;
+    if found.state != WslDistributionState::Running {
+        return Err(format!("WSL 发行版 {distribution} 未运行，已跳过资源采集"));
+    }
+    Ok(())
+}
+
+fn find_distribution<'a>(
+    discovery: &'a WslDiscovery,
+    distribution: &str,
+) -> Result<&'a WslDistributionInfo, String> {
     if !discovery.supported {
         return Err("当前平台不支持 WSL".to_string());
     }
@@ -231,15 +248,11 @@ fn ensure_distribution_is_running(
             .unwrap_or_else(|| "WSL 当前不可用".to_string()));
     }
 
-    let found = discovery
+    discovery
         .distributions
         .iter()
         .find(|item| item.name == distribution)
-        .ok_or_else(|| format!("未找到 WSL 发行版：{distribution}"))?;
-    if found.state != WslDistributionState::Running {
-        return Err(format!("WSL 发行版 {distribution} 未运行，已跳过资源采集"));
-    }
-    Ok(())
+        .ok_or_else(|| format!("未找到 WSL 发行版：{distribution}"))
 }
 
 #[cfg(windows)]
@@ -285,9 +298,108 @@ fn collect_wsl_host_overview_for_platform(_distribution: &str) -> Result<WslHost
 
 #[cfg(windows)]
 fn discover_wsl_for_platform() -> WslDiscovery {
+    discover_wsl_with_preflight(read_wsl_readiness(), || {
+        run_wsl_command(&["--list", "--verbose"], WSL_DISCOVERY_TIMEOUT)
+    })
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WslReadiness {
+    Unavailable,
+    NoDistributions,
+    Ready,
+}
+
+#[cfg(windows)]
+fn read_wsl_readiness() -> std::io::Result<WslReadiness> {
+    use std::io::ErrorKind;
+    use winreg::{
+        enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
+        RegKey,
+    };
+
+    // wsl.exe can be an installation launcher even when the runtime is absent.
+    // Check installed services and user registrations before executing it.
+    let machine = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let mut backend_available = false;
+    for service in ["WslService", "LxssManager"] {
+        let key = match machine.open_subkey(format!(r"SYSTEM\CurrentControlSet\Services\{service}"))
+        {
+            Ok(key) => key,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        match key.get_value::<u32, _>("Start") {
+            Ok(start) if start != 4 => {
+                backend_available = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if !backend_available {
+        return Ok(WslReadiness::Unavailable);
+    }
+
+    let user = RegKey::predef(HKEY_CURRENT_USER);
+    let registrations = match user.open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Lxss") {
+        Ok(key) => key,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(WslReadiness::NoDistributions)
+        }
+        Err(error) => return Err(error),
+    };
+    for name in registrations.enum_keys() {
+        let key = registrations.open_subkey(name?)?;
+        match key.get_value::<String, _>("DistributionName") {
+            Ok(name) if !name.trim().is_empty() => return Ok(WslReadiness::Ready),
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(WslReadiness::NoDistributions)
+}
+
+#[cfg(windows)]
+fn discover_wsl_with_preflight(
+    readiness: std::io::Result<WslReadiness>,
+    query: impl FnOnce() -> std::io::Result<std::process::Output>,
+) -> WslDiscovery {
     use std::io::ErrorKind;
 
-    let output = match run_wsl_command(&["--list", "--verbose"], WSL_DISCOVERY_TIMEOUT) {
+    match readiness {
+        Ok(WslReadiness::Ready) => {}
+        Ok(WslReadiness::Unavailable) => {
+            return WslDiscovery {
+                supported: true,
+                available: false,
+                distributions: Vec::new(),
+                message: Some("未检测到可用的 WSL，请先在 Windows 中安装并启用 WSL。".to_string()),
+            }
+        }
+        Ok(WslReadiness::NoDistributions) => {
+            return WslDiscovery {
+                supported: true,
+                available: true,
+                distributions: Vec::new(),
+                message: Some("WSL 已启用，但尚未安装 Linux 发行版。".to_string()),
+            }
+        }
+        Err(error) => {
+            return WslDiscovery {
+                supported: true,
+                available: false,
+                distributions: Vec::new(),
+                message: Some(format!("无法读取 WSL 安装状态：{error}")),
+            }
+        }
+    }
+
+    let output = match query() {
         Ok(output) => output,
         Err(error) if error.kind() == ErrorKind::NotFound => {
             return WslDiscovery {
@@ -698,6 +810,85 @@ mod tests {
         WslDiscovery, WslDistributionInfo, WslDistributionState,
     };
     use std::time::Duration;
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_wsl_backend_skips_the_launcher() {
+        let discovery =
+            super::discover_wsl_with_preflight(Ok(super::WslReadiness::Unavailable), || {
+                panic!("wsl.exe must not run when the backend is unavailable")
+            });
+        assert!(discovery.supported);
+        assert!(!discovery.available);
+        assert!(discovery.distributions.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_distributions_skip_the_launcher() {
+        let discovery =
+            super::discover_wsl_with_preflight(Ok(super::WslReadiness::NoDistributions), || {
+                panic!("wsl.exe must not run without registered distributions")
+            });
+        assert!(discovery.available);
+        assert!(discovery.distributions.is_empty());
+        assert!(discovery.message.unwrap().contains("尚未安装"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inaccessible_wsl_configuration_skips_the_launcher() {
+        let discovery = super::discover_wsl_with_preflight(
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+            || panic!("wsl.exe must not run after a registry read failure"),
+        );
+        assert!(!discovery.available);
+        assert!(discovery.distributions.is_empty());
+        assert!(discovery.message.unwrap().contains("安装状态"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn configured_wsl_still_queries_distribution_state() {
+        use std::os::windows::process::ExitStatusExt;
+
+        let discovery = super::discover_wsl_with_preflight(Ok(super::WslReadiness::Ready), || {
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: "* Ubuntu  Running  2\r\n"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect(),
+                stderr: Vec::new(),
+            })
+        });
+        assert!(discovery.available);
+        assert_eq!(discovery.distributions.len(), 1);
+        assert_eq!(discovery.distributions[0].name, "Ubuntu");
+        assert_eq!(
+            discovery.distributions[0].state,
+            WslDistributionState::Running
+        );
+    }
+
+    #[test]
+    fn only_available_registered_distributions_can_be_opened() {
+        let mut discovery = WslDiscovery {
+            supported: true,
+            available: false,
+            message: Some("WSL 未启用".to_string()),
+            distributions: vec![WslDistributionInfo {
+                name: "Ubuntu".to_string(),
+                is_default: true,
+                state: WslDistributionState::Stopped,
+                version: Some(2),
+            }],
+        };
+        assert!(super::find_distribution(&discovery, "Ubuntu").is_err());
+        discovery.available = true;
+        assert!(super::find_distribution(&discovery, "Ubuntu").is_ok());
+        assert!(super::find_distribution(&discovery, "Removed").is_err());
+    }
 
     #[test]
     fn parses_verbose_wsl_list_with_default_and_spaced_names() {
