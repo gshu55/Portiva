@@ -17,6 +17,7 @@ import { appendBoundedTerminalOutput } from "../../shared/terminalOutputBuffer";
 import { parseOsc7WorkingDirectory } from "../../shared/terminalWorkingDirectory";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "../../shared/terminalFonts";
 import { TerminalSemanticHighlighter } from "./terminalSemanticHighlighter";
+import { bindTerminalMouseSelection } from "./terminalMouseSelection";
 import { installTerminalIme } from "./terminalIme";
 import {
   captureTerminalCopy,
@@ -923,6 +924,9 @@ export function TerminalPane({
     instance.loadAddon(searchAddon);
     instance.loadAddon(serializeAddon);
     instance.open(container);
+    const isSelectionCli = () =>
+      activeMainstreamCliRef.current === "codex" || activeMainstreamCliRef.current === "claude";
+    const unbindMouseSelection = bindTerminalMouseSelection(container, instance, isSelectionCli);
     const disposeIme = installTerminalIme(instance);
     const workingDirectoryHandler = instance.parser.registerOscHandler(7, (data) => {
       const path = parseOsc7WorkingDirectory(data);
@@ -989,6 +993,7 @@ export function TerminalPane({
         return;
       }
       activeMainstreamCliRef.current = cli;
+      instance.options.macOptionClickForcesSelection = isSelectionCli();
       syncAlternateScreenCli();
     };
     const titleChangeHandler = instance.onTitleChange((title) => {
@@ -1240,6 +1245,7 @@ export function TerminalPane({
 
     return () => {
       resizeObserver.disconnect();
+      unbindMouseSelection();
       disposeIme();
       workingDirectoryHandler.dispose();
       foregroundQueryHandler.dispose();
