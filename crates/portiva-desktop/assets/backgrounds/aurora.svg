@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#07131d"/>
+      <stop offset="0.5" stop-color="#102b35"/>
+      <stop offset="1" stop-color="#101827"/>
+    </linearGradient>
+    <radialGradient id="cyan" cx="0" cy="0" r="1" gradientTransform="translate(520 230) rotate(22) scale(710 410)">
+      <stop stop-color="#67e8d4" stop-opacity="0.82"/>
+      <stop offset="1" stop-color="#67e8d4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="blue" cx="0" cy="0" r="1" gradientTransform="translate(1370 790) rotate(-20) scale(760 440)">
+      <stop stop-color="#409eff" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#409eff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="72"/></filter>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#base)"/>
+  <path d="M-100 510C260 130 570 690 930 310s690-40 1090-320" fill="none" stroke="#83ffe8" stroke-opacity="0.5" stroke-width="150" filter="url(#blur)"/>
+  <rect width="1920" height="1080" fill="url(#cyan)"/>
+  <rect width="1920" height="1080" fill="url(#blue)"/>
+</svg>

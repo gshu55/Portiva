@@ -1,0 +1,32 @@
+# Build output and local application data
+/target/
+/dist/
+/.local/
+*.log
+
+# Local environment and SSH credentials
+.env
+.env.*
+!.env.example
+.ssh/
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+id_rsa
+id_ecdsa
+id_ed25519
+
+# Editor and operating system files
+/.vs/
+/.vscode/
+/.idea/
+/.codex/
+/.aws/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini

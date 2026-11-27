@@ -1,0 +1,29 @@
+[package]
+name = "portiva-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "portiva2"
+path = "src/main.rs"
+
+[dependencies]
+portiva-core = { path = "../portiva-core" }
+anyhow.workspace = true
+async-channel.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+gpui-kit = "=0.10.0"
+rfd = "0.16"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }
+resvg = { version = "=0.45.1", default-features = false }
+tempfile = "3"
+
+[dev-dependencies]
+russh = { version = "=0.60.2", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "=2.1.2"
+rand = "0.10"
+serde_json.workspace = true

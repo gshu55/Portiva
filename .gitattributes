@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Windows launchers use native line endings.
+*.cmd text eol=crlf
+*.bat text eol=crlf
