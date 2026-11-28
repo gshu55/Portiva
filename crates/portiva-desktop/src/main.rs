@@ -8,6 +8,7 @@ mod jobs;
 mod settings;
 mod terminal;
 mod theme;
+mod update;
 
 use anyhow::Result;
 use gpui_kit::*;

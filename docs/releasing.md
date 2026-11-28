@@ -35,3 +35,11 @@ macOS 使用 Apple Silicon、Xcode Command Line Tools 和 Rust 1.100.0，设置 
 在 Actions 中手动运行 **Release Portiva 2**，默认只构建；勾选 `publish` 后，四个平台全部通过才会发布。推送与 Cargo 版本匹配的 `v2.*` 标签也会触发发布。发布前先上传全部附件到草稿并校验完整文件集合和 SHA-256，最后公开并设为最新版本；已公开的版本不能被此流水线覆盖。
 
 每个版本需提供 `docs/releases/v<版本>.md`。发布 job 原样沿用 v1.15.1 的 `latest.json`，防止旧版 Tauri 更新器误将独立的 Rust 客户端当作原位更新。2.x 的安装方式与数据兼容限制应在发布说明中明确。
+
+## 2.x 应用内更新
+
+“设置 → 关于 → 软件更新”读取 `https://github.com/gshu55/Portiva/releases/latest/download/update-v2.json`，固定仓库 `gshu55/Portiva`，不需要令牌或 GitHub API 匿名请求额度。发布任务根据真实附件大小生成此清单；清单与所有安装包一起先上传到草稿，再统一公开。仅接受高于当前版本的 2.x 正式版，忽略草稿、预发布、相同版本、旧版本和其他主版本。附件必须使用脚本现有命名及 GitHub 下载地址，且在 `SHA256SUMS.txt` 中存在唯一校验项；整个下载必须通过大小及 SHA-256 校验。
+
+Windows ZIP 仅提取 `portiva2.exe`，Linux 便携 TAR 仅提取预期目录中的 `portiva2`，随后检查 PE / ELF 的目标架构。安装前必须关闭所有 SSH / 本地终端和传输；临时脚本等待当前进程正常退出，在同一文件系统替换程序并重启，不强制结束进程。替换或启动失败时保留 / 恢复原程序，错误保存在配置目录的 `updates/update-*/install-error.txt`，下次打开设置会显示。
+
+Linux 的 `/usr` 安装或不可写目录改用 `.deb` 并打开系统安装器；macOS 打开 DMG，由用户将完整的已签名 `Portiva.app` 替换到“应用程序”后重新启动。安装包留在配置目录 `updates` 下，界面显示具体路径。下载与校验失败的临时文件自动删除。GitHub 客户端支持系统代理及 `HTTPS_PROXY`。

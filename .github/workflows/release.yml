@@ -120,6 +120,8 @@ jobs:
         run: |
           python3 - <<'PY'
           import hashlib
+          import json
+          import os
           import pathlib
           import tomllib
           version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version']
@@ -136,8 +138,21 @@ jobs:
           root = pathlib.Path('release-assets')
           actual = {path.name for path in root.iterdir() if path.is_file()}
           assert actual == expected, f'Asset mismatch: missing={expected-actual}, extra={actual-expected}'
+          expected.add('update-v2.json')
+          sums_size = sum(66 + len(name.encode('utf-8')) + 1 for name in expected)
+          base = f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/releases/download/v{version}'
+          manifest = {
+              'tag_name': f'v{version}', 'draft': False, 'prerelease': False,
+              'body': pathlib.Path(f'docs/releases/v{version}.md').read_text(encoding='utf-8'),
+              'assets': [
+                  {'name': name, 'size': (root/name).stat().st_size, 'browser_download_url': f'{base}/{name}'}
+                  for name in sorted(expected) if name.startswith('Portiva_')
+              ] + [{'name': 'SHA256SUMS.txt', 'size': sums_size, 'browser_download_url': f'{base}/SHA256SUMS.txt'}],
+          }
+          (root/'update-v2.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8', newline='\n')
           lines = [f'{hashlib.file_digest((root/name).open("rb"), "sha256").hexdigest()}  {name}\n' for name in sorted(expected)]
-          (root/'SHA256SUMS.txt').write_text(''.join(lines))
+          (root/'SHA256SUMS.txt').write_text(''.join(lines), encoding='utf-8', newline='\n')
+          assert (root/'SHA256SUMS.txt').stat().st_size == sums_size
           PY
           cd release-assets
           sha256sum --check SHA256SUMS.txt

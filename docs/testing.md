@@ -19,7 +19,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test -p portiva-core --locked
 ```
 
-截至 2026-11-28，Windows x64 已通过 56 项单元与回环协议测试：核心 43 项单测、4 项 SSH/SFTP 回环协议测试、2 项 SSH/X11 回环协议测试，桌面 7 项单测。本机没有 `cargo clippy` 启动入口，实际使用同一 Rust 1.100 工具链中的 `clippy-driver.exe` 作为 `RUSTC_WORKSPACE_WRAPPER` 完成静态检查。
+截至 2026-11-28，Windows x64 的默认测试包含 64 项单元与回环协议测试：核心 51 项单测、4 项 SSH/SFTP 回环协议测试、2 项 SSH/X11 回环协议测试，桌面 7 项单测。本机没有 `cargo clippy` 启动入口，实际使用同一 Rust 1.100 工具链中的 `clippy-driver.exe` 作为 `RUSTC_WORKSPACE_WRAPPER` 完成静态检查。
 
 Rustfmt、全目标 Clippy（`-D warnings`）及原生窗口回归均已通过；Linux AMD64 / ARM64、macOS ARM64 的原生 Release 构建及默认工作区测试由 [发布流水线](../.github/workflows/release.yml) 校验。真实图形服务及其他平台的验收范围见 [X11 转发](x11.md)。
 
@@ -29,6 +29,7 @@ Rustfmt、全目标 Clippy（`-D warnings`）及原生窗口回归均已通过�
 - 内容高亮：日志级别、HTML/C#/CSS 语法、命令和围栏切换、分批到达的 `tail` 输出、Unicode、长行、关闭开关、配色切换、ANSI / 真彩色和备用屏幕隔离。
 - 回环协议：密码与私钥认证、错误密码拒绝、首次指纹确认和指纹变化拦截、多 PTY 输入输出及尺寸隔离、关闭通道后其余终端和 SFTP 继续工作、独立 exec 资源采样、文件操作、递归传输、4.2 MB 二进制校验、中文目录、空目录、冲突、暂停/取消和失败重试。
 - 桌面单测：嵌套分屏关闭补位和最少保留一个终端、背景图、字体回退、任务标题更新与重置、文字批量排版。
+- 更新：2.x 版本比较、预发布和降级拒绝、四平台附件和安装模式、源仓库与地址限制、缺失和重复附件、大小及 SHA-256 校验、真实本机 HTTP 下载流的损坏 / 截断拒绝、ZIP / TAR 固定路径提取与架构检查；原子替换及启动失败回滚脚本使用临时文件验证，不覆盖用户程序。
 - X11：真实 SSH 的 `x11-req` 与服务器反向通道、屏幕号、分屏 cookie 隔离、本地 cookie 替换、跨连接和已撤销 cookie 拒绝、双向传输、断开清理、服务器拒绝及本机显示认证失败后 SSH/SFTP 继续可用。单测还覆盖大小端和分片握手、超长认证拒绝、并发限制、默认关闭的旧配置兼容与 Windows Job 生命周期。Unix 平台另有本地域套接字认证测试，尚未在本机执行。
 
 默认测试使用临时目录与本机合成服务，不读取用户私钥，也不向真实系统凭据库写入数据。
@@ -41,7 +42,7 @@ Rustfmt、全目标 Clippy（`-D warnings`）及原生窗口回归均已通过�
 cargo test -p portiva-core --test native_keyring --locked -- --ignored
 ```
 
-Windows 沙箱账户可能返回 `ERROR_NO_SUCH_LOGON_SESSION`；本机在真实 Windows 登录会话中已通过。此项不包含在上面的 56 项默认测试内。
+Windows 沙箱账户可能返回 `ERROR_NO_SUCH_LOGON_SESSION`；本机在真实 Windows 登录会话中已通过。此项不包含在上面的 64 项默认测试内。
 
 ## 原生窗口回归
 
@@ -65,6 +66,7 @@ cargo run -p portiva-desktop --example native_smoke --locked
 | `PORTIVA_SMOKE_SECONDS` | 调整窗口保留秒数，不延缓验证步骤 |
 | `PORTIVA_SMOKE_HIGHLIGHT=0` | 关闭回归后的 `cat` / `tail` 合成日志及 HTML/C#/CSS 配色展示 |
 | `PORTIVA_SMOKE_AUTH_ONLY=1` | 仅运行认证表单切换检查，随后自动退出 |
+| `PORTIVA_SMOKE_UPDATE_ONLY=1` | 渲染关于 / 软件更新界面、验证活动会话阻止安装，随后访问真实 GitHub 检查更新并自动退出 |
 | `PORTIVA_SMOKE_PREVIEW=1` | 验证 SFTP 默认收起、布局保存和恢复、连续设置与布局变化合并，再保留窗口预览；跳过剪贴板脚本 |
 
 Windows 示例：

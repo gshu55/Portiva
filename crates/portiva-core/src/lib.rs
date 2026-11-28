@@ -12,6 +12,7 @@ mod store;
 pub mod terminal;
 mod terminal_highlight;
 mod transfer;
+pub mod update;
 mod x11;
 
 pub use client::{Client, TerminalHandle};

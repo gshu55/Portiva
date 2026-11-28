@@ -35,6 +35,7 @@ const CODE_LANGUAGES: &[(CodeLanguage, &str)] = &[
 ];
 pub struct SettingsView {
     pub settings: Settings,
+    pub updater: Entity<crate::update::UpdateView>,
     section: usize,
     pub(crate) font: Entity<SelectState<SearchableVec<String>>>,
     pub(crate) font_size: Entity<InputState>,
@@ -231,6 +232,7 @@ impl SettingsView {
             },
         );
         Self {
+            updater: cx.new(|_| crate::update::UpdateView::new(runtime.clone(), data.clone())),
             font,
             font_size,
             code_language,
@@ -891,6 +893,14 @@ impl SettingsView {
                     .text_xs()
                     .text_color(rgb(colors(cx).muted))
                     .child("Rust · GPUI · russh · Alacritty"),
+            )
+            .child(
+                div()
+                    .mt_3()
+                    .pt_3()
+                    .border_t_1()
+                    .border_color(rgb(colors(cx).border))
+                    .child(self.updater.clone()),
             )
             .into_any_element()
     }

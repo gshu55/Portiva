@@ -17,6 +17,8 @@ mod support;
 mod terminal;
 #[path = "../src/theme.rs"]
 mod theme;
+#[path = "../src/update.rs"]
+mod update;
 
 use anyhow::Result;
 use app::terminal_layout::SplitDirection;
@@ -104,6 +106,7 @@ fn main() -> Result<()> {
     let verification = complete.clone();
     let preview = std::env::var_os("PORTIVA_SMOKE_PREVIEW").is_some();
     let auth_only = std::env::var_os("PORTIVA_SMOKE_AUTH_ONLY").is_some();
+    let update_only = std::env::var_os("PORTIVA_SMOKE_UPDATE_ONLY").is_some();
     let highlight_preview = std::env::var("PORTIVA_SMOKE_HIGHLIGHT").as_deref() != Ok("0");
     let initial = source.path().to_path_buf();
     let seconds = std::env::var("PORTIVA_SMOKE_SECONDS")
@@ -122,6 +125,32 @@ fn main() -> Result<()> {
         // Exercise the same core API while the GPUI event loop keeps rendering.
         cx.spawn(async move |cx| {
             let delay=check_runtime.spawn(async move{tokio::time::sleep(Duration::from_secs(2)).await;});let _=delay.await;
+            let updater=window.update(cx,|_,_,cx| {
+                let editor=view.read(cx).settings_view.clone().unwrap();
+                editor.update(cx,|editor,cx|editor.select_section(3,cx));
+                let updater=editor.read(cx).updater.clone();
+                updater.update(cx,|_,cx|cx.emit(update::UpdateEvent::InstallRequested));
+                updater
+            }).unwrap();
+            cx.background_executor().timer(Duration::from_millis(200)).await;
+            let _=window.update(cx,|_,_,cx|assert!(updater.read(cx).error.as_ref().is_some_and(|error|error.contains("活动会话")),"active SSH session did not prevent installing an update"));
+            println!("Update UI PASSED: About page rendered and active loopback SSH session prevented installation without disconnecting.");
+            if update_only {
+                let _=window.update(cx,|_,window,cx|updater.update(cx,|updater,cx|updater.check(window,cx)));
+                for _ in 0..650 {
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                    let finished=window.update(cx,|_,_,cx|!updater.read(cx).checking).unwrap();
+                    if finished {
+                        let _=window.update(cx,|_,_,cx|assert!(updater.read(cx).error.is_none(),"live GitHub update check failed: {:?}",updater.read(cx).error));
+                        println!("Live GitHub update check PASSED.");
+                        verification.store(true,Ordering::SeqCst);
+                        cx.update(|cx|cx.quit());
+                        return;
+                    }
+                }
+                panic!("GitHub update check did not finish");
+            }
+            let _=window.update(cx,|_,_,cx|view.read(cx).settings_view.clone().unwrap().update(cx,|editor,cx|editor.select_section(0,cx)));
             for (protocol,editing) in [(Protocol::Ssh,true),(Protocol::Ssh,false),(Protocol::Sftp,true),(Protocol::Sftp,false)] {
                 let mut auth_profile=tab_test_profile.clone();
                 auth_profile.protocol=protocol.clone();

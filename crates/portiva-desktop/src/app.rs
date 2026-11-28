@@ -170,6 +170,7 @@ pub struct Workbench {
     settings_save_error: Option<String>,
     pub(crate) settings_view: Option<Entity<SettingsView>>,
     settings_subscription: Option<Subscription>,
+    update_subscription: Option<Subscription>,
     settings_active: bool,
     home_active: bool,
     background: Option<PathBuf>,
@@ -230,6 +231,7 @@ impl Workbench {
             settings_save_error: None,
             settings_view: None,
             settings_subscription: None,
+            update_subscription: None,
             settings_active: false,
             home_active: true,
             background: None,
@@ -371,6 +373,16 @@ impl Workbench {
                         view.save_settings(settings, window, cx)
                     }
                 });
+            let updater = editor.read(cx).updater.clone();
+            self.update_subscription = Some(cx.subscribe_in(&updater, window, |view, updater, _, _, cx| {
+                let sessions = view.tabs.iter().filter(|tab| tab.state != ConnectionState::Disconnected).count();
+                let transfers = view.transfers.iter().filter(|transfer| !transfer.status.finished()).count();
+                if sessions != 0 || transfers != 0 {
+                    updater.update(cx, |updater, cx| updater.set_error(format!("请先关闭 {sessions} 个活动会话并结束 {transfers} 个传输，再安装更新。"), cx));
+                } else if updater.update(cx, |updater, cx| updater.install(cx)) {
+                    cx.quit();
+                }
+            }));
             self.settings_view = Some(editor);
             self.settings_subscription = Some(subscription);
             window.focus(&self.workspace_focus, cx);
