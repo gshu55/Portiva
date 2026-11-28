@@ -249,14 +249,16 @@ impl Client {
                     }
                 }
             }
-            // Keep the unreaped child until cleanup; a recycled Unix PID is never signalled.
-            if !exited {
-                let _ = tokio::task::spawn_blocking(move || {
-                    let _ = child.kill();
-                    child.wait()
-                })
-                .await;
-            }
+            let reap_child = async {
+                // Keep the unreaped child until cleanup; a recycled Unix PID is never signalled.
+                if !exited {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let _ = child.kill();
+                        child.wait()
+                    })
+                    .await;
+                }
+            };
             let close_input = async {
                 if let Some(sender) = weak_sender.upgrade() {
                     let _ = sender.send(TerminalCommand::Close).await;
@@ -264,8 +266,8 @@ impl Client {
             };
             let drain_output = async {
                 let mut forward = active && !cancelled.is_cancelled();
-                // ConPTY must keep draining while its master is being closed, even
-                // when the event queue is full or the consumer has closed the tab.
+                // Drain throughout child exit and master closure: a full PTY output
+                // buffer can otherwise prevent either operation from completing.
                 while let Some(data) = output.recv().await {
                     if forward && let Ok(data) = data {
                         forward = tokio::select! {
@@ -275,7 +277,8 @@ impl Client {
                     }
                 }
             };
-            tokio::join!(close_input, drain_output);
+            tokio::join!(reap_child, close_input, drain_output);
+            cancelled.cancel();
             inner
                 .local_terminals
                 .lock()
@@ -441,6 +444,8 @@ mod tests {
         let message = closed(&events, handle.id).await?;
         assert!(message.contains('7'), "{message}");
         assert!(handle.write("ignored").is_err());
+        assert!(handle.activate().is_err());
+        assert!(handle.resize(size).is_err());
         client.shutdown().await;
         Ok(())
     }
@@ -459,7 +464,12 @@ mod tests {
             )
             .await?;
         pending.close();
-        closed(&events, pending.id).await?;
+        assert!(pending.write("ignored").is_err());
+        assert!(pending.activate().is_err());
+        assert!(pending.resize(TerminalSize::default()).is_err());
+        closed(&events, pending.id)
+            .await
+            .context("关闭未激活的本地 Shell")?;
         let active = client
             .open_local_terminal(
                 Uuid::new_v4(),
@@ -488,7 +498,9 @@ mod tests {
         active.write(burst)?;
         tokio::time::sleep(Duration::from_millis(500)).await;
         active.close();
-        closed(&events, active.id).await?;
+        closed(&events, active.id)
+            .await
+            .context("关闭持续输出的本地 Shell")?;
         sibling.activate()?;
         sibling.write(print(&shell, "SIBLING_OK"))?;
         read_until(
@@ -500,7 +512,7 @@ mod tests {
         .await?;
         let id = sibling.id;
         drop(sibling);
-        closed(&events, id).await?;
+        closed(&events, id).await.context("关闭兄弟本地 Shell")?;
         assert!(client.inner.local_terminals.lock().unwrap().is_empty());
         Ok(())
     }

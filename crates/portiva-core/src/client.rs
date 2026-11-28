@@ -65,17 +65,20 @@ pub(crate) enum TerminalCommand {
 impl TerminalHandle {
     /// Begin output delivery after the consumer has registered this terminal's ID.
     pub fn activate(&self) -> Result<()> {
+        anyhow::ensure!(!self.closed.is_cancelled(), "终端通道已关闭");
         self.sender
             .try_send(TerminalCommand::Activate)
             .context("终端通道已关闭")
     }
     /// A single FIFO preserves key ordering. Queue overflow is returned, never silently dropped.
     pub fn write(&self, bytes: impl Into<Vec<u8>>) -> Result<()> {
+        anyhow::ensure!(!self.closed.is_cancelled(), "终端通道已关闭");
         self.sender
             .try_send(TerminalCommand::Write(bytes.into()))
             .context("终端输入队列已满或会话已关闭")
     }
     pub fn resize(&self, size: TerminalSize) -> Result<()> {
+        anyhow::ensure!(!self.closed.is_cancelled(), "终端通道已关闭");
         self.sender
             .try_send(TerminalCommand::Resize(size))
             .context("终端无法调整尺寸")
@@ -489,6 +492,7 @@ impl Client {
             }.await;
             let _ = writer.close().await;
             drop(x11);
+            reader_closed.cancel();
             let message = result
                 .err()
                 .map(|e| format!("终端已断开：{e:#}"))
