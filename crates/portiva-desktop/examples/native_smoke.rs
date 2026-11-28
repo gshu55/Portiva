@@ -125,6 +125,7 @@ fn main() -> Result<()> {
             for (protocol,editing) in [(Protocol::Ssh,true),(Protocol::Ssh,false),(Protocol::Sftp,true),(Protocol::Sftp,false)] {
                 let mut auth_profile=tab_test_profile.clone();
                 auth_profile.protocol=protocol.clone();
+                auth_profile.x11=X11Settings{enabled:protocol==Protocol::Ssh,display:"localhost:0.2".into()};
                 auth_profile.remember_secret=true;
                 auth_profile.private_key_path=Some(source_path.with_file_name("synthetic-key"));
                 if !editing {auth_profile.id=uuid::Uuid::new_v4().to_string();}
@@ -141,16 +142,34 @@ fn main() -> Result<()> {
                         assert!(!form.has_saved_secret);
                         let (profile,credentials)=form.values(cx).unwrap();
                         assert_eq!(profile.protocol,protocol);
+                        assert_eq!(profile.x11.enabled,protocol==Protocol::Ssh,"authentication switching changed X11 forwarding");
+                        assert_eq!(profile.x11.display,"localhost:0.2","authentication switching lost the X11 display");
                         assert!(profile.private_key_path.as_ref().is_some_and(|path|path.ends_with("synthetic-key")),"switching authentication lost the key path");
                         assert!(!profile.remember_secret,"switching authentication reused another method's credentials");
                         assert!(credentials.password.is_empty() && credentials.passphrase.is_empty(),"switching authentication retained a secret");
                     });
                 }
+                if protocol==Protocol::Ssh {
+                    for enabled in [false,true] {
+                        let _=window.update(cx,|_,_,cx|view.update(cx,|view,cx|view.set_x11_forwarding(enabled,cx)));
+                        cx.background_executor().timer(Duration::from_millis(100)).await;
+                        let _=window.update(cx,|_,_,cx|{
+                            let (profile,_)=view.read(cx).form.as_ref().unwrap().values(cx).unwrap();
+                            assert_eq!(profile.x11.enabled,enabled);
+                            assert_eq!(profile.x11.display,"localhost:0.2");
+                        });
+                    }
+                    for next in [Protocol::Sftp,Protocol::Ssh] {
+                        let _=window.update(cx,|_,_,cx|view.update(cx,|view,cx|view.select_protocol(next,cx)));
+                        cx.background_executor().timer(Duration::from_millis(100)).await;
+                        let _=window.update(cx,|_,_,cx|assert!(!view.read(cx).form.as_ref().unwrap().values(cx).unwrap().0.x11.enabled,"SFTP retained X11 forwarding"));
+                    }
+                }
                 let _=window.update(cx,|_,window,cx|window.dispatch_keystroke(Keystroke::parse("escape").unwrap(),cx));
                 cx.background_executor().timer(Duration::from_millis(100)).await;
                 let _=window.update(cx,|_,_,cx|assert!(view.read(cx).form.is_none(),"authentication form did not close"));
             }
-            println!("Authentication form PASSED: new/edit SSH/SFTP forms switch password/private-key/agent on separate frames, preserve the key path and reset remembered credentials.");
+            println!("Authentication form PASSED: new/edit SSH/SFTP auth methods, X11 enable/disable and protocol switching render on separate frames and preserve paths without reusing secrets.");
             if auth_only {
                 verification.store(true,Ordering::SeqCst);
                 cx.update(|cx|cx.quit());
@@ -472,10 +491,16 @@ fn main() -> Result<()> {
             let third=third.expect("top/bottom split did not open a third PTY");
             let panes=[terminal.clone(),second.clone(),third.clone()];
             for (index,pane) in panes.iter().enumerate() {
-                let _=window.update(cx,|_,window,cx|{let focus=pane.focus_handle(cx);window.focus(&focus,cx);});
-                cx.background_executor().timer(Duration::from_millis(75)).await;
+                let _=window.update(cx,|_,window,cx|{window.activate_window();let focus=pane.focus_handle(cx);window.focus(&focus,cx);});
+                // Focus subscriptions run with rendered frames; background Windows can be throttled.
+                for _ in 0..40 {
+                    cx.background_executor().timer(Duration::from_millis(50)).await;
+                    if window.update(cx,|_,window,cx|{
+                        pane.focus_handle(cx).is_focused(window) && view.read(cx).active_terminal().is_some_and(|active|active.read(cx).handle.id==pane.read(cx).handle.id)
+                    }).unwrap_or(false) {break;}
+                }
                 let _=window.update(cx,|_,window,cx|{
-                    assert_eq!(view.read(cx).active_terminal().unwrap().read(cx).handle.id,pane.read(cx).handle.id,"focus did not select the target pane");
+                    assert_eq!(view.read(cx).active_terminal().unwrap().read(cx).handle.id,pane.read(cx).handle.id,"focus did not select pane {index}; window active: {}",window.is_window_active());
                     for candidate in &panes {
                         assert_eq!(candidate.read(cx).active,candidate==pane,"title highlight did not follow the active pane");
                     }

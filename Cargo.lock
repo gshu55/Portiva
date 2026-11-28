@@ -5678,12 +5678,13 @@ dependencies = [
 
 [[package]]
 name = "portiva-core"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-channel",
  "dunce",
+ "getrandom 0.4.3",
  "keyring",
  "portable-pty",
  "rand 0.10.4",
@@ -5698,12 +5699,13 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 
 [[package]]
 name = "portiva-desktop"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7796,6 +7798,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

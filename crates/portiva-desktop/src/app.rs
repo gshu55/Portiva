@@ -330,6 +330,25 @@ impl Workbench {
             cx.notify();
         }
     }
+    pub(crate) fn select_protocol(&mut self, protocol: Protocol, cx: &mut Context<Self>) {
+        if let Some(form) = &mut self.form
+            && !form.busy
+        {
+            form.profile.protocol = protocol;
+            if form.profile.protocol == Protocol::Sftp {
+                form.profile.x11.enabled = false;
+            }
+            cx.notify();
+        }
+    }
+    pub(crate) fn set_x11_forwarding(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(form) = &mut self.form
+            && !form.busy
+        {
+            form.profile.x11.enabled = enabled && form.profile.protocol == Protocol::Ssh;
+            cx.notify();
+        }
+    }
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings_view.is_none() {
             let editor = cx.new(|cx| {
@@ -1786,10 +1805,7 @@ impl Workbench {
                                     .text_color(rgb(c.text))
                             })
                             .on_click(cx.listener(move |v, _, _, cx| {
-                                if let Some(form) = &mut v.form {
-                                    form.profile.protocol = protocol.clone();
-                                }
-                                cx.notify();
+                                v.select_protocol(protocol.clone(), cx);
                             }))
                     },
                 ));
@@ -1798,6 +1814,23 @@ impl Workbench {
             .h(px(34.))
             .disabled(form.busy)
             .on_click(cx.listener(|v, _, w, cx| v.choose_private_key(w, cx)));
+        let x11_enabled = form.profile.x11.enabled;
+        let x11_toggle = tool(
+            "x11-forwarding",
+            IconName::Monitor,
+            if x11_enabled {
+                "关闭 X11 转发"
+            } else {
+                "启用 X11 转发"
+            },
+            x11_enabled,
+        )
+        .selected(x11_enabled)
+        .toggled(x11_enabled)
+        .disabled(form.busy)
+        .on_click(cx.listener(move |v, _, _, cx| {
+            v.set_x11_forwarding(!x11_enabled, cx);
+        }));
         overlay(
             &self.modal_focus,
             column()
@@ -1849,7 +1882,9 @@ impl Workbench {
                         .child(
                             column()
                                 .gap_2()
-                                .child(form.render(protocols, auth_menu, key_button, cx))
+                                .child(
+                                    form.render(protocols, auth_menu, key_button, x11_toggle, cx),
+                                )
                                 .when(form.profile.auth != AuthMethod::Agent, |el| {
                                     el.child(
                                         row()

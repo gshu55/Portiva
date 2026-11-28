@@ -26,6 +26,14 @@ pub enum AuthMethod {
     Agent,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct X11Settings {
+    pub enabled: bool,
+    /// Empty uses DISPLAY, XQuartz's launchd environment, or managed VcXsrv.
+    pub display: String,
+}
+
 /// Connection metadata only. Secrets deliberately cannot be serialized with a profile.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +50,8 @@ pub struct Profile {
     pub private_key_path: Option<PathBuf>,
     #[serde(default)]
     pub remember_secret: bool,
+    #[serde(default)]
+    pub x11: X11Settings,
 }
 
 impl Default for Profile {
@@ -56,6 +66,7 @@ impl Default for Profile {
             auth: AuthMethod::Password,
             private_key_path: None,
             remember_secret: false,
+            x11: X11Settings::default(),
         }
     }
 }
@@ -71,6 +82,13 @@ impl Profile {
         anyhow::ensure!(!self.username.trim().is_empty(), "请填写用户名");
         if self.auth == AuthMethod::PrivateKey {
             anyhow::ensure!(self.private_key_path.is_some(), "请选择私钥文件");
+        }
+        if self.x11.enabled {
+            anyhow::ensure!(self.protocol == Protocol::Ssh, "X11 转发仅支持 SSH 终端");
+            if !self.x11.display.trim().is_empty() {
+                crate::x11::validate_display(self.x11.display.trim())
+                    .map_err(anyhow::Error::msg)?;
+            }
         }
         Ok(())
     }

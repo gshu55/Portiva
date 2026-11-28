@@ -2,11 +2,19 @@
 
 使用 Rust + GPUI 重建 Portiva 的 SSH / SFTP 工作台，并提供应用内本地终端。核心服务可独立于桌面界面构建和测试。
 
+## 下载
+
+从 [GitHub Releases](https://github.com/gshu55/Portiva/releases) 下载 2.x：Windows x64 提供 ZIP（解压后运行 `portiva2.exe`），Linux AMD64 / ARM64 提供 `.deb` 和 `.tar.gz`，macOS Apple Silicon 提供 `.dmg` 和 `.app.tar.gz`。各包的 SHA-256 收录在 `SHA256SUMS.txt`。
+
+Linux 官方构建以 Ubuntu 24.04 为基线，需要 glibc 2.39 及以上、Vulkan 图形驱动和 X11 / Wayland 桌面；Debian 系发行版推荐使用 `.deb` 安装运行库依赖。macOS 需要 13 及以上版本，DMG 中的应用拖入“应用程序”即可安装；目前使用 ad-hoc 签名，尚未经过 Apple 公证。
+
+2.x 使用独立的配置和凭据目录，暂不自动导入 1.x，也未包含旧版串口功能。1.x 自动更新清单继续保留最后的 1.x 版本；升级到 2.x 请手动下载。详见 [v2.0.0 发布说明](docs/releases/v2.0.0.md)。
+
 ## 获取源码
 
 ```sh
-git clone https://github.com/gshu55/Portiva2.git
-cd Portiva2
+git clone https://github.com/gshu55/Portiva.git
+cd Portiva
 ```
 
 ## 运行
@@ -39,11 +47,13 @@ $env:PORTIVA2_DATA_DIR = Join-Path $PWD.Path '.local/app-data'
 .\build.cmd -Run
 ```
 
-Linux / macOS Apple Silicon 的源码运行入口如下；平台分支已经实现，尚未在对应平台完成编译与运行验证：
+Linux / macOS Apple Silicon 的源码运行入口如下；正式发布由 GitHub Actions 在各自架构的原生环境中构建并测试，真实桌面和远程服务仍需对应平台联调：
 
 ```sh
 cargo run -p portiva-desktop --locked
 ```
+
+Linux 编译所需的系统开发库及完整发布步骤见 [跨平台发布](docs/releasing.md)。
 
 点击顶部“+”，填写主机、用户名和认证方式。主机概览点击已保存主机直接打开连接；编辑使用主机右侧的铅笔图标。保存过的凭据自动复用；没有保存密码时在连接标签内补输本次密码，不弹出完整编辑框。首次连接仍需核对主机指纹。可选择私钥文件，并勾选“记住密码 / 口令”；密码和私钥口令通过 `keyring` 保存在当前系统用户的凭据库，连接 JSON 不包含明文秘密，私钥保留原文件路径。不同配置目录、服务器、用户和私钥路径的凭据相互隔离。旧版配置和凭据暂未自动导入。
 
@@ -51,6 +61,7 @@ cargo run -p portiva-desktop --locked
 
 - 界面：参照原版的中性深色与蓝色强调色，自绘顶部会话/设置标签、图标工具条、拖动区域和窗口控制；主机概览只提供 SSH / SFTP，设置采用左导航和居中卡片，连接弹窗采用双列排布。
 - 连接：密码、私钥与 SSH Agent 接口，多会话标签，连接状态，指纹确认与持久化，指纹变化拒绝连接，连接取消。
+- X11：SSH 配置中可启用 X11 转发并指定本机显示地址，默认自动检测。Windows 可按需启动已安装的 VcXsrv，Linux 对接 X11/XWayland，macOS 对接 XQuartz；各终端独立认证与撤销，配置跨重启保存。平台准备和使用步骤见 [X11 转发](docs/x11.md)。
 - 本地终端：顶部终端图标在应用内打开本地标签，沿用终端配色、背景、复制粘贴与分屏。Windows 使用 PowerShell 7 → Windows PowerShell → CMD；Linux/macOS 使用 `$SHELL`，不可用时读取账号默认 Shell，再回退 `/bin/sh`。终端按当前进程权限运行，底部不显示程序路径或当前目录。Linux/macOS 平台分支已实现，尚未完成实机编译与运行验证。
 - 标签：空间充足时全部展开标题，放不下时才将未选中的标签收缩为图标，选中标签保持展开；关闭标签或加宽窗口后自动恢复。SSH 标签随当前聚焦分屏上报的任务标题更新，切换分屏及关闭补位同步更新；空标题、Shell、目录或登录默认标题保留连接名称，悬停同时显示任务与主机信息。任务名称来自远端 OSC 0/2 标题，不从终端输出猜测或向服务器安装脚本。继续超出顶部空间时支持鼠标滚轮和触控板水平滚动，不绘制滚动条。新建和切换自动定位选中标签，鼠标中键可关闭会话与设置标签；主机概览作为固定入口保留。
 - 终端：真实 SSH PTY、窗口尺寸同步，支持对当前终端左右、上下嵌套拆分和拖动分隔条；每个分屏使用独立通道，关闭时自动补位，至少保留一个终端。Alacritty 解析支持 ANSI / 256 色 / 真彩色、中文和宽字符、历史滚动、鼠标选择、复制粘贴、特殊按键和括号粘贴。输入法预编辑与提交分开处理。
@@ -91,6 +102,7 @@ GPUI 工作台 / 连接表单               连接配置 / 主机信任
 | `crates/portiva-core/src/model.rs` | 连接、文件、传输及事件模型 |
 | `client.rs` | SSH 认证、指纹确认、PTY、独立 SFTP 通道与文件操作 |
 | `local_terminal.rs`（核心） | 本地 Shell 选择、跨平台 PTY、输入输出、尺寸、退出与取消清理 |
+| `x11.rs` | X11 显示发现、认证替换、双向转发及 Windows 显示服务生命周期 |
 | `terminal.rs` | 无界面的 Alacritty 状态、渲染快照、按键/粘贴编码与选择 |
 | `terminal_highlight.rs` | 无界面的日志识别、语法解析与按终端调色板生成高亮范围 |
 | `transfer.rs` | 递归规划、并发、进度、冲突和文件提交 |
@@ -118,6 +130,7 @@ GPUI 工作台 / 连接表单               连接配置 / 主机信任
 | 终端解析 | `alacritty_terminal 0.26.0` |
 | 代码语法 / 日志识别 | `syntect 5.3.0`（内置语法、纯 Rust 正则后端）/ `regex` |
 | 本地 PTY | `portable-pty 0.9.0`，Windows ConPTY / Unix PTY |
+| X11 转发 / 本机显示服务 | `russh` 的 X11 通道 / `tokio::process` / `getrandom` / Windows `windows-sys` |
 | 异步运行、事件、取消 | `tokio` / `async-channel` / `tokio-util` |
 | 文件选择、临时文件、配置 | `rfd` / `tempfile` / `serde` / `serde_json` |
 | 系统凭据 / 背景图处理 | `keyring 4.1.5` / `image 0.25.10` / `resvg 0.45.1` |
@@ -135,11 +148,12 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 依赖已缓存时可给 Cargo 编译与测试命令添加 `--offline`。格式检查和 Clippy 需要对应工具链的 `rustfmt`、`clippy` 组件。
 
-Windows x64 已通过 40 项单元与回环协议测试、Rustfmt、全目标 Clippy 和原生窗口回归。默认测试使用临时目录与本机合成服务，真实系统凭据库测试需要单独启用。完整命令、测试覆盖和原生窗口选项见 [测试与验证](docs/testing.md)。
+Windows x64 已通过 56 项单元与回环协议测试、Rustfmt、全目标 Clippy 和原生窗口回归。默认测试使用临时目录与本机合成服务，真实系统凭据库测试需要单独启用。完整命令、测试覆盖和原生窗口选项见 [测试与验证](docs/testing.md)。
 
 ## 开发文档
 
 - [测试与验证](docs/testing.md)：单元、回环协议、系统凭据库与原生窗口检查。
+- [X11 转发](docs/x11.md)：Windows、Linux、macOS 显示服务准备及 SSH 图形应用使用。
 - [实现与验证记录](docs/implementation-status.md)：功能进展、修复依据及实际验收范围。
 - [SSH / SFTP 与 GPUI 选型分析](docs/ssh-sftp-gpui-feasibility.md)：原版功能对照、架构和依赖选择。
 
@@ -147,7 +161,7 @@ Windows x64 已通过 40 项单元与回环协议测试、Rustfmt、全目标 Cl
 
 ## 后续范围
 
-原版的标签拖动与窗口分离/合并、命令助手与完整服务器概览、终端搜索、富文本复制、文件右键菜单与拖入上传、终端分屏布局持久化、旧版配置迁移和 X11 尚待继续实现。
+原版的标签拖动与窗口分离/合并、命令助手与完整服务器概览、终端搜索、富文本复制、文件右键菜单与拖入上传、终端分屏布局持久化、旧版配置迁移尚待继续实现。
 
 当前实际构建和可见窗口检查在 Windows x64 完成。Linux、macOS Apple Silicon、真实 OpenSSH 服务器、真实 SSH Agent、不同输入法及 Vim/tmux/交互式全屏程序仍需实测。原版功能对照和选型分析见 `docs/ssh-sftp-gpui-feasibility.md`。
 

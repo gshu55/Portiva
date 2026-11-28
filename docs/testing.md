@@ -19,7 +19,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test -p portiva-core --locked
 ```
 
-截至 2026-11-27，Windows x64 已通过 40 项单元与回环协议测试：核心 29 项单测、4 项回环协议集成测试，桌面 7 项单测。Rustfmt、全目标 Clippy（`-D warnings`）和原生窗口回归也已通过。本机没有 `cargo clippy` 启动入口，实际使用同一 Rust 1.100 工具链中的 `clippy-driver.exe` 作为 `RUSTC_WORKSPACE_WRAPPER` 完成检查。
+截至 2026-11-28，Windows x64 已通过 56 项单元与回环协议测试：核心 43 项单测、4 项 SSH/SFTP 回环协议测试、2 项 SSH/X11 回环协议测试，桌面 7 项单测。本机没有 `cargo clippy` 启动入口，实际使用同一 Rust 1.100 工具链中的 `clippy-driver.exe` 作为 `RUSTC_WORKSPACE_WRAPPER` 完成静态检查。
+
+Rustfmt、全目标 Clippy（`-D warnings`）及原生窗口回归均已通过；Linux AMD64 / ARM64、macOS ARM64 的原生 Release 构建及默认工作区测试由 [发布流水线](../.github/workflows/release.yml) 校验。真实图形服务及其他平台的验收范围见 [X11 转发](x11.md)。
 
 ## 覆盖范围
 
@@ -27,6 +29,7 @@ cargo test -p portiva-core --locked
 - 内容高亮：日志级别、HTML/C#/CSS 语法、命令和围栏切换、分批到达的 `tail` 输出、Unicode、长行、关闭开关、配色切换、ANSI / 真彩色和备用屏幕隔离。
 - 回环协议：密码与私钥认证、错误密码拒绝、首次指纹确认和指纹变化拦截、多 PTY 输入输出及尺寸隔离、关闭通道后其余终端和 SFTP 继续工作、独立 exec 资源采样、文件操作、递归传输、4.2 MB 二进制校验、中文目录、空目录、冲突、暂停/取消和失败重试。
 - 桌面单测：嵌套分屏关闭补位和最少保留一个终端、背景图、字体回退、任务标题更新与重置、文字批量排版。
+- X11：真实 SSH 的 `x11-req` 与服务器反向通道、屏幕号、分屏 cookie 隔离、本地 cookie 替换、跨连接和已撤销 cookie 拒绝、双向传输、断开清理、服务器拒绝及本机显示认证失败后 SSH/SFTP 继续可用。单测还覆盖大小端和分片握手、超长认证拒绝、并发限制、默认关闭的旧配置兼容与 Windows Job 生命周期。Unix 平台另有本地域套接字认证测试，尚未在本机执行。
 
 默认测试使用临时目录与本机合成服务，不读取用户私钥，也不向真实系统凭据库写入数据。
 
@@ -38,7 +41,7 @@ cargo test -p portiva-core --locked
 cargo test -p portiva-core --test native_keyring --locked -- --ignored
 ```
 
-Windows 沙箱账户可能返回 `ERROR_NO_SUCH_LOGON_SESSION`；本机在真实 Windows 登录会话中已通过。此项不包含在上面的 40 项默认测试内。
+Windows 沙箱账户可能返回 `ERROR_NO_SUCH_LOGON_SESSION`；本机在真实 Windows 登录会话中已通过。此项不包含在上面的 56 项默认测试内。
 
 ## 原生窗口回归
 
@@ -52,6 +55,7 @@ cargo run -p portiva-desktop --example native_smoke --locked
 - Tab / Shift+Tab / Ctrl+C 路由、默认与自定义复制粘贴快捷键、多行粘贴确认，并恢复测试前的剪贴板。
 - 主题与背景处理、设置即时应用与自动保存、字体和快捷键校验、连续修改后关闭设置标签仍正确保存。
 - 新建/编辑 SSH 和 SFTP 表单中的密码、私钥、Agent 逐帧反复切换，私钥路径保留与凭据状态重置。
+- X11 开关逐帧显示/隐藏本机显示字段，认证切换保留 X11 配置，切到 SFTP 时关闭 X11。
 - SSH / SFTP 连接、上传以及本地/远端双栏。
 
 默认保留窗口 300 秒供人工检查。环境变量只影响该验证程序：
@@ -71,4 +75,4 @@ $env:PORTIVA_SMOKE_HIGHLIGHT = '0'
 cargo run -p portiva-desktop --example native_smoke --locked --offline
 ```
 
-测试服务只绑定本机随机端口，文件服务仅访问它创建的临时目录。临时 Shell 只回显输入，资源通道返回合成计数器；这些检查不能代替真实 Shell 补全、真实 OpenSSH / SSH Agent、不同输入法以及 Vim/tmux/交互式全屏程序的联调。Linux 和 macOS Apple Silicon 尚未在对应平台完成编译与运行验证。
+测试服务只绑定本机随机端口，文件服务仅访问它创建的临时目录。临时 Shell 只回显输入，资源通道返回合成计数器；这些检查不能代替真实 Shell 补全、真实 OpenSSH / SSH Agent、不同输入法以及 Vim/tmux/交互式全屏程序的联调。Linux 和 macOS Apple Silicon 的真实桌面、系统凭据库和远程图形窗口仍需实机验收。

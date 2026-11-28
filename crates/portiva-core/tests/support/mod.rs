@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -26,6 +26,8 @@ pub struct TestServer {
     pub input: Arc<Mutex<Vec<u8>>>,
     pub shells: Arc<Mutex<Vec<ShellRecord>>>,
     pub resource_requests: Arc<AtomicUsize>,
+    pub x11_requests: Arc<Mutex<Vec<X11Request>>>,
+    pub reject_x11: Arc<AtomicBool>,
     handle: server::RunningServerHandle,
     task: tokio::task::JoinHandle<()>,
 }
@@ -34,6 +36,15 @@ pub struct ShellRecord {
     pub input: Vec<u8>,
     pub size: (u32, u32),
     pub closed: bool,
+}
+
+#[derive(Clone)]
+pub struct X11Request {
+    pub protocol: String,
+    pub cookie: String,
+    pub screen: u32,
+    pub single_connection: bool,
+    pub handle: server::Handle,
 }
 impl TestServer {
     pub async fn start(latency: Duration) -> Result<Self> {
@@ -65,6 +76,8 @@ impl TestServer {
         let input = Arc::new(Mutex::new(Vec::new()));
         let shells = Arc::new(Mutex::new(Vec::new()));
         let resource_requests = Arc::new(AtomicUsize::new(0));
+        let x11_requests = Arc::new(Mutex::new(Vec::new()));
+        let reject_x11 = Arc::new(AtomicBool::new(false));
         let mut server = Fixture {
             root: Arc::new(root.path().into()),
             latency,
@@ -74,6 +87,8 @@ impl TestServer {
             shell_records: shells.clone(),
             resource_requests: resource_requests.clone(),
             input: input.clone(),
+            x11_requests: x11_requests.clone(),
+            reject_x11: reject_x11.clone(),
         };
         let (send, receive) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
@@ -90,6 +105,8 @@ impl TestServer {
             input,
             shells,
             resource_requests,
+            x11_requests,
+            reject_x11,
             handle,
             task,
         })
@@ -110,6 +127,8 @@ struct Fixture {
     shell_records: Arc<Mutex<Vec<ShellRecord>>>,
     resource_requests: Arc<AtomicUsize>,
     input: Arc<Mutex<Vec<u8>>>,
+    x11_requests: Arc<Mutex<Vec<X11Request>>>,
+    reject_x11: Arc<AtomicBool>,
 }
 impl server::Server for Fixture {
     type Handler = Self;
@@ -123,6 +142,8 @@ impl server::Server for Fixture {
             shell_records: self.shell_records.clone(),
             resource_requests: self.resource_requests.clone(),
             input: self.input.clone(),
+            x11_requests: self.x11_requests.clone(),
+            reject_x11: self.reject_x11.clone(),
         }
     }
 }
@@ -162,6 +183,30 @@ impl server::Handler for Fixture {
         session: &mut Session,
     ) -> Result<()> {
         self.sizes.insert(id, (columns, rows));
+        session.channel_success(id)?;
+        Ok(())
+    }
+
+    async fn x11_request(
+        &mut self,
+        id: ChannelId,
+        single_connection: bool,
+        protocol: &str,
+        cookie: &str,
+        screen: u32,
+        session: &mut Session,
+    ) -> Result<()> {
+        if self.reject_x11.load(Ordering::SeqCst) {
+            session.channel_failure(id)?;
+            return Ok(());
+        }
+        self.x11_requests.lock().unwrap().push(X11Request {
+            protocol: protocol.into(),
+            cookie: cookie.into(),
+            screen,
+            single_connection,
+            handle: session.handle(),
+        });
         session.channel_success(id)?;
         Ok(())
     }

@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::transfer::TransferControl;
+use crate::x11::{X11Displays, X11Forwarding};
 use crate::{
     files::{self, remote_join, sort_entries},
     store::HostTrust,
@@ -36,12 +37,14 @@ pub(crate) struct Inner {
     connections: Mutex<HashMap<SessionId, CancellationToken>>,
     pub transfers: Mutex<HashMap<TransferId, Arc<TransferControl>>>,
     pub transfer_slots: Arc<Semaphore>,
+    x11_displays: Arc<X11Displays>,
 }
 
 pub(crate) struct Session {
     pub handle: AsyncMutex<client::Handle<SshHandler>>,
     pub browser: OnceCell<Arc<SftpSession>>,
     pub cancelled: CancellationToken,
+    x11: Option<Arc<X11Forwarding>>,
 }
 
 #[derive(Clone)]
@@ -95,6 +98,7 @@ impl Client {
                     transfers: Mutex::new(HashMap::new()),
                     connections: Mutex::new(HashMap::new()),
                     transfer_slots: Arc::new(Semaphore::new(3)),
+                    x11_displays: Arc::new(X11Displays::default()),
                 }),
             },
             receiver,
@@ -173,6 +177,13 @@ impl Client {
             keepalive_max: 3,
             ..Default::default()
         });
+        let x11 = profile.x11.enabled.then(|| {
+            Arc::new(X11Forwarding::new(
+                profile.x11.display.trim().to_owned(),
+                self.inner.x11_displays.clone(),
+                cancelled.clone(),
+            ))
+        });
         let handler = SshHandler {
             id,
             host: profile.host.clone(),
@@ -181,6 +192,7 @@ impl Client {
             events: self.inner.events.clone(),
             owner: Arc::downgrade(&self.inner),
             cancelled: cancelled.clone(),
+            x11: x11.clone(),
         };
         let mut handle: client::Handle<SshHandler> = tokio::time::timeout(
             Duration::from_secs(150),
@@ -215,6 +227,7 @@ impl Client {
                         handle: AsyncMutex::new(handle),
                         browser: OnceCell::new(),
                         cancelled,
+                        x11,
                     }),
                 );
         }
@@ -345,34 +358,65 @@ impl Client {
         size: TerminalSize,
     ) -> Result<TerminalHandle> {
         let session = self.session(session_id)?;
+        let registration = if let Some(x11) = &session.x11 {
+            Some(tokio::select! {
+                _ = session.cancelled.cancelled() => bail!("连接已关闭"),
+                result = tokio::time::timeout(Duration::from_secs(20), x11.prepare()) => {
+                    result.context("准备本机 X11 显示服务超时")?.map_err(anyhow::Error::msg)?
+                }
+            })
+        } else {
+            None
+        };
         let mut channel = session.handle.lock().await.channel_open_session().await?;
         let mut initial_output = std::collections::VecDeque::new();
         let mut buffered_bytes = 0usize;
-        for shell in [false, true] {
-            if shell {
-                channel.request_shell(true).await?;
-            } else {
-                channel
-                    .request_pty(
-                        true,
-                        "xterm-256color",
-                        size.columns.max(2).into(),
-                        size.rows.max(1).into(),
-                        0,
-                        0,
-                        &[],
-                    )
-                    .await?;
-            }
+        enum Request {
+            Pty,
+            X11,
+            Shell,
+        }
+        for request in [Request::Pty, Request::X11, Request::Shell] {
+            let failure = match request {
+                Request::Pty => {
+                    channel
+                        .request_pty(
+                            true,
+                            "xterm-256color",
+                            size.columns.max(2).into(),
+                            size.rows.max(1).into(),
+                            0,
+                            0,
+                            &[],
+                        )
+                        .await?;
+                    "服务器拒绝分配 PTY"
+                }
+                Request::X11 => {
+                    let Some(registration) = &registration else {
+                        continue;
+                    };
+                    channel
+                        .request_x11(
+                            true,
+                            false,
+                            "MIT-MAGIC-COOKIE-1",
+                            registration.cookie_hex(),
+                            registration.screen(),
+                        )
+                        .await?;
+                    "服务器拒绝 X11 转发，请检查 sshd 的 X11Forwarding 和 xauth 配置"
+                }
+                Request::Shell => {
+                    channel.request_shell(true).await?;
+                    "服务器拒绝启动 shell"
+                }
+            };
             let acknowledgement = async {
                 loop {
                     match channel.wait().await {
                         Some(ChannelMsg::Success) => return Ok(()),
-                        Some(ChannelMsg::Failure) => bail!(if shell {
-                            "服务器拒绝启动 shell"
-                        } else {
-                            "服务器拒绝分配 PTY"
-                        }),
+                        Some(ChannelMsg::Failure) => bail!("{failure}"),
                         Some(ChannelMsg::Data { data })
                         | Some(ChannelMsg::ExtendedData { data, .. }) => {
                             buffered_bytes += data.len();
@@ -401,6 +445,8 @@ impl Client {
         let closed = CancellationToken::new();
         let reader_closed = closed.clone();
         tokio::spawn(async move {
+            // Revoke this PTY's cookie and all of its X11 streams on every exit path.
+            let x11 = registration;
             let mut activated = false;
             let result = async {
                 loop {
@@ -442,6 +488,7 @@ impl Client {
                 Ok::<_, anyhow::Error>(())
             }.await;
             let _ = writer.close().await;
+            drop(x11);
             let message = result
                 .err()
                 .map(|e| format!("终端已断开：{e:#}"))
@@ -596,10 +643,26 @@ pub(crate) struct SshHandler {
     events: Sender<CoreEvent>,
     owner: std::sync::Weak<Inner>,
     cancelled: CancellationToken,
+    x11: Option<Arc<X11Forwarding>>,
 }
 
 impl client::Handler for SshHandler {
     type Error = anyhow::Error;
+
+    async fn server_channel_open_x11(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _: &str,
+        _: u32,
+        _: &mut client::Session,
+    ) -> Result<()> {
+        if let Some(x11) = &self.x11 {
+            x11.forward(channel);
+        } else {
+            channel.close().await?;
+        }
+        Ok(())
+    }
 
     async fn disconnected(&mut self, reason: client::DisconnectReason<Self::Error>) -> Result<()> {
         if let Some(owner) = self.owner.upgrade() {

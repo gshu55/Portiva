@@ -1,0 +1,156 @@
+name: Release Portiva 2
+
+on:
+  push:
+    tags:
+      - 'v2.*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the version in Cargo.toml after all four builds pass
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portiva-2-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and test ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - name: Linux AMD64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - name: Linux ARM64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: macOS ARM64
+            runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_TERM_COLOR: always
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt
+          rustc --version
+          cargo --version
+      - uses: swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config clang cmake \
+            libssl-dev libfontconfig1-dev libfreetype6-dev libx11-xcb-dev \
+            libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev xauth
+      - name: Verify version, native architecture, and formatting
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          python scripts/package-release.py --verify-only "$RELEASE_TARGET"
+          cargo fmt --all -- --check
+      - name: Test the release build
+        run: cargo test --workspace --release --locked
+      - name: Build Windows delivery executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\build.cmd -Configuration Release
+      - name: Build Linux or macOS executable
+        if: runner.os != 'Windows'
+        run: cargo build --release --package portiva-desktop --bin portiva2 --locked
+      - name: Package and verify release files
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: python scripts/package-release.py "$RELEASE_TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portiva-${{ matrix.target }}
+          path: dist/Portiva_*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish verified release
+    needs: build
+    if: github.ref_type == 'tag' || inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: portiva-*
+          merge-multiple: true
+          path: release-assets
+      - name: Preserve the Portiva 1.x updater manifest
+        run: |
+          gh release download v1.15.1 --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json --dir release-assets
+          python3 -c 'import json; assert json.load(open("release-assets/latest.json"))["version"].startswith("1.")'
+      - name: Check complete asset set and write checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import pathlib
+          import tomllib
+          version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['workspace']['package']['version']
+          expected = {
+              f'Portiva_{version}_windows_x64.zip',
+              f'Portiva_{version}_linux_amd64.tar.gz',
+              f'Portiva_{version}_linux_amd64.deb',
+              f'Portiva_{version}_linux_arm64.tar.gz',
+              f'Portiva_{version}_linux_arm64.deb',
+              f'Portiva_{version}_macos_arm64.app.tar.gz',
+              f'Portiva_{version}_macos_arm64.dmg',
+              'latest.json',
+          }
+          root = pathlib.Path('release-assets')
+          actual = {path.name for path in root.iterdir() if path.is_file()}
+          assert actual == expected, f'Asset mismatch: missing={expected-actual}, extra={actual-expected}'
+          lines = [f'{hashlib.file_digest((root/name).open("rb"), "sha256").hexdigest()}  {name}\n' for name in sorted(expected)]
+          (root/'SHA256SUMS.txt').write_text(''.join(lines))
+          PY
+          cd release-assets
+          sha256sum --check SHA256SUMS.txt
+      - name: Upload all assets before publishing
+        shell: bash
+        run: |
+          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          TAG="v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft > "$RUNNER_TEMP/portiva-release.json" 2>/dev/null; then
+            python3 -c 'import json, os; assert json.load(open(os.environ["RUNNER_TEMP"]+"/portiva-release.json"))["isDraft"], "This version is already public; use a new version"'
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Portiva $TAG" --notes-file "docs/releases/$TAG.md" --draft
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" release-assets/* --clobber
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

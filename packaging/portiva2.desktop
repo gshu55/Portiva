@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Portiva 2
+Comment=SSH and SFTP workbench
+Exec=portiva2
+Icon=portiva2
+Terminal=false
+Categories=Network;RemoteAccess;TerminalEmulator;
+StartupNotify=true

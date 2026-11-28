@@ -13,6 +13,7 @@ pub struct ConnectionForm {
     username: Entity<InputState>,
     secret: Entity<InputState>,
     key_path: Entity<InputState>,
+    x11_display: Entity<InputState>,
     pub busy: bool,
     pub has_saved_secret: bool,
 }
@@ -63,6 +64,7 @@ impl ConnectionForm {
                 cx,
             ),
             busy: false,
+            x11_display: input(profile.x11.display.clone(), "自动检测", false, window, cx),
             has_saved_secret: profile.remember_secret,
             profile,
         }
@@ -91,6 +93,7 @@ impl ConnectionForm {
             .context("端口必须为 1–65535")?;
         let key = self.key_path.read(cx).value();
         profile.private_key_path = (!key.trim().is_empty()).then(|| PathBuf::from(key.trim()));
+        profile.x11.display = self.x11_display.read(cx).value().trim().into();
         profile.validate()?;
         let secret = self.secret.read(cx).value().to_string();
         let credentials = if profile.auth == AuthMethod::PrivateKey {
@@ -122,6 +125,7 @@ impl ConnectionForm {
         protocols: impl IntoElement,
         authentication: impl IntoElement,
         key_button: impl IntoElement,
+        x11_toggle: impl IntoElement,
         cx: &App,
     ) -> impl IntoElement {
         let label = |name: &'static str, input: &Entity<InputState>| {
@@ -193,6 +197,28 @@ impl ConnectionForm {
                         .child(key_button),
                 )
             })
+            .when(self.profile.protocol == Protocol::Ssh, |el| {
+                el.child(self.render_x11(x11_toggle, cx))
+            })
+    }
+
+    fn render_x11(&self, toggle: impl IntoElement, cx: &App) -> AnyElement {
+        column()
+            .gap_2()
+            .child(toggle)
+            .when(self.profile.x11.enabled, |el| {
+                el.child(
+                    column()
+                        .gap_1()
+                        .child(div().text_color(rgb(colors(cx).muted)).child("本机显示"))
+                        .child(
+                            Input::new(&self.x11_display)
+                                .aria_label("X11 本机显示")
+                                .disabled(self.busy),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 }
 
