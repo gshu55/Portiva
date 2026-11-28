@@ -141,10 +141,14 @@ impl UpdateView {
         let Some(update) = self.downloaded.take() else {
             return false;
         };
+        self.error = None;
+        let package_path = update.path().display().to_string();
         match update.install() {
             Ok(InstallAction::Restart) => true,
             Ok(InstallAction::OpenedPackage) => {
-                self.message = "已打开安装包。完成系统安装或替换应用后，重新启动 Portiva。".into();
+                self.message = format!(
+                    "已请求系统打开安装包：{package_path}。请先退出 Portiva，完成安装或替换应用后再启动。"
+                );
                 cx.notify();
                 false
             }
@@ -197,7 +201,7 @@ impl Render for UpdateView {
                         "先关闭所有 SSH / 本地终端和传输，再安装并重启。更新失败时会保留原程序。"
                             .to_owned()
                     } else if cfg!(target_os = "macos") {
-                        "打开 DMG，将 Portiva.app 拖入“应用程序”并替换，完成后重新启动。".to_owned()
+                    "打开 DMG 后先退出 Portiva，将 Portiva.app 拖入“应用程序”并替换，再重新启动。".to_owned()
                     } else {
                         "使用系统软件安装器完成 .deb 更新，再重新启动 Portiva。".to_owned()
                     },

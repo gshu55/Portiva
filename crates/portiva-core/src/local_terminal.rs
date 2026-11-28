@@ -117,6 +117,40 @@ fn pty_size(size: TerminalSize) -> PtySize {
     }
 }
 
+// portable-pty enables cursor inheritance. Older ConPTY implementations need
+// this reply even when a terminal closes before its view activates.
+#[cfg(windows)]
+#[derive(Default)]
+struct StartupCursor {
+    pending: Vec<u8>,
+    complete: bool,
+}
+
+#[cfg(windows)]
+impl StartupCursor {
+    fn feed(&mut self, data: &[u8]) -> (Vec<u8>, bool) {
+        if self.complete {
+            return (data.to_vec(), false);
+        }
+        const REQUEST: &[u8] = b"\x1b[6n";
+        for (index, byte) in data.iter().enumerate() {
+            self.pending.push(*byte);
+            if self.pending == REQUEST {
+                self.pending.clear();
+                self.complete = true;
+                return (data[index + 1..].to_vec(), true);
+            }
+            if !REQUEST.starts_with(&self.pending) {
+                let mut output = std::mem::take(&mut self.pending);
+                output.extend_from_slice(&data[index + 1..]);
+                self.complete = true;
+                return (output, false);
+            }
+        }
+        (Vec::new(), false)
+    }
+}
+
 impl Client {
     pub async fn open_local_terminal(
         &self,
@@ -126,7 +160,7 @@ impl Client {
         size: TerminalSize,
     ) -> Result<TerminalHandle> {
         let command = shell.command(&directory);
-        let (master, mut reader, mut writer, mut child) = tokio::task::spawn_blocking(move || {
+        let (master, mut reader, writer, mut child) = tokio::task::spawn_blocking(move || {
             anyhow::ensure!(directory.is_dir(), "本地终端的工作目录不存在");
             let pair = native_pty_system()
                 .openpty(pty_size(size))
@@ -153,6 +187,18 @@ impl Client {
         let weak_sender = sender.downgrade();
         let activated = Arc::new(Notify::new());
         let ready = activated.clone();
+        #[cfg(not(windows))]
+        let mut writer = writer;
+        #[cfg(windows)]
+        let writer = Arc::new(std::sync::Mutex::new(writer));
+        #[cfg(windows)]
+        let (startup_tx, startup_rx) = std::sync::mpsc::channel::<()>();
+        #[cfg(windows)]
+        let mut startup_rx = Some(startup_rx);
+        #[cfg(windows)]
+        let input_closed = closed.clone();
+        #[cfg(windows)]
+        let mut startup = Some((StartupCursor::default(), startup_tx, writer.clone()));
         let (input_done_tx, mut input_done) = oneshot::channel();
         tokio::task::spawn_blocking(move || {
             let result = (|| -> Result<()> {
@@ -160,6 +206,27 @@ impl Client {
                     match command {
                         TerminalCommand::Activate => ready.notify_one(),
                         TerminalCommand::Write(bytes) => {
+                            #[cfg(windows)]
+                            if let Some(startup) = startup_rx.take() {
+                                // Leave room in the input pipe for the reader's initial
+                                // reply. A close request can still interrupt this wait.
+                                loop {
+                                    if input_closed.is_cancelled() {
+                                        return Ok(());
+                                    }
+                                    match startup.recv_timeout(std::time::Duration::from_millis(50))
+                                    {
+                                        Ok(())
+                                        | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                            break;
+                                        }
+                                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                                    }
+                                }
+                            }
+                            #[cfg(windows)]
+                            let mut writer =
+                                writer.lock().unwrap_or_else(|error| error.into_inner());
                             writer.write_all(&bytes)?;
                             writer.flush()?;
                         }
@@ -181,10 +248,33 @@ impl Client {
                 match reader.read(&mut bytes) {
                     Ok(0) => break,
                     Ok(count) => {
-                        if output_tx
-                            .blocking_send(Ok(bytes[..count].to_vec()))
-                            .is_err()
-                        {
+                        #[cfg(not(windows))]
+                        let data = bytes[..count].to_vec();
+                        #[cfg(windows)]
+                        let data = if let Some((probe, _, writer)) = startup.as_mut() {
+                            let (data, reply) = probe.feed(&bytes[..count]);
+                            if reply {
+                                let mut writer =
+                                    writer.lock().unwrap_or_else(|error| error.into_inner());
+                                if let Err(error) =
+                                    writer.write_all(b"\x1b[1;1R").and_then(|_| writer.flush())
+                                {
+                                    let _ = output_tx.blocking_send(Err(error));
+                                    break;
+                                }
+                            }
+                            if probe.complete {
+                                let (_, ready, _) = startup.take().unwrap();
+                                let _ = ready.send(());
+                            }
+                            data
+                        } else {
+                            bytes[..count].to_vec()
+                        };
+                        if data.is_empty() {
+                            continue;
+                        }
+                        if output_tx.blocking_send(Ok(data)).is_err() {
                             break;
                         }
                     }
@@ -324,6 +414,37 @@ mod tests {
         Ok(shell)
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn startup_cursor_handles_every_fragmentation_without_replaying_the_query() {
+        let stream = b"\x1b[6nprompt\x1b[6n";
+        for split in 0..=stream.len() {
+            let mut cursor = StartupCursor::default();
+            let (mut first, answer_first) = cursor.feed(&stream[..split]);
+            let (second, answer_second) = cursor.feed(&stream[split..]);
+            first.extend(second);
+            assert_eq!(first, b"prompt\x1b[6n");
+            assert_eq!(usize::from(answer_first) + usize::from(answer_second), 1);
+            assert!(cursor.complete);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn startup_cursor_preserves_ordinary_output_and_other_escape_sequences() {
+        for stream in [b"prompt".as_slice(), b"\x1b[?25lpowershell".as_slice()] {
+            for split in 0..=stream.len() {
+                let mut cursor = StartupCursor::default();
+                let (mut first, answer_first) = cursor.feed(&stream[..split]);
+                let (second, answer_second) = cursor.feed(&stream[split..]);
+                first.extend(second);
+                assert_eq!(first, stream);
+                assert!(!answer_first && !answer_second);
+                assert!(cursor.complete);
+            }
+        }
+    }
+
     fn print(shell: &LocalShell, suffix: &str) -> String {
         if shell.label == "PowerShell" {
             format!("Write-Output ('PORTIVA_' + '{suffix}')\r")
@@ -452,6 +573,7 @@ mod tests {
 
     #[tokio::test]
     async fn closing_unactivated_and_busy_shells_preserves_siblings() -> Result<()> {
+        eprintln!("Local PTY cleanup: opening a terminal without activating its view");
         let data = tempfile::tempdir()?;
         let (client, events) = Client::new(Store::open(data.path())?);
         let shell = test_shell()?;
@@ -464,12 +586,16 @@ mod tests {
             )
             .await?;
         pending.close();
+        eprintln!("Local PTY cleanup: waiting for the unactivated terminal to close");
         assert!(pending.write("ignored").is_err());
         assert!(pending.activate().is_err());
         assert!(pending.resize(TerminalSize::default()).is_err());
         closed(&events, pending.id)
             .await
             .context("关闭未激活的本地 Shell")?;
+        eprintln!(
+            "Local PTY cleanup: unactivated terminal closed; starting busy and sibling terminals"
+        );
         let active = client
             .open_local_terminal(
                 Uuid::new_v4(),
@@ -498,9 +624,11 @@ mod tests {
         active.write(burst)?;
         tokio::time::sleep(Duration::from_millis(500)).await;
         active.close();
+        eprintln!("Local PTY cleanup: waiting for the busy terminal to close");
         closed(&events, active.id)
             .await
             .context("关闭持续输出的本地 Shell")?;
+        eprintln!("Local PTY cleanup: busy terminal closed; checking the sibling");
         sibling.activate()?;
         sibling.write(print(&shell, "SIBLING_OK"))?;
         read_until(

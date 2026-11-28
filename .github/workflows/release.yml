@@ -75,7 +75,8 @@ jobs:
           python scripts/package-release.py --verify-only "$RELEASE_TARGET"
           cargo fmt --all -- --check
       - name: Test the release build
-        run: cargo test --workspace --release --locked
+        timeout-minutes: 25
+        run: cargo test --workspace --release --locked -- --nocapture
       - name: Build Windows delivery executable
         if: runner.os == 'Windows'
         shell: pwsh

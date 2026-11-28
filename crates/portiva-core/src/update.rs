@@ -508,16 +508,19 @@ impl DownloadedUpdate {
             let _ = self.directory.keep();
             Ok(InstallAction::Restart)
         } else {
+            let package = self.payload.clone();
+            let _ = self.directory.keep();
             let mut command = Command::new(if cfg!(target_os = "macos") {
                 "open"
             } else {
                 "xdg-open"
             });
-            command
-                .arg(&self.payload)
-                .spawn()
-                .context("无法打开安装包，请从设置中的下载目录手动安装")?;
-            let _ = self.directory.keep();
+            command.arg(&package).spawn().with_context(|| {
+                format!(
+                    "无法启动系统安装器，安装包已保存到 {}，请手动安装",
+                    package.display()
+                )
+            })?;
             Ok(InstallAction::OpenedPackage)
         }
     }

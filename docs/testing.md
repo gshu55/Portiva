@@ -19,7 +19,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test -p portiva-core --locked
 ```
 
-截至 2026-11-28，Windows x64 的默认测试包含 64 项单元与回环协议测试：核心 51 项单测、4 项 SSH/SFTP 回环协议测试、2 项 SSH/X11 回环协议测试，桌面 7 项单测。本机没有 `cargo clippy` 启动入口，实际使用同一 Rust 1.100 工具链中的 `clippy-driver.exe` 作为 `RUSTC_WORKSPACE_WRAPPER` 完成静态检查。
+截至 2026-11-28，Windows x64 的默认测试包含 66 项单元与回环协议测试：核心 53 项单测、4 项 SSH/SFTP 回环协议测试、2 项 SSH/X11 回环协议测试，桌面 7 项单测。本机没有 `cargo clippy` 启动入口，实际使用同一 Rust 1.100 工具链中的 `clippy-driver.exe` 作为 `RUSTC_WORKSPACE_WRAPPER` 完成静态检查。
 
 Rustfmt、全目标 Clippy（`-D warnings`）及原生窗口回归均已通过；Linux AMD64 / ARM64、macOS ARM64 的原生 Release 构建及默认工作区测试由 [发布流水线](../.github/workflows/release.yml) 校验。真实图形服务及其他平台的验收范围见 [X11 转发](x11.md)。
 
@@ -42,7 +42,7 @@ Rustfmt、全目标 Clippy（`-D warnings`）及原生窗口回归均已通过�
 cargo test -p portiva-core --test native_keyring --locked -- --ignored
 ```
 
-Windows 沙箱账户可能返回 `ERROR_NO_SUCH_LOGON_SESSION`；本机在真实 Windows 登录会话中已通过。此项不包含在上面的 64 项默认测试内。
+Windows 沙箱账户可能返回 `ERROR_NO_SUCH_LOGON_SESSION`；本机在真实 Windows 登录会话中已通过。此项不包含在上面的 66 项默认测试内。
 
 ## 原生窗口回归
 

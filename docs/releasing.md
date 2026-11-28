@@ -42,4 +42,4 @@ macOS 使用 Apple Silicon、Xcode Command Line Tools 和 Rust 1.100.0，设置 
 
 Windows ZIP 仅提取 `portiva2.exe`，Linux 便携 TAR 仅提取预期目录中的 `portiva2`，随后检查 PE / ELF 的目标架构。安装前必须关闭所有 SSH / 本地终端和传输；临时脚本等待当前进程正常退出，在同一文件系统替换程序并重启，不强制结束进程。替换或启动失败时保留 / 恢复原程序，错误保存在配置目录的 `updates/update-*/install-error.txt`，下次打开设置会显示。
 
-Linux 的 `/usr` 安装或不可写目录改用 `.deb` 并打开系统安装器；macOS 打开 DMG，由用户将完整的已签名 `Portiva.app` 替换到“应用程序”后重新启动。安装包留在配置目录 `updates` 下，界面显示具体路径。下载与校验失败的临时文件自动删除。GitHub 客户端支持系统代理及 `HTTPS_PROXY`。
+Linux 的 `/usr` 安装或不可写目录改用 `.deb` 并打开系统安装器；macOS 打开 DMG 后先退出 Portiva，再将完整的已签名 `Portiva.app` 替换到“应用程序”并重新启动。安装包留在配置目录 `updates` 下，界面显示具体路径；系统安装器无法启动时也保留文件以供手动安装。下载与校验失败的临时文件自动删除。GitHub 客户端支持系统代理及 `HTTPS_PROXY`。
